@@ -8,6 +8,7 @@ router.register(r'subjects', views.SubjectViewSet, basename='subject')
 router.register(r'academic-years', views.AcademicYearViewSet, basename='academic-year')
 router.register(r'audit', views.AuditLogViewSet, basename='audit')
 router.register(r'categories', views.CategoryViewSet, basename='category')
+router.register(r'service-types', views.ServiceTypeViewSet, basename='service-type')
 
 urlpatterns = [
     path('classes/promote-all/', views.ClassViewSet.as_view({'post': 'promote_all'}), name='promote-all'),

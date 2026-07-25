@@ -4,17 +4,17 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 from django.db.models import Count, Q, Subquery, OuterRef
-from .models import SchoolClass, Subject, AcademicYear, SchoolSetting, AuditLog, Category
+from .models import SchoolClass, Subject, AcademicYear, SchoolSetting, AuditLog, Category, ServiceType
 from students.models import Student
 from books.models import Book
 from .serializers import (
     SchoolClassSerializer, SchoolClassReorderSerializer,
     SubjectSerializer, AcademicYearSerializer,
     SchoolSettingSerializer, AuditLogSerializer, CategorySerializer,
-    PromoteAllSerializer,
+    PromoteAllSerializer, ServiceTypeSerializer,
 )
 from accounts.permissions import require_permission
-from .services import promote_all as promote_all_service
+from .services import promote_all as promote_all_service, auto_create_fee_schedules_for_service
 from .audit import log_audit, AuditLogMixin
 
 logger = logging.getLogger(__name__)
@@ -258,4 +258,22 @@ class SetupInitView(generics.GenericAPIView):
         return Response({
             'user': {'id': str(user.id), 'name': user.name, 'email': user.email, 'role': user.role}
         })
+
+
+class ServiceTypeViewSet(viewsets.ModelViewSet):
+    queryset = ServiceType.objects.all()
+    serializer_class = ServiceTypeSerializer
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [require_permission('classes:read')()]
+        return [require_permission('finance:write')()]
+
+    def perform_create(self, serializer):
+        obj = serializer.save()
+        # Auto-create FeeSchedules for all active academic years
+        created = auto_create_fee_schedules_for_service(obj)
+        log_audit('create', 'service_type', entity_id=obj.pk, request=self.request)
+        if created:
+            logger.info(f'Auto-created {len(created)} FeeSchedules for ServiceType "{obj.name}"')
 

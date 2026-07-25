@@ -137,3 +137,49 @@ def _simple_promote(data, is_dry_run):
         'graduated': [],
         'classesCreated': [],
     }
+
+
+def auto_create_fee_schedules_for_service(service_type):
+    """Create FeeSchedule entries for a ServiceType across all active AcademicYears."""
+    from finance.models import FeeSchedule
+    from core.models import AcademicYear
+
+    active_years = AcademicYear.objects.filter(is_active=True)
+    created = []
+    for year in active_years:
+        fs, was_created = FeeSchedule.objects.get_or_create(
+            academic_year=year,
+            school_class=None,
+            category=service_type.name,
+            frequency=service_type.frequency,
+            defaults={
+                'amount': service_type.default_amount,
+                'applicability': 'ASSIGNED_ONLY',
+            }
+        )
+        if was_created:
+            created.append(fs)
+    return created
+
+
+def auto_create_service_fee_schedules_for_academic_year(academic_year):
+    """Create FeeSchedule entries for all active ServiceTypes when a new AcademicYear is created."""
+    from finance.models import FeeSchedule
+    from core.models import ServiceType
+
+    active_services = ServiceType.objects.filter(active=True)
+    created = []
+    for svc in active_services:
+        fs, was_created = FeeSchedule.objects.get_or_create(
+            academic_year=academic_year,
+            school_class=None,
+            category=svc.name,
+            frequency=svc.frequency,
+            defaults={
+                'amount': svc.default_amount,
+                'applicability': 'ASSIGNED_ONLY',
+            }
+        )
+        if was_created:
+            created.append(fs)
+    return created

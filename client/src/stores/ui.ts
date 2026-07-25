@@ -22,7 +22,7 @@ if (useDarkMode.getState().dark) {
   document.documentElement.classList.remove('dark');
 }
 
-type MainMode = null | 'idcard' | 'accessories' | 'result' | 'finance' | 'attendance' | 'routine' | 'exam-routine' | 'session-year' | 'announcements';
+type MainMode = null | 'idcard' | 'accessories' | 'result' | 'finance' | 'attendance' | 'routine' | 'exam-routine' | 'session-year' | 'announcements' | 'services';
 type IdSubMode = 'student' | 'teacher' | 'staff';
 
 interface UIState {

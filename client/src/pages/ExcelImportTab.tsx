@@ -219,7 +219,8 @@ export default function ExcelImportTab() {
     // Read latest students from store
     const latestStudents = useSchoolStore.getState().students;
     const latestFeeCats = [...new Set(latestFeeSchedules.map((fs: any) => fs.category))];
-    console.log('[ExcelImport] Direct fetch:', { feeSchedules: latestFeeSchedules.length, waivers: latestWaivers.length, students: latestStudents.length, feeCats: latestFeeCats, sampleFS: latestFeeSchedules[0] });
+    // Debug: log import data for troubleshooting
+    if (import.meta.env.DEV) console.log('[ExcelImport] Direct fetch:', { feeSchedules: latestFeeSchedules.length, waivers: latestWaivers.length, students: latestStudents.length, feeCats: latestFeeCats, sampleFS: latestFeeSchedules[0] });
     const localMap: Record<string, any> = {};
     latestStudents.forEach((s: any) => {
       const key = `${(s.class || '').trim().toLowerCase()}|${(s.roll || '').trim().toLowerCase()}`;

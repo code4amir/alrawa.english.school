@@ -13,6 +13,7 @@ export interface Student {
   hasGraduated: boolean;
   photoUrl?: string | null;
   createdAt: string;
+  services?: StudentService[];
 }
 
 export interface Teacher {
@@ -195,6 +196,28 @@ export interface AcademicYear {
   isActive: boolean;
   startDate?: string;
   endDate?: string;
+}
+
+export interface ServiceType {
+  id: string;
+  name: string;
+  defaultAmount: number;
+  frequency: string;
+  active: boolean;
+  createdAt: string;
+}
+
+export interface StudentService {
+  id: string;
+  serviceTypeId: string;
+  serviceName: string;
+  serviceAmount: number;
+  serviceFrequency: string;
+  active: boolean;
+  startsAt: string | null;
+  endsAt: string | null;
+  autoAssigned: boolean;
+  createdAt: string;
 }
 
 export interface OpeningBalance {

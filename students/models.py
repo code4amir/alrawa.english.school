@@ -1,5 +1,6 @@
-import uuid
 from django.db import models
+from django.db.models import Q
+import uuid
 
 
 class Student(models.Model):
@@ -33,8 +34,35 @@ class Student(models.Model):
             models.Index(fields=['deleted_at', 'session'], name='student_session_active_idx'),
         ]
         constraints = [
-            models.UniqueConstraint(fields=['roll', 'school_class'], name='unique_roll_per_class', condition=models.Q(roll__gt='')),
+            models.UniqueConstraint(fields=['roll', 'school_class'], name='unique_roll_per_class', condition=Q(roll__gt='')),
         ]
 
     def __str__(self):
         return f"{self.name} ({self.student_id})"
+
+
+class StudentService(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    student = models.ForeignKey(
+        Student, on_delete=models.CASCADE,
+        related_name='services'
+    )
+    service_type = models.ForeignKey(
+        'core.ServiceType', on_delete=models.CASCADE,
+        related_name='student_services'
+    )
+    active = models.BooleanField(default=True)
+    starts_at = models.CharField(max_length=7, blank=True, null=True, help_text='Month string YYYY-MM')
+    ends_at = models.CharField(max_length=7, blank=True, null=True, help_text='Month string YYYY-MM')
+    auto_assigned = models.BooleanField(default=True, help_text='Auto-managed by student service toggle')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['student', 'service_type'], name='unique_student_service'),
+        ]
+        verbose_name = 'student service'
+        verbose_name_plural = 'student services'
+
+    def __str__(self):
+        return f"{self.student.name} - {self.service_type.name}"

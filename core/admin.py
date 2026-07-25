@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import SchoolClass, Subject, AcademicYear, SchoolSetting, AuditLog, Category, Program
+from .models import SchoolClass, Subject, AcademicYear, SchoolSetting, AuditLog, Category, Program, ServiceType
 
 
 @admin.register(SchoolClass)
@@ -35,3 +35,10 @@ class AuditLogAdmin(admin.ModelAdmin):
 class CategoryAdmin(admin.ModelAdmin):
     list_display = ('name', 'type')
     list_filter = ('type',)
+
+
+@admin.register(ServiceType)
+class ServiceTypeAdmin(admin.ModelAdmin):
+    list_display = ('name', 'default_amount', 'frequency', 'active')
+    list_filter = ('active', 'frequency')
+    search_fields = ('name',)

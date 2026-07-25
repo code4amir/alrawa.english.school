@@ -63,7 +63,7 @@ const FeeScheduleTab = () => {
       setEditingId(null);
       setForm({ classId: '', category: '', amount: '', frequency: 'MONTHLY', applicability: 'AUTO' });
     } catch (e: any) {
-      console.error('[FeeScheduleTab] Save error:', e.response?.data || e);
+      if (import.meta.env.DEV) console.error('[FeeScheduleTab] Save error:', e.response?.data || e);
       const msg = e?.response?.data ? Object.values(e.response.data).flat().join(', ') : (editingId ? 'Failed to update' : 'Failed to create');
       toast(msg, 'error');
     }

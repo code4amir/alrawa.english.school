@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.db import transaction as db_transaction
-from .models import Student
+from .models import Student, StudentService
 from core.models import StudentIdCounter
 from core.mixins import PhotoUrlMixin
 
@@ -17,18 +17,23 @@ class StudentSerializer(PhotoUrlMixin, serializers.ModelSerializer):
     hasGraduated = serializers.SerializerMethodField()
     photoUrl = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    services = serializers.SerializerMethodField()
 
     class Meta:
         model = Student
         fields = [
             'id', 'studentId', 'schoolClass', 'classId', 'className', 'roll',
             'session', 'name', 'fatherName', 'motherName', 'contact',
-            'hasPhoto', 'hasGraduated', 'photoUrl', 'createdAt',
+            'hasPhoto', 'hasGraduated', 'photoUrl', 'createdAt', 'services',
         ]
         read_only_fields = ['id', 'studentId', 'createdAt']
 
     def get_hasGraduated(self, obj):
         return obj.graduated_at is not None
+
+    def get_services(self, obj):
+        qs = obj.services.select_related('service_type').all()
+        return StudentServiceSerializer(qs, many=True).data
 
     def create(self, validated_data):
         with db_transaction.atomic():
@@ -45,3 +50,27 @@ class StudentSerializer(PhotoUrlMixin, serializers.ModelSerializer):
 
 class ImportSerializer(serializers.Serializer):
     file = serializers.FileField()
+
+
+class StudentServiceSerializer(serializers.ModelSerializer):
+    serviceTypeId = serializers.UUIDField(source='service_type_id', read_only=True)
+    serviceName = serializers.CharField(source='service_type.name', read_only=True)
+    serviceAmount = serializers.DecimalField(source='service_type.default_amount', read_only=True, max_digits=12, decimal_places=2)
+    serviceFrequency = serializers.CharField(source='service_type.frequency', read_only=True)
+    startsAt = serializers.CharField(source='starts_at', read_only=True, allow_null=True)
+    endsAt = serializers.CharField(source='ends_at', read_only=True, allow_null=True)
+    autoAssigned = serializers.BooleanField(source='auto_assigned', read_only=True)
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+
+    class Meta:
+        model = StudentService
+        fields = ['id', 'serviceTypeId', 'serviceName', 'serviceAmount', 'serviceFrequency',
+                   'active', 'startsAt', 'endsAt', 'autoAssigned', 'createdAt']
+
+
+class StudentServiceToggleSerializer(serializers.Serializer):
+    studentId = serializers.UUIDField()
+    serviceTypeId = serializers.UUIDField()
+    active = serializers.BooleanField()
+    starts_at = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    ends_at = serializers.CharField(required=False, allow_null=True, allow_blank=True)

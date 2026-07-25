@@ -4,8 +4,8 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from django.db import models
 from django.utils import timezone
-from .models import Student
-from .serializers import StudentSerializer
+from .models import Student, StudentService
+from .serializers import StudentSerializer, StudentServiceToggleSerializer
 from accounts.permissions import require_permission, can_manage_students, is_admin_or_superuser, require_photo_access
 from core.mixins import PhotoHandleMixin
 from core.audit import log_audit
@@ -32,15 +32,19 @@ class StudentViewSet(PhotoHandleMixin, viewsets.ModelViewSet):
         return [require_permission('students:write')()]
 
     def get_queryset(self):
-        qs = Student.objects.select_related('school_class').all()
+        qs = Student.objects.select_related('school_class').prefetch_related('services__service_type').all()
         show_archived = self.request.query_params.get('archived', 'false').lower() == 'true'
         search = self.request.query_params.get('search')
         class_id = self.request.query_params.get('class_id')
+        class_name = self.request.query_params.get('class_name')\
+            or self.request.query_params.get('className')
 
         if not show_archived:
             qs = qs.filter(deleted_at__isnull=True)
         if class_id:
             qs = qs.filter(school_class_id=class_id)
+        if class_name:
+            qs = qs.filter(school_class__name=class_name)
         if search:
             qs = qs.filter(
                 models.Q(name__icontains=search) |
@@ -135,3 +139,45 @@ class StudentViewSet(PhotoHandleMixin, viewsets.ModelViewSet):
         ).update(graduated_at=timezone.now())
         log_audit('graduate_class', 'student', details={'class_id': class_id, 'count': count}, request=request)
         return Response({'status': 'ok', 'count': count})
+
+    @action(detail=True, methods=['post'])
+    def toggle_service(self, request, pk=None):
+        student = self.get_object()
+        serializer = StudentServiceToggleSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        from .services import toggle_student_service
+        result = toggle_student_service(
+            student_id=student.id,
+            service_type_id=data['service_type_id'],
+            active=data['active'],
+            starts_at=data.get('starts_at'),
+            ends_at=data.get('ends_at'),
+        )
+        log_audit('toggle_service', 'student_service',
+                  entity_id=result['student_service']['id'],
+                  details={'student_id': str(student.id), 'active': data['active']},
+                  request=request)
+        return Response(result)
+
+    @action(detail=False, methods=['post'])
+    def bulk_toggle_service(self, request):
+        service_type_id = request.data.get('service_type_id')
+        student_ids = request.data.get('student_ids', [])
+        active = request.data.get('active', True)
+        starts_at = request.data.get('starts_at')
+        ends_at = request.data.get('ends_at')
+
+        if not service_type_id or not student_ids:
+            return Response({'error': 'service_type_id and student_ids required'}, status=400)
+
+        from .services import bulk_set_student_service
+        results = bulk_set_student_service(
+            service_type_id=service_type_id,
+            student_ids=student_ids,
+            active=active,
+            starts_at=starts_at,
+            ends_at=ends_at,
+        )
+        return Response({'results': results})

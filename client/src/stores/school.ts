@@ -3,7 +3,7 @@ import { api, dedupedFetch } from './api';
 import { ACCOUNT_IDS } from '../lib/accounts';
 import type {
   Student, Teacher, Staff, Transaction, SchoolClass, Subject,
-  FeeSchedule, SchoolSettings, AcademicYear,
+  FeeSchedule, SchoolSettings, AcademicYear, ServiceType,
   OpeningBalanceHistory, Book, Result,
 } from '../lib/types';
 
@@ -68,6 +68,8 @@ interface SchoolState {
 
   academicYears: AcademicYear[];
   fetchAcademicYears: (force?: boolean) => Promise<void>;
+  serviceTypes: ServiceType[];
+  fetchServiceTypes: (force?: boolean) => Promise<void>;
   classResults: Record<string, Result[]>;
   fetchClassResults: (classId: string, session: string, term?: string) => Promise<void>;
   expenseCategories: string[];
@@ -100,6 +102,7 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
   lastFetched: null,
   _fetchedAt: {},
   academicYears: [],
+  serviceTypes: [],
   classResults: {},
   studentResultsCache: {},
   expenseCategories: [],
@@ -355,6 +358,15 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
       set({ academicYears: res.data.results || res.data.data || res.data, _fetchedAt: { ...get()._fetchedAt, [key]: Date.now() } });
     } catch (e) { if (import.meta.env.DEV) console.warn("[store]", e); }
     finally { set((s) => ({ loading: { ...s.loading, academicYears: false } })); }
+  },
+  fetchServiceTypes: async (force?: boolean) => {
+    const key = 'serviceTypes';
+    const now = Date.now();
+    if (!force && get().serviceTypes.length > 0 && now - (get()._fetchedAt[key] || 0) < CACHE_TTL) return;
+    try {
+      const res = await dedupedFetch(key, () => api.get('/service-types/'));
+      set({ serviceTypes: res.data.results || res.data.data || res.data, _fetchedAt: { ...get()._fetchedAt, [key]: Date.now() } });
+    } catch (e) { if (import.meta.env.DEV) console.warn("[store]", e); }
   },
   fetchClassResults: async (classId: string, session: string, term?: string) => {
     const cacheKey = `${classId}-${session}${term ? '-' + term : ''}`;

@@ -138,3 +138,26 @@ class StudentIdCounter(models.Model):
 
     def __str__(self):
         return f"{self.prefix}{str(self.next_value).zfill(self.pad_length)}"
+
+
+class ServiceType(models.Model):
+    FREQUENCY_CHOICES = [
+        ('MONTHLY', 'Monthly'),
+        ('YEARLY', 'Yearly'),
+        ('ONE_TIME', 'One Time'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255, unique=True)
+    default_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    frequency = models.CharField(max_length=20, choices=FREQUENCY_CHOICES, default='MONTHLY')
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+        verbose_name = 'service type'
+        verbose_name_plural = 'service types'
+
+    def __str__(self):
+        return self.name

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import SchoolClass, Subject, AcademicYear, SchoolSetting, AuditLog, Category
+from .models import SchoolClass, Subject, AcademicYear, SchoolSetting, AuditLog, Category, ServiceType
 
 
 class SchoolClassSerializer(serializers.ModelSerializer):
@@ -87,3 +87,10 @@ class PromoteAllSerializer(serializers.Serializer):
                 'Provide either targetYearName (full promote) or from_class_id + to_class_id (class move).'
             )
         return data
+
+
+class ServiceTypeSerializer(CamelCaseModelSerializer):
+    class Meta:
+        model = ServiceType
+        fields = ['id', 'name', 'default_amount', 'frequency', 'active', 'created_at']
+        read_only_fields = ['id', 'created_at']
