@@ -42,8 +42,8 @@ const Dashboard = () => {
     isPendingViewer || (urlMode === 'finance' && isTeacher) ? null : (activeMode ?? urlMode);
   const handleSetMode = (mode: ModeParam | null) => {
     setMode(mode);
-    if (mode) navigate(`/?mode=${mode}`, { replace: false });
-    else navigate('/', { replace: false });
+    if (mode) window.location.hash = '#/?mode=' + mode;
+    else window.location.hash = '#/';
   };
   const [verifying, setVerifying] = useState(false);
   const [verifySent, setVerifySent] = useState(false);
