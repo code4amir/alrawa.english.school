@@ -30,7 +30,7 @@ function TodaysGreeting() {
 
 const Dashboard = () => {
   const { activeMode, setMode } = useUIStore();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { studentTotal, teacherTotal, staffTotal, fetchClasses, fetchDashboardCounts } = useSchoolStore();
   const user = useAuthStore((s) => s.user);
@@ -42,8 +42,8 @@ const Dashboard = () => {
     isPendingViewer || (urlMode === 'finance' && isTeacher) ? null : (activeMode ?? urlMode);
   const handleSetMode = (mode: ModeParam | null) => {
     setMode(mode);
-    if (mode) setSearchParams({ mode }, { replace: false });
-    else setSearchParams({}, { replace: false });
+    if (mode) navigate(`/?mode=${mode}`, { replace: false });
+    else navigate('/', { replace: false });
   };
   const [verifying, setVerifying] = useState(false);
   const [verifySent, setVerifySent] = useState(false);
@@ -167,7 +167,7 @@ const Dashboard = () => {
           <div className="grid grid-cols-2 gap-3">
             {MODULES.map((m) => {
               const Icon = m.icon;
-              const bgMap: Record<string, string> = { blue: 'from-blue-500 to-blue-700', amber: 'from-amber-500 to-orange-700', green: 'from-green-500 to-emerald-700', rose: 'from-rose-500 to-rose-700', purple: 'from-purple-500 to-purple-700' };
+              const bgMap: Record<string, string> = { blue: 'from-blue-500 to-blue-700', amber: 'from-amber-500 to-orange-700', green: 'from-green-500 to-emerald-700', rose: 'from-rose-500 to-rose-700', purple: 'from-purple-500 to-purple-700', indigo: 'from-indigo-500 to-indigo-700', cyan: 'from-cyan-500 to-cyan-700', sky: 'from-sky-500 to-sky-700' };
               return (
                 <button key={m.key} onClick={() => handleSetMode(m.key)}
                   className="group relative bg-white dark:bg-[#1a1a2e] p-5 rounded-2xl border border-school-border dark:border-[#2a2a3e] text-left card-shadow overflow-hidden"
