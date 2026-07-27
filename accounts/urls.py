@@ -16,6 +16,7 @@ urlpatterns = [
     path('auth/link-child/', views.LinkChildView.as_view(), name='link-child'),
     path('auth/unlink-child/', views.UnlinkChildView.as_view(), name='unlink-child'),
     path('users/', views.GetAllUsersView.as_view(), name='users-list'),
+    path('users/create-staff/', views.CreateStaffView.as_view(), name='create-staff'),
     path('users/roles/', views.RoleChoicesView.as_view(), name='users-roles'),
     path('users/<uuid:pk>/role/', views.UpdateUserRoleView.as_view(), name='user-role'),
     path('users/<uuid:pk>/', views.DeleteUserView.as_view(), name='user-delete'),

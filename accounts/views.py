@@ -16,7 +16,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .serializers import (
     UserSerializer, UserListSerializer, UserRoleSerializer, RegisterSerializer,
     RequestPasswordResetSerializer, ResetPasswordSerializer,
-    ChangePasswordSerializer, LinkChildSerializer,
+    ChangePasswordSerializer, LinkChildSerializer, CreateStaffSerializer,
 )
 from .permissions import require_permission
 from .throttles import (
@@ -157,6 +157,37 @@ class RegisterView(generics.CreateAPIView):
         return Response(UserSerializer(user).data, status=status.HTTP_201_CREATED)
 
 
+class CreateStaffView(APIView):
+    permission_classes = [require_permission('users:write')]
+
+    def post(self, request):
+        serializer = CreateStaffSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        from django.db import transaction as db_transaction
+        with db_transaction.atomic():
+            user = User.objects.create_user(
+                email=data['email'],
+                password=data['password'],
+                name=data['name'],
+                role=data['role'],
+                email_verified=True,
+                must_change_password=True,
+            )
+            teacher_id = data.get('teacher_id')
+            if teacher_id:
+                from teachers.models import Teacher
+                teacher = Teacher.objects.filter(
+                    id=teacher_id, user__isnull=True, deleted_at__isnull=True
+                ).first()
+                if not teacher:
+                    user.delete()
+                    return Response({'error': 'Teacher not found or already linked'}, status=400)
+                teacher.user = user
+                teacher.save(update_fields=['user'])
+        return Response({**UserSerializer(user).data, 'mustChangePassword': True}, status=201)
+
+
 class MeView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -238,6 +269,7 @@ class AuthGetSessionView(APIView):
                     'role': user.role,
                     'image': user.image,
                     'emailVerified': user.email_verified,
+                    'mustChangePassword': user.must_change_password,
                 }})
         except (AuthenticationFailed, Exception):
             pass
@@ -365,7 +397,8 @@ class ChangePasswordView(APIView):
         serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         request.user.set_password(serializer.validated_data['new_password'])
-        request.user.save(update_fields=['password'])
+        request.user.must_change_password = False
+        request.user.save(update_fields=['password', 'must_change_password'])
         return Response({'detail': 'Password changed successfully.'})
 
 

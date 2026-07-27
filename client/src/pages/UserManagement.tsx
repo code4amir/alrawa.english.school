@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuthStore, useUserManagementStore } from '../store';
-import { Users, Trash2, ChevronDown, AlertTriangle, Check, Clock, UserCheck } from 'lucide-react';
+import { api } from '../store';
+import { Users, Trash2, ChevronDown, AlertTriangle, Check, Clock, UserCheck, UserPlus, Eye, EyeOff } from 'lucide-react';
 import Layout from '../components/Layout';
 import { toast } from '../components/Toast';
 
@@ -18,11 +19,49 @@ const UserManagement: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [assigning, setAssigning] = useState<string | null>(null);
+  const [unlinkedTeachers, setUnlinkedTeachers] = useState<any[]>([]);
+
+  // Create staff state
+  const [showCreateStaff, setShowCreateStaff] = useState(false);
+  const [staffName, setStaffName] = useState('');
+  const [staffEmail, setStaffEmail] = useState('');
+  const [staffRole, setStaffRole] = useState('teacher');
+  const [staffPassword, setStaffPassword] = useState('');
+  const [creatingStaff, setCreatingStaff] = useState(false);
+  const [staffTeacherId, setStaffTeacherId] = useState('');
+  const [showStaffPassword, setShowStaffPassword] = useState(false);
+
+  const handleCreateStaff = async () => {
+    if (!staffName || !staffEmail || !staffPassword) return toast('Fill all fields', 'error');
+    setCreatingStaff(true);
+    try {
+      await api.post('/users/create-staff/', { name: staffName, email: staffEmail, role: staffRole, password: staffPassword, teacher_id: staffTeacherId || undefined });
+      toast('Staff account created', 'success');
+      setShowCreateStaff(false);
+      setStaffName('');
+      setStaffEmail('');
+      setStaffRole('teacher');
+      setStaffPassword('');
+      setStaffTeacherId('');
+      fetchUsers();
+    } catch (err: any) {
+      toast(err.response?.data?.error || 'Failed to create staff', 'error');
+    }
+    setCreatingStaff(false);
+  };
 
   useEffect(() => { document.title = 'User Management - AL RAWA English School'; }, []);
   useEffect(() => {
     Promise.all([fetchUsers(), fetchRoles()]).finally(() => setLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (currentUser?.role === 'admin') {
+      api.get('/teachers/').then(res => {
+        setUnlinkedTeachers((res.data?.results || res.data || []).filter((t: any) => !t.userId));
+      }).catch(() => {});
+    }
+  }, [currentUser]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRoleChange = async (userId: string, newRole: string) => {
     try {
@@ -104,6 +143,58 @@ const UserManagement: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Create Staff — admin only */}
+      {currentUser?.role === 'admin' && (
+        <div className="bg-white rounded-xl border border-school-border p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-xs font-bold uppercase text-school-muted">Create Staff Account</h3>
+            <button onClick={() => setShowCreateStaff(!showCreateStaff)}
+              className="text-xs font-semibold text-school-accent hover:underline">
+              {showCreateStaff ? 'Cancel' : 'New Staff'}
+            </button>
+          </div>
+          {showCreateStaff && (
+            <div className="grid grid-cols-1 sm:grid-cols-6 gap-3">
+              <select value={staffTeacherId} onChange={e => {
+                const id = e.target.value;
+                setStaffTeacherId(id);
+                const t = unlinkedTeachers.find(t => t.id === id);
+                if (t) { setStaffName(t.name); setStaffEmail(t.email || ''); }
+              }}
+                className="border border-school-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-school-accent">
+                <option value="">— Link to Teacher (optional) —</option>
+                {unlinkedTeachers.map(t => (
+                  <option key={t.id} value={t.id}>{t.name} — {t.designation || 'Teacher'}</option>
+                ))}
+              </select>
+              <input value={staffName} onChange={e => setStaffName(e.target.value)} placeholder="Full Name"
+                className="border border-school-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-school-accent" />
+              <input value={staffEmail} onChange={e => setStaffEmail(e.target.value)} placeholder="Email" type="email"
+                className="border border-school-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-school-accent" />
+              <select value={staffRole} onChange={e => setStaffRole(e.target.value)}
+                className="border border-school-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-school-accent">
+                {roles.filter(r => r.value !== 'viewer' && r.value !== 'parent').map(r => (
+                  <option key={r.value} value={r.value}>{r.label}</option>
+                ))}
+              </select>
+              <div className="relative">
+                <input value={staffPassword} onChange={e => setStaffPassword(e.target.value)} placeholder="Password" type={showStaffPassword ? 'text' : 'password'}
+                  className="w-full border border-school-border rounded-lg px-3 py-2 pr-10 text-sm outline-none focus:ring-2 focus:ring-school-accent" />
+                <button type="button" onClick={() => setShowStaffPassword(!showStaffPassword)}
+                  className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-lg hover:bg-school-accent/10 text-school-muted hover:text-school-accent transition-colors"
+                  tabIndex={-1} aria-label={showStaffPassword ? 'Hide password' : 'Show password'}>
+                  {showStaffPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+              <button onClick={handleCreateStaff} disabled={creatingStaff}
+                className="bg-school-primary hover:bg-school-secondary disabled:opacity-50 text-white rounded-lg px-4 py-2 text-sm font-semibold transition-colors flex items-center justify-center gap-2">
+                {creatingStaff ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <><UserPlus size={16} /> Create</>}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Users Table */}
       <div className="bg-white rounded-xl border border-school-border overflow-hidden">

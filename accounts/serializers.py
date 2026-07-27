@@ -12,7 +12,16 @@ class UserSerializer(serializers.ModelSerializer):
         data = super().to_representation(instance)
         data['emailVerified'] = data.pop('email_verified', False)
         data['createdAt'] = data.pop('date_joined', None)
+        data['mustChangePassword'] = instance.must_change_password
         return data
+
+
+class CreateStaffSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    email = serializers.EmailField()
+    role = serializers.ChoiceField(choices=User.ROLE_CHOICES)
+    password = serializers.CharField(min_length=8)
+    teacher_id = serializers.CharField(required=False, allow_null=True)
 
 
 class UserListSerializer(serializers.ModelSerializer):

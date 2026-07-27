@@ -37,6 +37,7 @@ class User(AbstractUser):
     name = models.CharField(max_length=255)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='viewer')
     email_verified = models.BooleanField(default=False)
+    must_change_password = models.BooleanField(default=False)
     image = models.TextField(blank=True, null=True)
 
     USERNAME_FIELD = 'email'
