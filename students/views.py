@@ -150,7 +150,7 @@ class StudentViewSet(PhotoHandleMixin, viewsets.ModelViewSet):
         from .services import toggle_student_service
         result = toggle_student_service(
             student_id=student.id,
-            service_type_id=data['service_type_id'],
+            service_type_id=data['serviceTypeId'],
             active=data['active'],
             starts_at=data.get('starts_at'),
             ends_at=data.get('ends_at'),
