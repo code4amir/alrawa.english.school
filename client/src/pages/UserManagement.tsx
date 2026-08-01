@@ -3,7 +3,7 @@ import { useAuthStore, useUserManagementStore } from '../store';
 import { api } from '../store';
 import { Users, Trash2, ChevronDown, AlertTriangle, Check, Clock, UserCheck, UserPlus, Eye, EyeOff } from 'lucide-react';
 import Layout from '../components/Layout';
-import { toast } from '../components/Toast';
+import Toast, { toast, getErrorMessage } from '../components/Toast';
 
 const ROLE_BADGES: Record<string, string> = {
   admin: 'bg-purple-100 text-purple-700 border-purple-200',
@@ -34,6 +34,7 @@ const UserManagement: React.FC = () => {
 
   const handleCreateStaff = async () => {
     if (!staffName || !staffEmail || !staffPassword) return toast('Fill all fields', 'error');
+    if (staffPassword.length < 8) return toast('Password must be at least 8 characters', 'error');
     setCreatingStaff(true);
     try {
       await api.post('/users/create-staff/', { name: staffName, email: staffEmail, role: staffRole, password: staffPassword, teacher_id: staffTeacherId || undefined });
@@ -46,7 +47,7 @@ const UserManagement: React.FC = () => {
       setStaffTeacherId('');
       fetchUsers();
     } catch (err: any) {
-      toast(err.response?.data?.error || 'Failed to create staff', 'error');
+      toast(getErrorMessage(err), 'error');
     }
     setCreatingStaff(false);
   };
@@ -107,6 +108,7 @@ const UserManagement: React.FC = () => {
 
   return (
     <Layout>
+    <Toast />
     <div className="space-y-6 animate-in fade-in duration-300">
       <div className="flex items-center gap-3 mb-6">
         <div className="w-10 h-10 bg-purple-500 text-white rounded-xl flex items-center justify-center">

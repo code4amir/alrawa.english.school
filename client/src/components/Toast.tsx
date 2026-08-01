@@ -26,6 +26,12 @@ export function getErrorMessage(e: unknown): string {
       if (d.detail) return d.detail;
       if (d.message) return d.message;
       if (d.error) return d.error;
+      // DRF field errors: { field: ["message", ...] } or { field: "message" }
+      if (typeof d === 'object' && !Array.isArray(d)) {
+        const first = Object.values(d)[0];
+        if (Array.isArray(first) && first.length > 0) return String(first[0]);
+        if (typeof first === 'string') return first;
+      }
     }
   }
   return 'An unexpected error occurred';
