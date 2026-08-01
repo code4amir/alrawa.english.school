@@ -35,11 +35,12 @@ const Dashboard = () => {
   const { studentTotal, teacherTotal, staffTotal, fetchClasses, fetchDashboardCounts } = useSchoolStore();
   const user = useAuthStore((s) => s.user);
   const isTeacher = user?.role === 'teacher';
+  const isMonitor = user?.role === 'monitor';
   const isAdmin = user?.role === 'admin';
   const isPendingViewer = user?.role === 'viewer';
   const urlMode = searchParams.get('mode') as ModeParam | null;
   const effectiveMode: ModeParam | null =
-    isPendingViewer || (urlMode === 'finance' && isTeacher) ? null : (activeMode ?? urlMode);
+    isPendingViewer || ((urlMode === 'finance') && (isTeacher || isMonitor)) ? null : (activeMode ?? urlMode);
   const handleSetMode = (mode: ModeParam | null) => {
     setMode(mode);
     if (mode) window.location.hash = '#/?mode=' + mode;
@@ -73,7 +74,7 @@ const Dashboard = () => {
     { key: 'accessories' as ModeParam, label: 'Fees & Books', desc: 'Fee structure & book list', color: 'amber', icon: BookOpen },
     { key: 'attendance' as ModeParam, label: 'Attendance', desc: 'Daily marking & monthly view', color: 'purple', icon: CalendarCheck },
     { key: 'result' as ModeParam, label: 'Result', desc: 'Marks & report cards', color: 'green', icon: BarChart3 },
-    ...(!isTeacher && !isPendingViewer ? [{ key: 'finance' as ModeParam, label: 'Finance', desc: 'Accounting & fees', color: 'rose', icon: Wallet }] : []),
+    ...(!isTeacher && !isMonitor && !isPendingViewer ? [{ key: 'finance' as ModeParam, label: 'Finance', desc: 'Accounting & fees', color: 'rose', icon: Wallet }] : []),
     ...(!isTeacher && !isPendingViewer ? [{ key: 'routine' as ModeParam, label: 'Routine', desc: 'Weekly class schedule', color: 'indigo', icon: ClipboardList }] : []),
     ...(!isTeacher && !isPendingViewer ? [{ key: 'exam-routine' as ModeParam, label: 'Exam Schedule', desc: 'Exam timetable management', color: 'cyan', icon: Calendar }] : []),
     ...(!isTeacher && !isPendingViewer ? [{ key: 'session-year' as ModeParam, label: 'Session Year', desc: 'Manage academic years & promote students', color: 'amber', icon: CalendarDays }] : []),

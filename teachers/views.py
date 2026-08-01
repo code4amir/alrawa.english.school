@@ -72,16 +72,24 @@ class TeacherViewSet(PhotoHandleMixin, viewsets.ModelViewSet):
         if not school_class:
             return Response({'error': 'Class not found'}, status=404)
 
-        _, created = ClassTeacher.objects.get_or_create(
+        is_primary = serializer.validated_data.get('isPrimary', False)
+
+        ct, _ = ClassTeacher.objects.get_or_create(
             teacher=teacher, school_class=school_class,
         )
-        if not created:
-            return Response({'error': 'Already assigned to this class'}, status=400)
+
+        if is_primary:
+            # Promote this teacher to lead — demote every other class teacher in the class
+            ClassTeacher.objects.filter(school_class=school_class).exclude(id=ct.id).update(is_primary=False)
+            ct.is_primary = True
+        else:
+            ct.is_primary = False
+        ct.save(update_fields=['is_primary'])
 
         log_audit('assign_class_teacher', 'teacher', entity_id=str(teacher.pk),
-                  details={'class_id': str(school_class.pk)}, request=request)
+                  details={'class_id': str(school_class.pk), 'is_primary': is_primary}, request=request)
         return Response(
-            ClassTeacherSerializer(ClassTeacher.objects.get(teacher=teacher, school_class=school_class)).data,
+            ClassTeacherSerializer(ct).data,
             status=201,
         )
 

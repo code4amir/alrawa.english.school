@@ -31,11 +31,11 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
         </div>
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-medium opacity-80 hidden sm:inline">{user?.name}</span>
-          {user?.role === 'admin' && (
+          {user?.role === 'admin' || user?.role === 'monitor' ? (
             <button onClick={() => navigate('/')} className="p-2 hover:bg-white/10 rounded-full transition-colors" title="Back to Dashboard">
               <ArrowLeft size={18} />
             </button>
-          )}
+          ) : null}
           <button onClick={logout} className="p-2 hover:bg-white/10 rounded-full transition-colors" title="Logout">
             <LogOut size={18} />
           </button>

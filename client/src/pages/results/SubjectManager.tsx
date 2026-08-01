@@ -8,7 +8,7 @@ import Modal from '../../components/Modal';
 export default function SubjectManager() {
   const { fetchSubjects, subjects, createSubject, updateSubject, deleteSubject } = useSchoolStore();
   const role = useAuthStore((s) => s.user?.role);
-  const isAdmin = role === 'admin';
+  const isAdmin = role === 'admin' || role === 'monitor';
   const [cls, setCls] = useState<any>(null);
   const [newName, setNewName] = useState('');
   const [newMarks, setNewMarks] = useState('');

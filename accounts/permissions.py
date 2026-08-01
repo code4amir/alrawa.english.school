@@ -26,6 +26,20 @@ ROLE_PERMISSIONS = {
         'academic-years:read',
         'academic:read', 'academic:write',
     ],
+    # Monitor = academic supervisor: full read/write on all academic data
+    # (attendance, results, homework, diary, routine...) but NO finance,
+    # user management, or audit access.
+    'monitor': [
+        'students:read', 'students:write',
+        'teachers:read',
+        'staff:read',
+        'books:read',
+        'classes:read',
+        'subjects:read', 'subjects:write', 'subjects:admin',
+        'results:read', 'results:write', 'results:admin',
+        'academic-years:read',
+        'academic:read', 'academic:write', 'academic:admin',
+    ],
     'accountant': [
         'students:read',
         'teachers:read',
@@ -84,8 +98,13 @@ def is_admin_or_superuser(user):
     return user.is_superuser or getattr(user, 'role', None) == 'admin'
 
 
+def is_academic_admin(user):
+    """Admin or Monitor — full academic authority (class teacher checks, subject coverage)."""
+    return user.is_superuser or getattr(user, 'role', None) in ('admin', 'monitor')
+
+
 def is_class_teacher_of(user, school_class_id):
-    if is_admin_or_superuser(user):
+    if is_academic_admin(user):
         return True
     teacher_profile = getattr(user, 'teacher_profile', None)
     if not teacher_profile:
@@ -97,7 +116,7 @@ def is_class_teacher_of(user, school_class_id):
 
 
 def can_teach_subject(user, subject_id, school_class_id):
-    if is_admin_or_superuser(user):
+    if is_academic_admin(user):
         return True
     teacher_profile = getattr(user, 'teacher_profile', None)
     if not teacher_profile:
@@ -111,7 +130,7 @@ def can_teach_subject(user, subject_id, school_class_id):
 
 
 def can_manage_students(user, school_class_id):
-    return is_admin_or_superuser(user) or is_class_teacher_of(user, school_class_id)
+    return is_academic_admin(user) or is_class_teacher_of(user, school_class_id)
 
 
 def require_photo_access(permission):

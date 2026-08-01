@@ -5,7 +5,7 @@ import { toast } from '../../components/Toast';
 import CameraModal from '../../components/CameraModal';
 import ImportModal from '../../components/ImportModal';
 import { CardSkeleton } from '../../components/Skeleton';
-import { RefreshCw, Mail, Download, Upload, Camera, Pencil, Trash2, Check, GraduationCap, BookOpen, Users, X, Plus, Lock } from 'lucide-react';
+import { RefreshCw, Mail, Download, Upload, Camera, Pencil, Trash2, Check, GraduationCap, BookOpen, Users, X, Plus, Lock, Star } from 'lucide-react';
 import { contactLinks } from '../../lib/contacts';
 import DeleteConfirmModal from '../../components/DeleteConfirmModal';
 import { API_URL } from '../../lib/config';
@@ -172,7 +172,7 @@ export default function TeacherSection() {
           {t.classTeacherOf?.length > 0 && (
             <div className="text-[10px] text-emerald-600 font-medium">
               <Users size={10} className="inline mr-1" />
-              Class Teacher: {t.classTeacherOf.map((c: any) => c.className).join(', ')}
+              Class Teacher: {t.classTeacherOf.map((c: any) => `${c.className}${c.is_primary ? ' ⭐' : ''}`).join(', ')}
             </div>
           )}
           {t.subjectAssignments?.length > 0 && (
@@ -390,11 +390,25 @@ function AssignmentPanel({ teacher, classes, fetchTeachers, onClose }: {
     if (!selectedClass) return toast('Select a class', 'error');
     setLoading(true);
     try {
-      await api.post(`/teachers/${teacher.id}/class_teacher/`, { classId: selectedClass });
+      await api.post(`/teachers/${teacher.id}/class_teacher/`, { classId: selectedClass, isPrimary: false });
       toast('Class teacher assigned', 'success');
       const cls = classes.find((c: any) => c.id === selectedClass);
-      setClassTeacherClasses([...classTeacherClasses, { classId: selectedClass, className: cls?.name || selectedClass }]);
+      setClassTeacherClasses([...classTeacherClasses, { classId: selectedClass, className: cls?.name || selectedClass, is_primary: false }]);
       setSelectedClass('');
+      fetchTeachers(undefined, true);
+    } catch (e: any) {
+      toast(e.response?.data?.error || 'Error', 'error');
+    } finally { setLoading(false); }
+  };
+
+  const toggleLead = async (classId: string, makePrimary: boolean) => {
+    setLoading(true);
+    try {
+      await api.post(`/teachers/${teacher.id}/class_teacher/`, { classId, isPrimary: makePrimary });
+      toast(makePrimary ? 'Marked as lead class teacher' : 'Removed lead designation', 'success');
+      setClassTeacherClasses(classTeacherClasses.map((c: any) =>
+        c.classId === classId ? { ...c, is_primary: makePrimary } : (makePrimary ? { ...c, is_primary: false } : c)
+      ));
       fetchTeachers(undefined, true);
     } catch (e: any) {
       toast(e.response?.data?.error || 'Error', 'error');
@@ -467,8 +481,24 @@ function AssignmentPanel({ teacher, classes, fetchTeachers, onClose }: {
               <div className="space-y-1.5 mb-2">
                 {classTeacherClasses.map((ct: any) => (
                   <div key={ct.classId} className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
-                    <span className="text-sm font-medium text-emerald-700">{ct.className}</span>
-                    <button onClick={() => removeClassTeacher(ct.classId)} disabled={loading} className="text-red-500 hover:text-red-700 disabled:opacity-50" aria-label="Remove"><X size={16} /></button>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-emerald-700">{ct.className}</span>
+                      {ct.is_primary ? (
+                        <span className="text-[9px] px-1.5 py-0.5 bg-emerald-600 text-white rounded-full font-bold">LEAD</span>
+                      ) : (
+                        <button onClick={() => toggleLead(ct.classId, true)} disabled={loading} className="text-[9px] px-1.5 py-0.5 bg-white border border-emerald-300 text-emerald-600 rounded-full font-bold hover:bg-emerald-100 disabled:opacity-50" title="Make this teacher the lead class teacher">
+                          Make Lead
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {ct.is_primary && (
+                        <button onClick={() => toggleLead(ct.classId, false)} disabled={loading} className="text-[9px] px-1.5 py-0.5 text-amber-600 hover:bg-amber-50 rounded font-semibold disabled:opacity-50" title="Remove lead designation (class keeps co-teachers)">
+                          remove lead
+                        </button>
+                      )}
+                      <button onClick={() => removeClassTeacher(ct.classId)} disabled={loading} className="text-red-500 hover:text-red-700 disabled:opacity-50" aria-label="Remove"><X size={16} /></button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -522,123 +552,81 @@ function AssignmentPanel({ teacher, classes, fetchTeachers, onClose }: {
 function TeacherCoverage({ teachers, classes }: { teachers: any[]; classes: any[] }) {
   const sortedClasses = [...classes].sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
 
-  const classTeacherByClass: Record<string, string> = {};
+  // classId -> all ClassTeacher entries {name, is_primary}
+  const classTeachers: Record<string, { name: string; is_primary: boolean }[]> = {};
   for (const t of teachers) {
-    for (const c of t.classTeacherOf || []) classTeacherByClass[c.classId] = t.name;
+    for (const c of t.classTeacherOf || []) {
+      (classTeachers[c.classId] ||= []).push({ name: t.name, is_primary: !!c.is_primary });
+    }
   }
 
-  // Unique subjects from all assignments
-  const subjMap = new Map<string, string>();
+  // classId -> [{subjectName, teacherName}]
+  const classSubjects: Record<string, { subjectName: string; teacherName: string }[]> = {};
   for (const t of teachers) {
-    for (const sa of t.subjectAssignments || []) subjMap.set(sa.subjectId, sa.subjectName);
+    for (const sa of t.subjectAssignments || []) {
+      (classSubjects[sa.classId] ||= []).push({ subjectName: sa.subjectName, teacherName: t.name });
+    }
   }
-  const subjects = Array.from(subjMap.entries())
-    .map(([id, name]) => ({ id, name }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-
-  const teacherForSubject = (classId: string, subjectId: string) => {
-    for (const t of teachers) {
-      if ((t.subjectAssignments || []).some((sa: any) => sa.classId === classId && sa.subjectId === subjectId)) return t.name;
-    }
-    return '';
-  };
-
-  const unassignedCount = (classId: string) => {
-    let n = 0;
-    for (const t of teachers) {
-      for (const sa of t.subjectAssignments || []) if (sa.classId === classId) n++;
-    }
-    return n;
-  };
 
   return (
-    <div className="space-y-4 animate-fade-in">
-      {/* Class Teachers */}
-      <div className="bg-white dark:bg-[#1a1a2e] rounded-xl border border-school-border dark:border-[#2a2a3e] overflow-hidden">
-        <div className="px-4 pt-4 pb-2 flex items-center gap-2">
-          <Users size={15} className="text-school-accent" />
-          <h3 className="text-xs font-bold uppercase text-school-muted">Class Teachers</h3>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-school-paper/50 text-[10px] uppercase tracking-widest text-school-muted font-bold">
-              <tr>
-                <th className="px-4 py-2 text-left">Class</th>
-                <th className="px-4 py-2 text-left">Class Teacher</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-school-border/50">
-              {sortedClasses.map((cls: any) => {
-                const ct = classTeacherByClass[cls.id];
-                return (
-                  <tr key={cls.id} className="hover:bg-school-paper/30 transition-colors">
-                    <td className="px-4 py-2.5 font-semibold text-xs">{cls.name}</td>
-                    <td className="px-4 py-2.5 text-xs">
-                      {ct ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-school-primary/10 text-school-primary rounded-lg font-bold">
-                          <GraduationCap size={12} /> {ct}
-                        </span>
-                      ) : (
-                        <span className="text-[11px] text-amber-600 font-semibold">— No class teacher</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 animate-fade-in">
+      {sortedClasses.map((cls: any) => {
+        const cts = classTeachers[cls.id] || [];
+        const subs = classSubjects[cls.id] || [];
+        const lead = cts.find((c) => c.is_primary);
+        const cos = cts.filter((c) => !c.is_primary);
+        return (
+          <div key={cls.id} className="bg-white dark:bg-[#1a1a2e] rounded-xl border border-school-border dark:border-[#2a2a3e] overflow-hidden flex flex-col">
+            {/* Class header */}
+            <div className="px-4 py-2.5 border-b border-school-border/50 bg-school-paper/40 flex items-center justify-between">
+              <h3 className="font-serif font-bold text-school-primary text-sm">{cls.name}</h3>
+              <span className="text-[9px] px-2 py-0.5 bg-school-primary/10 text-school-primary rounded-full font-bold uppercase tracking-wide">
+                {cts.length} teacher{cts.length === 1 ? '' : 's'}
+              </span>
+            </div>
 
-      {/* Subject Coverage Matrix */}
-      <div className="bg-white dark:bg-[#1a1a2e] rounded-xl border border-school-border dark:border-[#2a2a3e] overflow-hidden">
-        <div className="px-4 pt-4 pb-2 flex items-center gap-2">
-          <BookOpen size={15} className="text-school-accent" />
-          <h3 className="text-xs font-bold uppercase text-school-muted">Subject Coverage</h3>
-          {subjects.length === 0 && <span className="text-[10px] text-school-muted">(no subject assignments yet)</span>}
-        </div>
-        {subjects.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-school-paper/50 text-[10px] uppercase tracking-widest text-school-muted font-bold">
-                <tr>
-                  <th className="px-4 py-2 text-left sticky left-0 bg-school-paper/50">Class</th>
-                  {subjects.map((s) => (
-                    <th key={s.id} className="px-3 py-2 text-center whitespace-nowrap">{s.name}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-school-border/50">
-                {sortedClasses.map((cls: any) => {
-                  const assigned = unassignedCount(cls.id);
-                  return (
-                    <tr key={cls.id} className="hover:bg-school-paper/30 transition-colors">
-                      <td className="px-4 py-2.5 font-semibold text-xs sticky left-0 bg-white dark:bg-[#1a1a2e]">
-                        {cls.name}
-                        {assigned === 0 && <span className="ml-1.5 text-[9px] text-amber-600 font-bold">(no subjects)</span>}
-                      </td>
-                      {subjects.map((s) => {
-                        const tName = teacherForSubject(cls.id, s.id);
-                        return (
-                          <td key={s.id} className="px-3 py-2.5 text-center text-[11px]">
-                            {tName ? (
-                              <span className="inline-flex px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded-lg font-semibold whitespace-nowrap">{tName}</span>
-                            ) : (
-                              <span className="text-gray-300 dark:text-gray-600">—</span>
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <div className="p-3 space-y-3 flex-1">
+              {/* Class teachers */}
+              <div>
+                <div className="text-[9px] uppercase tracking-widest text-school-muted font-bold mb-1.5 flex items-center gap-1"><Users size={10} /> Class Teacher</div>
+                {cts.length === 0 ? (
+                  <div className="text-[11px] text-amber-600 font-semibold">— No class teacher</div>
+                ) : (
+                  <div className="flex flex-wrap gap-1">
+                    {lead && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-600 text-white rounded-lg text-[10px] font-bold">
+                        <Star size={10} className="fill-current" /> {lead.name}
+                      </span>
+                    )}
+                    {cos.map((c, i) => (
+                      <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-[10px] font-semibold">
+                        {c.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Subjects */}
+              <div>
+                <div className="text-[9px] uppercase tracking-widest text-school-muted font-bold mb-1.5 flex items-center gap-1"><BookOpen size={10} /> Subjects</div>
+                {subs.length === 0 ? (
+                  <div className="text-[11px] text-amber-600 font-semibold">— No subjects assigned</div>
+                ) : (
+                  <div className="space-y-1">
+                    {subs.map((s, i) => (
+                      <div key={i} className="flex items-center justify-between text-[11px]">
+                        <span className="font-semibold text-school-primary">{s.subjectName}</span>
+                        <span className="text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded font-medium">{s.teacherName}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
-        ) : (
-          <div className="px-4 pb-4 text-center text-xs text-school-muted py-4">Assign subjects from the teacher cards (Assign → Subject) to see coverage here.</div>
-        )}
-      </div>
+        );
+      })}
     </div>
   );
 }

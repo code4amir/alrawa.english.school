@@ -1,5 +1,6 @@
 import uuid
 from django.db import models
+from django.db.models import Q
 
 
 class Teacher(models.Model):
@@ -38,6 +39,7 @@ class ClassTeacher(models.Model):
     school_class = models.ForeignKey(
         'core.SchoolClass', on_delete=models.CASCADE, related_name='class_teachers',
     )
+    is_primary = models.BooleanField(default=False, help_text='Lead class teacher — at most one per class')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -47,6 +49,11 @@ class ClassTeacher(models.Model):
             models.UniqueConstraint(
                 fields=['teacher', 'school_class'],
                 name='unique_class_teacher',
+            ),
+            models.UniqueConstraint(
+                fields=['school_class'],
+                condition=Q(is_primary=True),
+                name='one_primary_class_teacher',
             ),
         ]
 

@@ -15,7 +15,7 @@ const SUBJECT_KEY_MAP: Record<string, string> = {
 export default function EnterBySubject() {
   const { students, fetchStudents, subjects, fetchSubjects, saveStudentResult, academicYears, fetchAcademicYears, classResults, fetchClassResults } = useSchoolStore();
   const role = useAuthStore((s) => s.user?.role);
-  const canSaveResults = role === 'admin' || role === 'teacher';
+  const canSaveResults = role === 'admin' || role === 'teacher' || role === 'monitor';
   const [cls, setCls] = useState<any>(null);
   const [sessionFilter, setSessionFilter] = useState('');
   const [bulkSubject, setBulkSubject] = useState('');

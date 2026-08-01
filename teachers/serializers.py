@@ -9,7 +9,7 @@ class ClassTeacherSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ClassTeacher
-        fields = ['id', 'classId', 'className', 'created_at']
+        fields = ['id', 'classId', 'className', 'is_primary', 'created_at']
         read_only_fields = ['id', 'created_at']
 
 
@@ -64,6 +64,7 @@ class TeacherSerializer(PhotoUrlMixin, serializers.ModelSerializer):
 
 class AssignClassTeacherSerializer(serializers.Serializer):
     classId = serializers.UUIDField()
+    isPrimary = serializers.BooleanField(required=False, default=False)
 
 
 class RemoveClassTeacherSerializer(serializers.Serializer):
