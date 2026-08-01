@@ -165,12 +165,22 @@ class StudentViewSet(PhotoHandleMixin, viewsets.ModelViewSet):
     def bulk_toggle_service(self, request):
         service_type_id = request.data.get('service_type_id')
         student_ids = request.data.get('student_ids', [])
+        class_id = request.data.get('class_id')
         active = request.data.get('active', True)
         starts_at = request.data.get('starts_at')
         ends_at = request.data.get('ends_at')
 
-        if not service_type_id or not student_ids:
-            return Response({'error': 'service_type_id and student_ids required'}, status=400)
+        if not service_type_id:
+            return Response({'error': 'service_type_id required'}, status=400)
+
+        if class_id:
+            student_ids = list(Student.objects.filter(
+                school_class_id=class_id, deleted_at__isnull=True
+            ).values_list('id', flat=True))
+            if not student_ids:
+                return Response({'error': 'No students found in this class'}, status=400)
+        elif not student_ids:
+            return Response({'error': 'class_id or student_ids required'}, status=400)
 
         from .services import bulk_set_student_service
         results = bulk_set_student_service(
@@ -180,4 +190,30 @@ class StudentViewSet(PhotoHandleMixin, viewsets.ModelViewSet):
             starts_at=starts_at,
             ends_at=ends_at,
         )
-        return Response({'results': results})
+        ok = sum(1 for r in results if r.get('status') == 'ok')
+        log_audit('bulk_toggle_service', 'student_service',
+                  details={'service_type_id': str(service_type_id), 'class_id': str(class_id) if class_id else None,
+                           'count': len(results), 'ok': ok},
+                  request=request)
+        return Response({'results': results, 'total': len(results), 'ok': ok, 'errors': len(results) - ok})
+
+    @action(detail=False, methods=['get'])
+    def service_summary(self, request):
+        """Per-class enrollment overview: total students + active count per service."""
+        from django.db.models import Count
+        class_totals = Student.objects.filter(deleted_at__isnull=True).values(
+            'school_class_id', 'school_class__name'
+        ).annotate(total=Count('id')).order_by('school_class__name')
+        svc_counts = StudentService.objects.filter(active=True).values(
+            'student__school_class_id', 'service_type_id'
+        ).annotate(n=Count('id'))
+        svc_map: dict = {}
+        for c in svc_counts:
+            svc_map.setdefault(c['student__school_class_id'], {})[str(c['service_type_id'])] = c['n']
+        rows = [{
+            'classId': str(x['school_class_id']),
+            'className': x['school_class__name'],
+            'total': x['total'],
+            'services': svc_map.get(x['school_class_id'], {}),
+        } for x in class_totals]
+        return Response(rows)

@@ -376,7 +376,7 @@ const FinanceSection = () => {
     const fy = now.getMonth() >= FISCAL_YEAR_START_MONTH ? now.getFullYear() + 1 : now.getFullYear();
     fetchDashboardSummary(String(fy));
     fetchClasses();
-    fetchStudents();
+    fetchStudents(undefined, true);
     fetchFeeSchedules();
     fetchExpenseCategories();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

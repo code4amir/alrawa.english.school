@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSchoolStore, api } from '../../store';
 import { toast } from '../../components/Toast';
-import { Plus, Pencil, Trash2, AlertTriangle, Settings } from 'lucide-react';
+import { Plus, Pencil, Trash2, AlertTriangle, Settings, Users, Power } from 'lucide-react';
 
 export default function ServiceTypeManager() {
   const { serviceTypes, fetchServiceTypes } = useSchoolStore();
@@ -12,10 +12,53 @@ export default function ServiceTypeManager() {
   const [defaultAmount, setDefaultAmount] = useState('');
   const [frequency, setFrequency] = useState('MONTHLY');
   const [submitting, setSubmitting] = useState(false);
+  const [summary, setSummary] = useState<any[]>([]);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [bulkServiceId, setBulkServiceId] = useState('');
+  const [bulkSubmitting, setBulkSubmitting] = useState<string | null>(null);
+
+  const loadSummary = async () => {
+    setSummaryLoading(true);
+    try {
+      const res = await api.get('/students/service_summary/');
+      setSummary(res.data || []);
+    } catch { /* keep last */ }
+    setSummaryLoading(false);
+  };
 
   useEffect(() => {
     fetchServiceTypes(true).then(() => setLoading(false));
+    loadSummary();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!bulkServiceId && serviceTypes.length > 0) {
+      const first = serviceTypes.find((s: any) => s.active) || serviceTypes[0];
+      if (first) setBulkServiceId(first.id);
+    }
+  }, [serviceTypes, bulkServiceId]);
+
+  const handleBulk = async (cls: any, active: boolean) => {
+    if (!bulkServiceId) { toast('Select a service first', 'error'); return; }
+    const label = active ? 'Enable' : 'Disable';
+    if (!confirm(`${label} "${serviceTypes.find((s: any) => s.id === bulkServiceId)?.name}" for ALL ${cls.total} students in ${cls.className}?`)) return;
+    const key = `${cls.classId}_${active}`;
+    setBulkSubmitting(key);
+    try {
+      const res = await api.post('/students/bulk_toggle_service/', {
+        service_type_id: bulkServiceId,
+        class_id: cls.classId,
+        active,
+      });
+      const d = res.data || {};
+      toast(`${label}d ${d.ok}/${d.total} students ✓`, d.errors ? 'info' : 'success');
+      loadSummary();
+      fetchServiceTypes(true);
+    } catch (e: any) {
+      toast(e?.response?.data?.error || 'Bulk update failed', 'error');
+    }
+    setBulkSubmitting(null);
+  };
 
   const resetForm = () => {
     setName('');
@@ -204,6 +247,82 @@ export default function ServiceTypeManager() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* Class Enrollment — bulk activate per class */}
+      {serviceTypes.length > 0 && (
+        <div className="bg-white dark:bg-[#1a1a2e] rounded-xl border border-school-border dark:border-[#2a2a3e] overflow-hidden">
+          <div className="flex items-center justify-between px-4 pt-4 pb-2 flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <Users size={16} className="text-school-accent" />
+              <h3 className="text-xs font-bold uppercase text-school-muted">Class Enrollment</h3>
+              {summaryLoading && <div className="w-3.5 h-3.5 border-2 border-school-primary/20 border-t-school-primary rounded-full animate-spin" />}
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-[10px] font-bold uppercase text-school-muted">Service</label>
+              <select value={bulkServiceId} onChange={(e) => setBulkServiceId(e.target.value)}
+                className="border border-school-border rounded-lg px-2 py-1.5 text-xs bg-white dark:bg-[#1a1a2e] outline-none focus:ring-2 focus:ring-school-accent">
+                {serviceTypes.map((st: any) => (
+                  <option key={st.id} value={st.id}>{st.name}{st.active ? '' : ' (inactive)'}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          {summary.length === 0 ? (
+            <div className="px-4 pb-4 text-center text-xs text-school-muted py-4">
+              {summaryLoading ? 'Loading enrollment…' : 'No classes with students yet.'}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-school-paper/50 text-[10px] uppercase tracking-widest text-school-muted font-bold">
+                  <tr>
+                    <th className="px-4 py-2 text-left">Class</th>
+                    <th className="px-4 py-2 text-center">Students</th>
+                    <th className="px-4 py-2 text-center">Enrolled</th>
+                    <th className="px-4 py-2 text-right">Bulk Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-school-border/50">
+                  {summary.map((row: any) => {
+                    const enrolled = row.services?.[bulkServiceId] || 0;
+                    const pct = row.total > 0 ? Math.round((enrolled / row.total) * 100) : 0;
+                    return (
+                      <tr key={row.classId} className="hover:bg-school-paper/30 transition-colors">
+                        <td className="px-4 py-2.5 font-semibold text-xs">{row.className}</td>
+                        <td className="px-4 py-2.5 text-center text-xs">{row.total}</td>
+                        <td className="px-4 py-2.5 text-center">
+                          <div className="inline-flex items-center gap-1.5">
+                            <span className="text-xs font-bold">{enrolled}/{row.total}</span>
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ${pct === 100 ? 'bg-emerald-50 text-emerald-700' : pct > 0 ? 'bg-amber-50 text-amber-700' : 'bg-gray-100 text-gray-400'}`}>{pct}%</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          <div className="flex gap-1 justify-end">
+                            <button
+                              onClick={() => handleBulk(row, true)}
+                              disabled={bulkSubmitting === `${row.classId}_true`}
+                              className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-[10px] font-bold hover:bg-emerald-100 disabled:opacity-50 transition-colors"
+                            >
+                              <Power size={11} /> Enable all
+                            </button>
+                            <button
+                              onClick={() => handleBulk(row, false)}
+                              disabled={bulkSubmitting === `${row.classId}_false`}
+                              className="inline-flex items-center gap-1 px-2 py-1 bg-gray-50 text-gray-500 border border-gray-200 rounded-lg text-[10px] font-bold hover:bg-gray-100 disabled:opacity-50 transition-colors"
+                            >
+                              Disable all
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
