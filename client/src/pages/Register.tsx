@@ -2,14 +2,23 @@ import { useState, useEffect } from 'react';
 import type { FormEvent } from 'react';
 import { api } from '../store';
 import { Link } from 'react-router-dom';
-import { UserPlus, ShieldAlert, MailCheck, School } from 'lucide-react';
+import { UserPlus, ShieldAlert, MailCheck, School, User } from 'lucide-react';
 import { SCHOOL_LOGO } from '../lib/logo';
+
+const PARENT_FIELDS: { key: string; label: string; placeholder: string; type?: string }[] = [
+  { key: 'child_name', label: "Student's Full Name", placeholder: 'John Smith' },
+  { key: 'roll', label: "Student's Roll No", placeholder: '25' },
+  { key: 'father_name', label: "Father's Name", placeholder: 'Robert Smith' },
+  { key: 'mother_name', label: "Mother's Name", placeholder: 'Jane Smith' },
+  { key: 'phone', label: 'Your Phone Number', placeholder: '01712345678', type: 'tel' },
+];
 
 const Register = () => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [extra, setExtra] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [registered, setRegistered] = useState(false);
@@ -35,7 +44,12 @@ const Register = () => {
     setLoading(true);
     try {
       const endpoint = setupMode ? '/setup/init/' : '/auth/register/';
-      const payload = { name, email, password };
+      const payload: Record<string, string> = { name, email, password };
+      if (!setupMode) {
+        for (const f of PARENT_FIELDS) {
+          if (extra[f.key]) payload[f.key] = extra[f.key];
+        }
+      }
       const res = await api.post(endpoint, payload);
       if (res.data?.error) {
         setError(res.data.error);
@@ -59,6 +73,9 @@ const Register = () => {
       setLoading(false);
     }
   };
+
+  const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setExtra(p => ({ ...p, [k]: e.target.value }));
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-school-primary via-school-secondary to-school-accent2 flex items-center justify-center p-4">
@@ -103,7 +120,7 @@ const Register = () => {
               <div className="inline-flex items-center gap-2 bg-school-paper px-4 py-1.5 rounded-full border border-school-border">
                 <School size={14} className="text-school-accent" />
                 <span className="text-[10px] font-bold uppercase text-school-muted tracking-wider">
-                  {setupMode ? 'Initial Setup' : 'Staff Registration'}
+                  {setupMode ? 'Initial Setup' : 'Parent Registration'}
                 </span>
               </div>
             </div>
@@ -116,17 +133,37 @@ const Register = () => {
             )}
 
             <div className="space-y-3">
+              {!setupMode && (
+                <>
+                  <div className="flex items-center gap-2 pt-2 pb-1">
+                    <User size={14} className="text-school-accent" />
+                    <span className="text-[10px] font-bold uppercase text-school-muted tracking-wider">Student Information</span>
+                  </div>
+                  {PARENT_FIELDS.map(f => (
+                    <div key={f.key}>
+                      <label htmlFor={`reg-${f.key}`} className="text-[10px] font-bold uppercase text-school-muted ml-1">{f.label}</label>
+                      <input id={`reg-${f.key}`} type={f.type || 'text'} required value={extra[f.key] || ''} onChange={set(f.key)}
+                        className="w-full bg-white border border-school-border p-3 rounded-xl focus:ring-2 focus:ring-school-accent focus:border-transparent outline-none transition-all text-sm"
+                        placeholder={f.placeholder} />
+                    </div>
+                  ))}
+                </>
+              )}
+              <div className="flex items-center gap-2 pt-2 pb-1">
+                <School size={14} className="text-school-accent" />
+                <span className="text-[10px] font-bold uppercase text-school-muted tracking-wider">Account Information</span>
+              </div>
               <div>
-                <label htmlFor="reg-name" className="text-[10px] font-bold uppercase text-school-muted ml-1">Full Name</label>
+                <label htmlFor="reg-name" className="text-[10px] font-bold uppercase text-school-muted ml-1">{setupMode ? 'Full Name' : 'Your Name'}</label>
                 <input id="reg-name" type="text" required value={name} onChange={(e) => setName(e.target.value)}
                   className="w-full bg-white border border-school-border p-3 rounded-xl focus:ring-2 focus:ring-school-accent focus:border-transparent outline-none transition-all text-sm"
-                  placeholder="John Doe" />
+                  placeholder={setupMode ? 'Admin Name' : 'Your Name'} />
               </div>
               <div>
                 <label htmlFor="reg-email" className="text-[10px] font-bold uppercase text-school-muted ml-1">Email Address</label>
                 <input id="reg-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
                   className="w-full bg-white border border-school-border p-3 rounded-xl focus:ring-2 focus:ring-school-accent focus:border-transparent outline-none transition-all text-sm"
-                  placeholder="staff@alrawa.edu" />
+                  placeholder="you@example.com" />
               </div>
               <div>
                 <label htmlFor="reg-password" className="text-[10px] font-bold uppercase text-school-muted ml-1">Password</label>
@@ -155,6 +192,9 @@ const Register = () => {
             <p className="text-center text-xs text-school-muted">
               Already have an account?{' '}
               <Link to="/login" className="text-school-accent font-semibold hover:underline">Sign In</Link>
+            </p>
+            <p className="text-center text-[10px] text-school-muted/70">
+              Registration is for parents/guardians. Staff & teacher accounts are created by the school.
             </p>
           </form>
           )}

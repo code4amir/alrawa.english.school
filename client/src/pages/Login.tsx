@@ -112,7 +112,7 @@ const Login = () => {
             <div className="text-center">
               <div className="inline-flex items-center gap-2 bg-school-paper px-4 py-1.5 rounded-full border border-school-border">
                 <School size={14} className="text-school-accent" />
-                <span className="text-[10px] font-bold uppercase text-school-muted tracking-wider">Staff Portal</span>
+                <span className="text-[10px] font-bold uppercase text-school-muted tracking-wider">School Portal</span>
               </div>
             </div>
 
@@ -131,8 +131,7 @@ const Login = () => {
                   type="email" required value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full bg-white border border-school-border p-3 rounded-xl focus:border-school-accent focus:ring-[3px] focus:ring-school-accent/15 outline-none transition-all text-sm"
-                  placeholder="staff@alrawa.edu"
-                />
+                  placeholder="you@example.com" />
               </div>
               <div>
                 <label htmlFor="login-password" className="text-[10px] font-bold uppercase text-school-muted ml-1">Password</label>
@@ -185,7 +184,7 @@ const Login = () => {
             </div>
 
             <p className="text-center text-xs text-school-muted">
-              New staff?{' '}
+              New parent?{' '}
               <Link to="/register" className="text-school-accent font-semibold hover:underline">Register here</Link>
             </p>
 

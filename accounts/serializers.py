@@ -36,12 +36,22 @@ class UserRoleSerializer(serializers.Serializer):
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=8)
+    child_name = serializers.CharField(required=False, allow_blank=True)
+    roll = serializers.CharField(required=False, allow_blank=True)
+    phone = serializers.CharField(required=False, allow_blank=True)
+    father_name = serializers.CharField(required=False, allow_blank=True)
+    mother_name = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = User
-        fields = ['email', 'name', 'password']
+        fields = ['email', 'name', 'password', 'child_name', 'roll', 'phone', 'father_name', 'mother_name']
 
     def create(self, validated_data):
+        validated_data.pop('child_name', None)
+        validated_data.pop('roll', None)
+        validated_data.pop('phone', None)
+        validated_data.pop('father_name', None)
+        validated_data.pop('mother_name', None)
         user = User.objects.create_user(
             email=validated_data['email'],
             password=validated_data['password'],

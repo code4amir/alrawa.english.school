@@ -140,6 +140,7 @@ class RegisterView(generics.CreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
+        linked_child = False
         if is_first:
             user.role = 'admin'
             user.email_verified = True
@@ -153,8 +154,39 @@ class RegisterView(generics.CreateAPIView):
                 user.save(update_fields=['role'])
                 _send_verification_email(user)
             else:
+                # Parent registration: auto-link child when student details are provided
+                child_name = (request.data.get('child_name') or '').strip()
+                phone = (request.data.get('phone') or '').strip()
+                if child_name and phone:
+                    from students.models import Student
+                    from parents.models import ParentStudentLink
+                    filters = {
+                        'name__iexact': child_name,
+                        'contact': phone,
+                        'deleted_at__isnull': True,
+                    }
+                    roll = (request.data.get('roll') or '').strip()
+                    father_name = (request.data.get('father_name') or '').strip()
+                    mother_name = (request.data.get('mother_name') or '').strip()
+                    if roll:
+                        filters['roll'] = roll
+                    if father_name:
+                        filters['father_name__iexact'] = father_name
+                    if mother_name:
+                        filters['mother_name__iexact'] = mother_name
+                    student = Student.objects.filter(**filters).first()
+                    if student:
+                        ParentStudentLink.objects.get_or_create(parent=user, student=student)
+                        for sib in Student.objects.filter(contact=phone, deleted_at__isnull=True).exclude(id=student.id):
+                            ParentStudentLink.objects.get_or_create(parent=user, student=sib)
+                        user.role = 'parent'
+                        user.save(update_fields=['role'])
+                        linked_child = True
                 _send_verification_email(user)
-        return Response(UserSerializer(user).data, status=status.HTTP_201_CREATED)
+        data = UserSerializer(user).data
+        if not is_first:
+            data['linkedChild'] = linked_child
+        return Response(data, status=status.HTTP_201_CREATED)
 
 
 class CreateStaffView(APIView):
