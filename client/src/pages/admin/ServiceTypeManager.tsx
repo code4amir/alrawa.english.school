@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import { useSchoolStore, api } from '../../store';
 import { toast } from '../../components/Toast';
-import { Plus, Pencil, Trash2, AlertTriangle, Settings, Users, Power } from 'lucide-react';
+import { Plus, Pencil, Trash2, AlertTriangle, Settings, Users, Power, ChevronDown } from 'lucide-react';
 
 export default function ServiceTypeManager() {
-  const { serviceTypes, fetchServiceTypes } = useSchoolStore();
+  const { serviceTypes, fetchServiceTypes, fetchClasses, students, fetchStudents } = useSchoolStore();
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -16,6 +16,8 @@ export default function ServiceTypeManager() {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [bulkServiceId, setBulkServiceId] = useState('');
   const [bulkSubmitting, setBulkSubmitting] = useState<string | null>(null);
+  const [expandedClass, setExpandedClass] = useState<any | null>(null);
+  const [togglingStudent, setTogglingStudent] = useState<string | null>(null);
 
   const loadSummary = async () => {
     setSummaryLoading(true);
@@ -28,6 +30,7 @@ export default function ServiceTypeManager() {
 
   useEffect(() => {
     fetchServiceTypes(true).then(() => setLoading(false));
+    fetchClasses();
     loadSummary();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -54,11 +57,47 @@ export default function ServiceTypeManager() {
       toast(`${label}d ${d.ok}/${d.total} students ✓`, d.errors ? 'info' : 'success');
       loadSummary();
       fetchServiceTypes(true);
+      if (expandedClass?.classId === cls.classId) {
+        fetchStudents({ className: cls.className }, true);
+      }
     } catch (e: any) {
       toast(e?.response?.data?.error || 'Bulk update failed', 'error');
     }
     setBulkSubmitting(null);
   };
+
+  const toggleExpand = (cls: any) => {
+    if (expandedClass?.classId === cls.classId) {
+      setExpandedClass(null);
+      return;
+    }
+    setExpandedClass(cls);
+    fetchStudents({ className: cls.className }, true);
+  };
+
+  const handleStudentToggle = async (student: any, active: boolean) => {
+    if (!bulkServiceId) { toast('Select a service first', 'error'); return; }
+    setTogglingStudent(student.id);
+    try {
+      await api.post(`/students/${student.id}/toggle_service/`, {
+        serviceTypeId: bulkServiceId,
+        active,
+        starts_at: null,
+        ends_at: null,
+      });
+      toast(`${active ? 'Enrolled' : 'Removed'}: ${student.name}`, 'success');
+      if (expandedClass) fetchStudents({ className: expandedClass.className }, true);
+      loadSummary();
+    } catch (e: any) {
+      toast(e?.response?.data?.error || 'Toggle failed', 'error');
+    }
+    setTogglingStudent(null);
+  };
+
+  const expandedStudents = expandedClass
+    ? students.filter((s: any) => s.class === expandedClass.className)
+        .sort((a: any, b: any) => (+a.roll || 999) - (+b.roll || 999) || a.name.localeCompare(b.name))
+    : [];
 
   const resetForm = () => {
     setName('');
@@ -288,9 +327,17 @@ export default function ServiceTypeManager() {
                   {summary.map((row: any) => {
                     const enrolled = row.services?.[bulkServiceId] || 0;
                     const pct = row.total > 0 ? Math.round((enrolled / row.total) * 100) : 0;
+                    const isExpanded = expandedClass?.classId === row.classId;
                     return (
-                      <tr key={row.classId} className="hover:bg-school-paper/30 transition-colors">
-                        <td className="px-4 py-2.5 font-semibold text-xs">{row.className}</td>
+                      <Fragment key={row.classId}>
+                      <tr className={`hover:bg-school-paper/30 transition-colors ${isExpanded ? 'bg-school-paper/50' : ''}`}>
+                        <td className="px-4 py-2.5">
+                          <button onClick={() => toggleExpand(row)}
+                            className="inline-flex items-center gap-1.5 font-semibold text-xs hover:text-school-accent transition-colors">
+                            <ChevronDown size={13} className={`transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                            {row.className}
+                          </button>
+                        </td>
                         <td className="px-4 py-2.5 text-center text-xs">{row.total}</td>
                         <td className="px-4 py-2.5 text-center">
                           <div className="inline-flex items-center gap-1.5">
@@ -317,6 +364,41 @@ export default function ServiceTypeManager() {
                           </div>
                         </td>
                       </tr>
+                      {isExpanded && (
+                        <tr className="bg-school-paper/30">
+                          <td colSpan={4} className="px-4 py-3">
+                            {expandedStudents.length === 0 ? (
+                              <div className="text-center text-xs text-school-muted py-3">Loading students…</div>
+                            ) : (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                {expandedStudents.map((s: any) => {
+                                  const hasSvc = s.services?.some((svc: any) => svc.serviceTypeId === bulkServiceId && svc.active);
+                                  const busy = togglingStudent === s.id;
+                                  return (
+                                    <div key={s.id} className="flex items-center gap-2 bg-white dark:bg-[#1a1a2e] border border-school-border dark:border-[#2a2a3e] rounded-lg px-3 py-2">
+                                      <div className="flex-1 min-w-0">
+                                        <div className="text-xs font-semibold text-school-primary dark:text-[#e0e0e8] truncate">{s.name}</div>
+                                        <div className="text-[10px] text-school-muted">Roll: {s.roll || '—'}</div>
+                                      </div>
+                                      <button
+                                        onClick={() => handleStudentToggle(s, !hasSvc)}
+                                        disabled={busy}
+                                        className={`text-[10px] px-2 py-1 rounded font-bold border transition-colors disabled:opacity-50 shrink-0 ${
+                                          hasSvc
+                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                            : 'bg-white text-gray-400 border-gray-200 hover:border-school-accent hover:text-school-primary'
+                                        }`}>
+                                        {busy ? '...' : hasSvc ? '✓ Enrolled' : '+ Enroll'}
+                                      </button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
                     );
                   })}
                 </tbody>

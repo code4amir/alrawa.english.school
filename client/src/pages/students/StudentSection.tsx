@@ -20,7 +20,7 @@ async function loadJsPDF() {
 }
 
 export default function StudentSection() {
-  const { classes, students, fetchClasses, fetchStudents, academicYears, fetchAcademicYears, loading, serviceTypes, fetchServiceTypes } = useSchoolStore();
+  const { classes, students, fetchClasses, fetchStudents, academicYears, fetchAcademicYears, loading } = useSchoolStore();
   const role = useAuthStore((s) => s.user?.role);
   const isAdmin = role === 'admin';
   const canEditStudents = role === 'admin' || role === 'teacher';
@@ -38,7 +38,6 @@ export default function StudentSection() {
   const [promoteYear, setPromoteYear] = useState<{ name: string; id: string } | null>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [togglingService, setTogglingService] = useState<Record<string, boolean>>({});
   const searchTimer = useRef<any>(null);
 
   const handleSearchChange = (value: string) => {
@@ -70,7 +69,6 @@ export default function StudentSection() {
       const active = useSchoolStore.getState().academicYears.find((y: AcademicYear) => y.isActive);
       if (active) setSessionFilter(active.name);
     });
-    fetchServiceTypes();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sorted = [...classes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
@@ -101,25 +99,6 @@ export default function StudentSection() {
     });
     setPhoto(s.photoUrl ? (s.photoUrl.startsWith('http') ? s.photoUrl : `${API_URL.replace('/api', '')}${s.photoUrl}`) : (s.hasPhoto ? `${API_URL}/students/${s.id}/photo/` : null));
     setEditingId(s.id);
-  };
-
-  const handleToggleService = async (studentId: string, serviceTypeId: string, active: boolean) => {
-    const key = `${studentId}_${serviceTypeId}`;
-    setTogglingService(prev => ({ ...prev, [key]: true }));
-    try {
-      await api.post(`/students/${studentId}/toggle_service/`, {
-        studentId,
-        serviceTypeId,
-        active,
-        starts_at: null,
-        ends_at: null,
-      });
-      toast(`${active ? 'Enrolled in' : 'Removed from'} service`, 'success');
-      fetchStudents(showGraduated ? { showGraduated: 'true' } : undefined, true);
-    } catch (e: any) {
-      toast(e?.response?.data?.error || e?.message || 'Failed to toggle service', 'error');
-    }
-    setTogglingService(prev => ({ ...prev, [key]: false }));
   };
 
   const [submitting, setSubmitting] = useState(false);
@@ -271,8 +250,8 @@ export default function StudentSection() {
         {s.motherName && <div className="text-xs text-school-muted">Mother: {s.motherName}</div>}
         {s.contact && <div className="text-xs text-school-muted">Contact: <span className="text-school-primary">{contactLinks(s.contact)}</span></div>}
         </div>
-        {/* Service badges */}
-        {s.services && s.services.length > 0 && (
+        {/* Service badges — read-only enrollment display */}
+        {s.services && s.services.some((svc: any) => svc.active) && (
           <div className="flex flex-wrap gap-1 mt-2 pt-2 border-t border-school-border/50">
             {s.services.filter((svc: any) => svc.active).map((svc: any) => (
               <span key={svc.id}
@@ -280,28 +259,6 @@ export default function StudentSection() {
                 {svc.serviceName}
               </span>
             ))}
-          </div>
-        )}
-        {/* Add service button */}
-        {canEditStudents && serviceTypes.length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-1">
-            {serviceTypes.filter((st: any) => st.active).map((st: any) => {
-              const isActive = s.services?.some((svc: any) => svc.serviceTypeId === st.id && svc.active);
-              const key = `${s.id}_${st.id}`;
-              const loading = togglingService[key];
-              return (
-                <button key={st.id}
-                  onClick={() => handleToggleService(s.id, st.id, !isActive)}
-                  disabled={loading}
-                  className={`text-[9px] px-1.5 py-0.5 rounded font-bold border transition-colors ${
-                    isActive
-                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-                      : 'bg-white text-gray-400 border-gray-200 hover:border-school-accent hover:text-school-primary'
-                  }`}>
-                  {loading ? '...' : isActive ? `✓ ${st.name}` : `+ ${st.name}`}
-                </button>
-              );
-            })}
           </div>
         )}
         {canEditStudents && (
