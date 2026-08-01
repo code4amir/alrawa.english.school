@@ -4,7 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  base: '/school.management.django/',
+  base: '/alrawa.english.school/',
   server: {
     proxy: {
       '/api': {
