@@ -80,6 +80,7 @@ export default function ServiceTypeManager() {
     setTogglingStudent(student.id);
     try {
       await api.post(`/students/${student.id}/toggle_service/`, {
+        studentId: student.id,
         serviceTypeId: bulkServiceId,
         active,
         starts_at: null,
