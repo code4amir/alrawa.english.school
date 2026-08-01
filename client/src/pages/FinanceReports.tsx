@@ -93,7 +93,7 @@ const FinanceReports = () => {
   }, [tab, yearFilter]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchTransactions(); fetchStudents(); fetchFinance(); fetchOpeningBalances(); }, []);
+  useEffect(() => { fetchTransactions(); fetchStudents(undefined, true); fetchFinance(); fetchOpeningBalances(); }, []);
 
   const openOpeningBalModal = async () => {
     await fetchOpeningBalances(yearFilter);

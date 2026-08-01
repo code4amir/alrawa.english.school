@@ -64,7 +64,7 @@ export default function EnterByStudent() {
 
   useEffect(() => { if (cls) loadResults(cls.id); }, [sessionFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSelectClass = (c: any) => { setCls(c); setActiveStudent(null); setActiveTerm('1'); fetchSubjects(c.id); fetchStudents(); if (sessionFilter) loadResults(c.id); };
+  const handleSelectClass = (c: any) => { setCls(c); setActiveStudent(null); setActiveTerm('1'); fetchSubjects(c.id); fetchStudents({ className: c.name }, true); if (sessionFilter) loadResults(c.id); };
 
   const clsStudents = useMemo(() => cls ? students.filter((s: any) => s.class === cls.name).sort((a: any, b: any) => (+a.roll || 999) - (+b.roll || 999) || a.name.localeCompare(b.name)) : [], [students, cls]);
 

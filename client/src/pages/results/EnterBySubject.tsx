@@ -52,7 +52,7 @@ export default function EnterBySubject() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [hasUnsavedChanges]);
 
-  const handleSelectClass = (c: any) => { setCls(c); setBulkSubject(''); fetchSubjects(c.id); if (sessionFilter) loadResults(c.id); fetchStudents(); };
+  const handleSelectClass = (c: any) => { setCls(c); setBulkSubject(''); fetchSubjects(c.id); if (sessionFilter) loadResults(c.id); fetchStudents({ className: c.name }, true); };
 
   const clsStudents = useMemo(() => cls ? students.filter((s: any) => s.class === cls.name).sort((a: any, b: any) => (+a.roll || 999) - (+b.roll || 999) || a.name.localeCompare(b.name)) : [], [students, cls]);
   const selectedSubj = subjects.find((s: any) => s.name === bulkSubject);

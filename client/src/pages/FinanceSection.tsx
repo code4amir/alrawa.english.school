@@ -382,7 +382,7 @@ const FinanceSection = () => {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { useUIStore.getState().registerSwipeBack(() => setMainTab('transactions')); }, []);
   // Re-fetch students when class changes (ensures student data is current)
-  useEffect(() => { if (selectedClass) fetchStudents(); }, [selectedClass]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (selectedClass) fetchStudents({ className: selectedClass }, true); }, [selectedClass]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-fill amount from fee schedule minus waiver when category + student selected
   useEffect(() => {

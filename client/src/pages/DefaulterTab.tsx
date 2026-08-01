@@ -53,7 +53,7 @@ export default function DefaulterTab() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
 
-  useEffect(() => { fetchClasses(); fetchStudents(); fetchFeeSchedules(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchClasses(); fetchStudents(undefined, true); fetchFeeSchedules(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const controller = new AbortController();

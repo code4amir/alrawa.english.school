@@ -203,7 +203,7 @@ export default function ExcelImportTab() {
     const file = e.target.files?.[0];
     if (!file) return;
     // Ensure students are loaded
-    await fetchStudents();
+    await fetchStudents(undefined, true);
     // Fetch fee schedules and waivers directly (not from store cache)
     let latestFeeSchedules: any[] = [];
     let latestWaivers: any[] = [];

@@ -49,7 +49,7 @@ const OptionalFeesTab = () => {
   };
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchClasses(); fetchStudents(); }, []);
+  useEffect(() => { fetchClasses(); fetchStudents(undefined, true); }, []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { setDateEdits({}); load(); }, [selectedScheduleId]);
 

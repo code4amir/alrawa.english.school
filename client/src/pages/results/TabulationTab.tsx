@@ -33,7 +33,7 @@ export default function TabulationTab() {
 
   useEffect(() => { if (cls) loadResults(cls.id); }, [sessionFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSelectClass = (c: any) => { setCls(c); fetchSubjects(c.id); fetchStudents(); loadResults(c.id); };
+  const handleSelectClass = (c: any) => { setCls(c); fetchSubjects(c.id); fetchStudents({ className: c.name }, true); loadResults(c.id); };
   const clsStudents = cls ? students.filter((s: any) => s.class === cls.name).sort((a: any, b: any) => (+a.roll || 999) - (+b.roll || 999) || a.name.localeCompare(b.name)) : [];
 
   return (
