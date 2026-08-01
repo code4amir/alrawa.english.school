@@ -27,6 +27,7 @@ export default function TeacherSection() {
   const [showAddNew, setShowAddNew] = useState(false);
   const [search, setSearch] = useState('');
   const [activeDesig, setActiveDesig] = useState<string | null>(null);
+  const [showCoverage, setShowCoverage] = useState(false);
 
   const [photo, setPhoto] = useState<string | null>(null);
   const [form, setForm] = useState({ designation: '', name: '', email: '', contact: '' });
@@ -279,10 +280,18 @@ export default function TeacherSection() {
           <button onClick={() => fetchTeachers(undefined, true)} className="flex items-center gap-1 px-3 py-1.5 border border-school-border rounded-lg text-xs hover:bg-school-paper">
             <RefreshCw size={12} /> Refresh
           </button>
+          <button onClick={() => setShowCoverage(!showCoverage)}
+            className={`flex items-center gap-1 px-3 py-1.5 border rounded-lg text-xs transition-colors ${showCoverage ? 'bg-school-primary text-white border-school-primary' : 'border-school-border hover:bg-school-paper'}`}>
+            <BookOpen size={12} /> {showCoverage ? 'Teacher Cards' : 'Coverage'}
+          </button>
         </div>
       </div>
 
+      {/* Coverage Matrix — class-centric overview */}
+      {showCoverage && <TeacherCoverage teachers={teachers} classes={classes} />}
+
       {/* Designation Picker */}
+      {!showCoverage && <>
       {!activeDesig && designations.length > 0 && (
         <div className="flex flex-wrap gap-2">
           <button onClick={() => setActiveDesig(null)} className="px-3 py-1.5 bg-school-primary text-white rounded-full text-xs font-medium">All</button>
@@ -317,6 +326,7 @@ export default function TeacherSection() {
           <p className="text-sm">No teachers found.</p>
         </div>
       )}
+      </>}
       <DeleteConfirmModal open={!!deleteId} title="Delete Teacher" message="This will permanently delete this teacher." onConfirm={confirmDelete} onCancel={() => setDeleteId(null)} loading={deleteLoading} />
 
       {/* Set PIN Modal */}
@@ -502,6 +512,132 @@ function AssignmentPanel({ teacher, classes, fetchTeachers, onClose }: {
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============ TeacherCoverage — class-centric assignment overview ============ */
+
+function TeacherCoverage({ teachers, classes }: { teachers: any[]; classes: any[] }) {
+  const sortedClasses = [...classes].sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
+
+  const classTeacherByClass: Record<string, string> = {};
+  for (const t of teachers) {
+    for (const c of t.classTeacherOf || []) classTeacherByClass[c.classId] = t.name;
+  }
+
+  // Unique subjects from all assignments
+  const subjMap = new Map<string, string>();
+  for (const t of teachers) {
+    for (const sa of t.subjectAssignments || []) subjMap.set(sa.subjectId, sa.subjectName);
+  }
+  const subjects = Array.from(subjMap.entries())
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const teacherForSubject = (classId: string, subjectId: string) => {
+    for (const t of teachers) {
+      if ((t.subjectAssignments || []).some((sa: any) => sa.classId === classId && sa.subjectId === subjectId)) return t.name;
+    }
+    return '';
+  };
+
+  const unassignedCount = (classId: string) => {
+    let n = 0;
+    for (const t of teachers) {
+      for (const sa of t.subjectAssignments || []) if (sa.classId === classId) n++;
+    }
+    return n;
+  };
+
+  return (
+    <div className="space-y-4 animate-fade-in">
+      {/* Class Teachers */}
+      <div className="bg-white dark:bg-[#1a1a2e] rounded-xl border border-school-border dark:border-[#2a2a3e] overflow-hidden">
+        <div className="px-4 pt-4 pb-2 flex items-center gap-2">
+          <Users size={15} className="text-school-accent" />
+          <h3 className="text-xs font-bold uppercase text-school-muted">Class Teachers</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-school-paper/50 text-[10px] uppercase tracking-widest text-school-muted font-bold">
+              <tr>
+                <th className="px-4 py-2 text-left">Class</th>
+                <th className="px-4 py-2 text-left">Class Teacher</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-school-border/50">
+              {sortedClasses.map((cls: any) => {
+                const ct = classTeacherByClass[cls.id];
+                return (
+                  <tr key={cls.id} className="hover:bg-school-paper/30 transition-colors">
+                    <td className="px-4 py-2.5 font-semibold text-xs">{cls.name}</td>
+                    <td className="px-4 py-2.5 text-xs">
+                      {ct ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-school-primary/10 text-school-primary rounded-lg font-bold">
+                          <GraduationCap size={12} /> {ct}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-amber-600 font-semibold">— No class teacher</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Subject Coverage Matrix */}
+      <div className="bg-white dark:bg-[#1a1a2e] rounded-xl border border-school-border dark:border-[#2a2a3e] overflow-hidden">
+        <div className="px-4 pt-4 pb-2 flex items-center gap-2">
+          <BookOpen size={15} className="text-school-accent" />
+          <h3 className="text-xs font-bold uppercase text-school-muted">Subject Coverage</h3>
+          {subjects.length === 0 && <span className="text-[10px] text-school-muted">(no subject assignments yet)</span>}
+        </div>
+        {subjects.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-school-paper/50 text-[10px] uppercase tracking-widest text-school-muted font-bold">
+                <tr>
+                  <th className="px-4 py-2 text-left sticky left-0 bg-school-paper/50">Class</th>
+                  {subjects.map((s) => (
+                    <th key={s.id} className="px-3 py-2 text-center whitespace-nowrap">{s.name}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-school-border/50">
+                {sortedClasses.map((cls: any) => {
+                  const assigned = unassignedCount(cls.id);
+                  return (
+                    <tr key={cls.id} className="hover:bg-school-paper/30 transition-colors">
+                      <td className="px-4 py-2.5 font-semibold text-xs sticky left-0 bg-white dark:bg-[#1a1a2e]">
+                        {cls.name}
+                        {assigned === 0 && <span className="ml-1.5 text-[9px] text-amber-600 font-bold">(no subjects)</span>}
+                      </td>
+                      {subjects.map((s) => {
+                        const tName = teacherForSubject(cls.id, s.id);
+                        return (
+                          <td key={s.id} className="px-3 py-2.5 text-center text-[11px]">
+                            {tName ? (
+                              <span className="inline-flex px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded-lg font-semibold whitespace-nowrap">{tName}</span>
+                            ) : (
+                              <span className="text-gray-300 dark:text-gray-600">—</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="px-4 pb-4 text-center text-xs text-school-muted py-4">Assign subjects from the teacher cards (Assign → Subject) to see coverage here.</div>
+        )}
       </div>
     </div>
   );
