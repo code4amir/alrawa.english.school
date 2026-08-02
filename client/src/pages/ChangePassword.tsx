@@ -34,6 +34,9 @@ export default function ChangePassword() {
         current_password: current,
         new_password: next,
       });
+      // Clear the forced-password-change flag so the app doesn't bounce back here
+      const me = useAuthStore.getState().user;
+      if (me) useAuthStore.setState({ user: { ...me, mustChangePassword: false } });
       toast('Password changed successfully.', 'success');
       setTimeout(() => navigate('/', { replace: true }), 600);
     } catch (err: any) {

@@ -63,8 +63,15 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchSession();
-  }, [fetchSession]);
+      fetchSession();
+    }, [fetchSession]);
+
+    // Force staff to change their admin-set first password before using anything
+    useEffect(() => {
+      if (user?.mustChangePassword && !window.location.hash.startsWith('#/change-password')) {
+        window.location.hash = '#/change-password';
+      }
+    }, [user, user?.mustChangePassword]);
 
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
 

@@ -41,6 +41,11 @@ const Login = () => {
         setTimeout(async () => {
           try {
             await login(cred.id, cred.password);
+            const u = useAuthStore.getState().user;
+            if (u?.mustChangePassword) {
+              window.location.hash = '#/change-password';
+              return;
+            }
             navigate('/', { replace: true });
           } catch { setError('Biometric login failed. Try again.'); }
         }, 100);
@@ -55,6 +60,12 @@ const Login = () => {
     setLoading(true);
     try {
       const { needsLinking } = await login(email, password);
+      // Staff whose first password was set by admin must change it before continuing
+      const u = useAuthStore.getState().user;
+      if (u?.mustChangePassword) {
+        window.location.hash = '#/change-password';
+        return;
+      }
       // Store credential for next biometric login
       try {
         if (navigator.credentials?.store && navigator.credentials?.create) {

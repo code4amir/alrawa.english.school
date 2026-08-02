@@ -9,6 +9,7 @@ interface User {
   role: string;
   image: string | null;
   emailVerified?: boolean;
+  mustChangePassword?: boolean;
 }
 
 interface AuthState {
