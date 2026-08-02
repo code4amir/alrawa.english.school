@@ -135,7 +135,7 @@ class TeacherRoutineViewSet(viewsets.GenericViewSet):
         lesson_plans = LessonPlan.objects.filter(
             routine_template__in=[r.id for r in routines],
             week_start=wk_start,
-        ).select_related('routine_template')
+        ).select_related('routine_template', 'routine_template__subject')
         lp_map = {lp.routine_template_id: lp for lp in lesson_plans}
 
         result = []

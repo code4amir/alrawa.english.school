@@ -89,12 +89,18 @@ class WeeklyChallengeSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'start_date', 'end_date']
 
     def get_hasResponded(self, obj):
+        # Prefer the view's annotation (avoids 1 query per row on list views).
+        if hasattr(obj, '_has_responded'):
+            return obj._has_responded
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             return False
         return ChallengeResponse.objects.filter(user=request.user, challenge=obj).exists()
 
     def get_responseCount(self, obj):
+        # Prefer the view's annotation (avoids 1 query per row on list views).
+        if hasattr(obj, '_response_count'):
+            return obj._response_count
         return obj.responses.count()
 
 

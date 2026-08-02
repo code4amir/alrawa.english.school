@@ -1,5 +1,5 @@
 from datetime import date, timedelta
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Exists, OuterRef
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
@@ -214,6 +214,13 @@ class ChallengeViewSet(viewsets.GenericViewSet):
         today_date = date.today()
         challenges = WeeklyChallenge.objects.filter(
             is_active=True, start_date__lte=today_date, end_date__gte=today_date,
+        ).annotate(
+            # Kill the per-row N+1: get_hasResponded/get_responseCount in the
+            # serializer read these annotations instead of querying per row.
+            _has_responded=Exists(
+                ChallengeResponse.objects.filter(user=request.user, challenge=OuterRef('pk'))
+            ),
+            _response_count=Count('responses'),
         )
 
         if not challenges.exists():
