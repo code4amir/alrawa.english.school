@@ -26,7 +26,7 @@ const StudentWaiversTab = () => {
   const [editApprovedBy, setEditApprovedBy] = useState('');
 
   useEffect(() => { fetchClasses(); fetchFeeSchedules(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (selectedClass) fetchStudents({ class: selectedClass }); }, [selectedClass]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (selectedClass) fetchStudents({ class_name: selectedClass }); }, [selectedClass]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadActiveWaivers = useCallback(async () => {
     setActiveLoading(true);
@@ -46,18 +46,28 @@ const StudentWaiversTab = () => {
     setReason('');
     setApprovedBy('');
     setLoading(true);
-    try {
+    const fetchWaiverData = async () => {
       const [waiverRes, historyRes] = await Promise.all([
         api.get('/finance/fee-waivers/', { params: { studentId: selectedStudent } }),
         api.get('/finance/fee-waivers/', { params: { studentId: selectedStudent, active: 'false' } }),
       ]);
       setWaivers(waiverRes.data.results || waiverRes.data.data || waiverRes.data);
       setHistory(historyRes.data.results || historyRes.data.data || historyRes.data);
-    } catch { toast('Failed to load data', 'error'); }
-    finally { setLoading(false); }
+    };
+    try {
+      await fetchWaiverData();
+    } catch {
+      // One automatic retry: the first attempt often times out when the
+      // Alwaysdata backend is cold-starting after idle; the retry succeeds.
+      try {
+        await fetchWaiverData();
+      } catch {
+        toast('Failed to load data', 'error');
+      }
+    } finally { setLoading(false); }
   }, [selectedStudent]);
 
-  useEffect(() => { loadData(); loadActiveWaivers(); }, [loadData]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadData(); }, [loadData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const classStudents = students.filter((s: any) => !selectedClass || s.class === selectedClass);
   const filteredStudents = useMemo(() => {

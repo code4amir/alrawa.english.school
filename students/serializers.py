@@ -32,7 +32,10 @@ class StudentSerializer(PhotoUrlMixin, serializers.ModelSerializer):
         return obj.graduated_at is not None
 
     def get_services(self, obj):
-        qs = obj.services.select_related('service_type').all()
+        # NOTE: do NOT add .select_related() here — it bypasses the prefetch cache
+        # and fires one extra DB query per student (N+1). 'services__service_type'
+        # is prefetched by the view, so service_type is already attached.
+        qs = obj.services.all()
         return StudentServiceSerializer(qs, many=True).data
 
     def create(self, validated_data):

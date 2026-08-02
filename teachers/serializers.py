@@ -46,20 +46,15 @@ class TeacherSerializer(PhotoUrlMixin, serializers.ModelSerializer):
         read_only_fields = ['id', 'createdAt']
 
     def get_classTeacherOf(self, obj):
-        if not hasattr(obj, '_prefetched_class_teachers'):
-            return ClassTeacherSerializer(
-                obj.class_teacher_of.select_related('school_class').all(),
-                many=True,
-            ).data
-        return ClassTeacherSerializer(obj._prefetched_class_teachers, many=True).data
+        # The view prefetches 'class_teacher_of__school_class'; calling
+        # .all() on the manager uses that cache. A .select_related() here
+        # would bypass the cache and fire one query per teacher (N+1).
+        return ClassTeacherSerializer(obj.class_teacher_of.all(), many=True).data
 
     def get_subjectAssignments(self, obj):
-        if not hasattr(obj, '_prefetched_subject_assignments'):
-            return TeacherSubjectSerializer(
-                obj.subject_assignments.select_related('subject', 'school_class').all(),
-                many=True,
-            ).data
-        return TeacherSubjectSerializer(obj._prefetched_subject_assignments, many=True).data
+        # Same as above: 'subject_assignments__subject',
+        # 'subject_assignments__school_class' are prefetched by the view.
+        return TeacherSubjectSerializer(obj.subject_assignments.all(), many=True).data
 
 
 class AssignClassTeacherSerializer(serializers.Serializer):
