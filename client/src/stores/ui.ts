@@ -3,7 +3,7 @@ import { create } from 'zustand';
 function getInitialDark(): boolean {
   const stored = localStorage.getItem('dark-mode');
   if (stored !== null) return stored === 'true';
-  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  return false; // light mode is the default theme
 }
 
 export const useDarkMode = create<{ dark: boolean; toggle: () => void }>((set, get) => ({

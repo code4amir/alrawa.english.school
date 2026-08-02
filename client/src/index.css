@@ -103,6 +103,40 @@ table thead { position: sticky; top: 0; z-index: 1; }
 .dark .bg-violet-50\/50 { background-color: rgba(139, 92, 246, 0.15); }
 .dark .bg-blue-50\/50 { background-color: rgba(59, 130, 246, 0.15); }
 
+/* ── Dark Mode contrast pass (readability / delineation) ── */
+/* Deepen the page so cards stand out from the background */
+.dark { background-color: #0b0b16; }
+.dark body { background: #0b0b16; }
+
+/* Lift borders so cards, rows and table dividers are clearly visible */
+.dark .border-school-border { border-color: #3c3c60; }
+.dark .dark\:border-\[\#2a2a3e\] { border-color: #3d3d62; }
+.dark .border-gray-200 { border-color: #3d3d62; }
+.dark .border-gray-100, .dark .border-gray-300 { border-color: #303052; }
+.dark .divide-y > :not([hidden]) ~ :not([hidden]), .dark .divide-x > :not([hidden]) ~ :not([hidden]) { border-color: #343458; }
+
+/* Brighten secondary / muted / gray text so it's legible on dark backgrounds */
+.dark .text-school-muted { color: #a6a6ba; }
+.dark .text-gray-300 { color: #ccccd8; }
+.dark .text-gray-400 { color: #c2c2d0; }
+.dark .text-gray-500 { color: #b4b4c4; }
+.dark .text-gray-600 { color: #c9c9d6; }
+.dark .text-gray-700 { color: #e2e2ea; }
+
+/* Gray fills → dark surfaces (avoid bright near-white blocks in dark mode) */
+.dark .bg-gray-50 { background-color: #1a1a30; }
+.dark .bg-gray-100 { background-color: #1f1f3a; }
+.dark .bg-gray-200 { background-color: #282848; }
+.dark .bg-gray-100\/50 { background-color: rgba(31, 31, 58, 0.5); }
+
+/* White alpha overlays → dark overlays */
+.dark .bg-white\/30, .dark .bg-white\/40, .dark .bg-white\/50 { background-color: rgba(26, 26, 46, 0.5); }
+.dark .bg-white\/60, .dark .bg-white\/70, .dark .bg-white\/80 { background-color: rgba(26, 26, 46, 0.85); }
+
+/* Slightly lighter inputs + visible placeholder text */
+.dark input, .dark select, .dark textarea { background-color: #232341; color: #e8e8f0; border-color: #3c3c66; }
+.dark input::placeholder, .dark textarea::placeholder { color: #8d8da6; opacity: 1; }
+
 /* ── Bottom nav safe area ── */
 .safe-area-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
