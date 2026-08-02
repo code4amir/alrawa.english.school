@@ -1,5 +1,5 @@
 import { useEffect, Suspense, lazy, useState } from 'react';
-import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from './store';
 import ErrorBoundary from './components/ErrorBoundary';
 import NotFound from './pages/NotFound';
@@ -44,6 +44,18 @@ function PageLoader() {
   );
 }
 
+// Force staff whose admin-set first password is unchanged to the change-password
+// page. Router-aware (reacts to route changes), so manual nav / back button /
+// deep links cannot bypass it.
+function MustChangePasswordRedirect() {
+  const { pathname } = useLocation();
+  const guardUser = useAuthStore((s) => s.user);
+  if (guardUser?.mustChangePassword && pathname !== '/change-password') {
+    return <Navigate to="/change-password" replace />;
+  }
+  return null;
+}
+
 const App: React.FC = () => {
   const { user, loading, fetchSession } = useAuthStore();
   const [installPrompt, setInstallPrompt] = useState<any>(null);
@@ -63,15 +75,8 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-      fetchSession();
-    }, [fetchSession]);
-
-    // Force staff to change their admin-set first password before using anything
-    useEffect(() => {
-      if (user?.mustChangePassword && !window.location.hash.startsWith('#/change-password')) {
-        window.location.hash = '#/change-password';
-      }
-    }, [user, user?.mustChangePassword]);
+    fetchSession();
+  }, [fetchSession]);
 
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
 
@@ -83,6 +88,7 @@ const App: React.FC = () => {
 
   return (
     <Router>
+      <MustChangePasswordRedirect />
       <ErrorBoundary>
       <Suspense fallback={<PageLoader />}>
         <Routes>
