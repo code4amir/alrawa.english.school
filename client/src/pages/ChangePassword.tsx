@@ -8,6 +8,8 @@ export default function ChangePassword() {
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [pin, setPin] = useState('');
+  const [pinConfirm, setPinConfirm] = useState('');
   const [show, setShow] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const navigate = useNavigate();
@@ -17,6 +19,11 @@ export default function ChangePassword() {
     navigate('/', { replace: true });
     return null;
   }
+
+  // Teachers (users with a linked Teacher profile) must set their 6-digit
+  // attendance PIN during the forced first-login flow — the backend rejects
+  // the request without it, so this is enforced server-side too.
+  const needsPin = Boolean(user.hasTeacherProfile);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,11 +35,22 @@ export default function ChangePassword() {
       toast('New passwords do not match.', 'error');
       return;
     }
+    if (needsPin) {
+      if (!/^\d{6}$/.test(pin)) {
+        toast('Attendance PIN must be exactly 6 digits.', 'error');
+        return;
+      }
+      if (pin !== pinConfirm) {
+        toast('Attendance PINs do not match.', 'error');
+        return;
+      }
+    }
     setSubmitting(true);
     try {
       await api.post('/auth/change-password/', {
         current_password: current,
         new_password: next,
+        pin: needsPin ? pin : undefined,
       });
       // Clear the forced-password-change flag so the app doesn't bounce back here
       const me = useAuthStore.getState().user;
@@ -42,6 +60,8 @@ export default function ChangePassword() {
     } catch (err: any) {
       const msg =
         err.response?.data?.current_password?.[0] ||
+        err.response?.data?.pin?.[0] ||
+        err.response?.data?.non_field_errors?.[0] ||
         err.response?.data?.error ||
         err.response?.data?.detail ||
         'Failed to change password.';
@@ -115,6 +135,39 @@ export default function ChangePassword() {
                 {eyeBtn}
               </div>
             </div>
+
+            {needsPin && (
+              <>
+                <div className="border-t border-school-border pt-4">
+                  <p className="text-xs font-semibold text-school-primary mb-1">Attendance PIN</p>
+                  <p className="text-[11px] text-school-muted mb-3">
+                    Set your 6-digit PIN — you'll use it to mark attendance from the quick-attendance screen.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-school-muted ml-1">PIN</label>
+                      <input
+                        type="password" required inputMode="numeric" autoComplete="off"
+                        value={pin} maxLength={6}
+                        onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+                        className="w-full bg-white border border-school-border p-3 rounded-xl text-sm focus:outline-none focus:border-school-accent tracking-[0.4em] text-center"
+                        placeholder="••••••"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-school-muted ml-1">Confirm PIN</label>
+                      <input
+                        type="password" required inputMode="numeric" autoComplete="off"
+                        value={pinConfirm} maxLength={6}
+                        onChange={(e) => setPinConfirm(e.target.value.replace(/\D/g, ''))}
+                        className="w-full bg-white border border-school-border p-3 rounded-xl text-sm focus:outline-none focus:border-school-accent tracking-[0.4em] text-center"
+                        placeholder="••••••"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
 
             <button
               type="submit" disabled={submitting}

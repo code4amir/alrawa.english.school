@@ -10,6 +10,8 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.exceptions import AuthenticationFailed
 from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import make_password
+from django.db import transaction as db_transaction
 from django.http import JsonResponse
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
@@ -302,6 +304,7 @@ class AuthGetSessionView(APIView):
                     'image': user.image,
                     'emailVerified': user.email_verified,
                     'mustChangePassword': user.must_change_password,
+                    'hasTeacherProfile': getattr(user, 'teacher_profile', None) is not None,
                 }})
         except (AuthenticationFailed, Exception):
             pass
@@ -428,9 +431,16 @@ class ChangePasswordView(APIView):
     def post(self, request):
         serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
-        request.user.set_password(serializer.validated_data['new_password'])
-        request.user.must_change_password = False
-        request.user.save(update_fields=['password', 'must_change_password'])
+        pin = serializer.validated_data.get('pin')
+        with db_transaction.atomic():
+            request.user.set_password(serializer.validated_data['new_password'])
+            request.user.must_change_password = False
+            request.user.save(update_fields=['password', 'must_change_password'])
+            if pin:
+                teacher_profile = getattr(request.user, 'teacher_profile', None)
+                if teacher_profile is not None:
+                    teacher_profile.pin = make_password(pin)
+                    teacher_profile.save(update_fields=['pin'])
         return Response({'detail': 'Password changed successfully.'})
 
 

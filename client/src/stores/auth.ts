@@ -10,6 +10,7 @@ interface User {
   image: string | null;
   emailVerified?: boolean;
   mustChangePassword?: boolean;
+  hasTeacherProfile?: boolean;
 }
 
 interface AuthState {
