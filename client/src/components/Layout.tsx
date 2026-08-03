@@ -112,7 +112,7 @@ const Layout = ({ children }: LayoutProps) => {
           </button>
         </div>
 
-        <div className="flex items-center gap-3 ml-auto shrink-0 overflow-x-auto scrollbar-hide">
+        <div className="flex items-center gap-3 ml-auto shrink-0 flex-wrap justify-end">
                   {role === 'admin' && (
             <>
               <button
