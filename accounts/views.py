@@ -99,6 +99,12 @@ class CustomTokenRefreshView(APIView):
             return Response({'detail': 'Refresh token not found'}, status=status.HTTP_401_UNAUTHORIZED)
         try:
             refresh = RefreshToken(refresh_token)
+            # Reject refresh for users who no longer exist or were deactivated
+            # (e.g. hard-deleted accounts) — a deleted user's refresh cookie
+            # must not keep minting access tokens.
+            user_id = refresh.get('user_id')
+            if not user_id or not User.objects.filter(pk=user_id, is_active=True).exists():
+                return Response({'detail': 'Invalid refresh token'}, status=status.HTTP_401_UNAUTHORIZED)
             access = str(refresh.access_token)
             data = {'access': access, 'detail': 'Token refreshed'}
             if settings.SIMPLE_JWT.get('ROTATE_REFRESH_TOKENS'):
@@ -283,6 +289,17 @@ class DeleteUserView(generics.DestroyAPIView):
                 {'error': 'Cannot delete yourself'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        if instance.role == 'admin' and not User.objects.filter(role='admin', is_active=True).exclude(pk=instance.pk).exists():
+            return Response(
+                {'error': 'Cannot delete the last admin account'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        # HARD delete: the row is removed from the database (no soft-delete on
+        # User). Reverse relations are either CASCADE (only the user's own rows:
+        # engagement responses/streaks, suggestions, password resets,
+        # verifications) or SET_NULL (Teacher.user, attendance.marked_by,
+        # ai_query logs) — no school data is lost. Refresh tokens stop working
+        # immediately via the user-existence check in CustomTokenRefreshView.
         instance.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 

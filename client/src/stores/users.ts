@@ -44,6 +44,9 @@ export const useUserManagementStore = create<UserManagementState>((set, get) => 
   },
   deleteUser: async (userId: string) => {
     await api.delete(`/users/${userId}/`);
+    // Remove locally immediately so the deleted user can't linger in UI state
+    // even if the follow-up refetch fails.
+    set((state) => ({ users: state.users.filter((u) => u.id !== userId) }));
     await get().fetchUsers();
   },
 }));
