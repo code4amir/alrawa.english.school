@@ -79,6 +79,7 @@ const App: React.FC = () => {
   }, [fetchSession]);
 
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+  const showInstallBanner = !!installPrompt && !isStandalone;
 
   const teacherRoute = isStandalone ? '/teacher' : '/';
 
@@ -89,6 +90,8 @@ const App: React.FC = () => {
   return (
     <Router>
       <MustChangePasswordRedirect />
+      {/* Reserve space for the install banner so it never covers interactive content */}
+      <div className={showInstallBanner ? 'pb-16' : ''}>
       <ErrorBoundary>
       <Suspense fallback={<PageLoader />}>
         <Routes>
@@ -131,8 +134,9 @@ const App: React.FC = () => {
       </Suspense>
       <AICommandPalette />
       </ErrorBoundary>
+      </div>
 
-      {installPrompt && !window.matchMedia('(display-mode: standalone)').matches && (
+      {showInstallBanner && (
         <div className="fixed bottom-0 left-0 right-0 z-50 bg-school-primary text-white px-4 py-3 flex items-center justify-between shadow-lg">
           <p className="text-xs font-medium">Install <strong>AL RAWA</strong> for quick access</p>
           <div className="flex gap-2">
