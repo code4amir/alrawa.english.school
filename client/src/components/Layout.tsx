@@ -92,9 +92,9 @@ const Layout = ({ children }: LayoutProps) => {
   return (
     <div className="min-h-screen bg-school-paper flex flex-col selection:bg-school-accent selection:text-white">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-school-primary text-school-paper shadow-lg px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          {activeMode && (
+      <header className="sticky top-0 z-50 bg-school-primary text-school-paper shadow-lg px-4 py-3 flex flex-wrap items-center gap-x-2 gap-y-1">
+              <div className="flex items-center gap-3 min-w-0">
+                {activeMode && (
             <button
               onClick={handleBack}
               className="p-1 hover:bg-white/10 rounded-full transition-colors"
@@ -105,15 +105,15 @@ const Layout = ({ children }: LayoutProps) => {
           )}
           <button onClick={() => { setMode(null); navigate('/'); }} className="flex items-center gap-3 text-left">
             <img src={SCHOOL_LOGO} alt="Logo" className="w-9 h-9 rounded-full object-cover ring-2 ring-white/20 shadow-sm" id="school-logo" />
-            <div>
-              <h1 className="font-serif text-xl leading-tight">AL RAWA</h1>
-              <p className="text-[10px] uppercase tracking-widest opacity-70">English School</p>
-            </div>
+            <div className="min-w-0">
+                          <h1 className="font-serif text-xl leading-tight whitespace-nowrap truncate">AL RAWA</h1>
+                          <p className="text-[10px] uppercase tracking-widest opacity-70 truncate">English School</p>
+                        </div>
           </button>
         </div>
 
-        <div className="flex items-center gap-3">
-          {role === 'admin' && (
+        <div className="flex items-center gap-3 ml-auto shrink-0 overflow-x-auto scrollbar-hide">
+                  {role === 'admin' && (
             <>
               <button
                 onClick={() => navigate('/audit')}
