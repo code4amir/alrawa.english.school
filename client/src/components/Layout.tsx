@@ -112,12 +112,12 @@ const Layout = ({ children }: LayoutProps) => {
           </button>
         </div>
 
-        <div className="flex items-center gap-3 ml-auto shrink-0 flex-wrap justify-end">
+        <div className="flex items-center gap-2 sm:gap-3 ml-auto shrink-0 flex-wrap justify-end">
                   {role === 'admin' && (
             <>
               <button
                 onClick={() => navigate('/audit')}
-                className="p-2 hover:bg-white/10 rounded-full transition-colors group"
+                className="p-1.5 sm:p-2 hover:bg-white/10 rounded-full transition-colors group"
                 title="Audit Logs"
                 aria-label="Audit Logs"
               >
@@ -125,7 +125,7 @@ const Layout = ({ children }: LayoutProps) => {
               </button>
               <button
                 onClick={() => navigate('/users')}
-                className="p-2 hover:bg-white/10 rounded-full transition-colors group"
+                className="p-1.5 sm:p-2 hover:bg-white/10 rounded-full transition-colors group"
                 title="User Management"
                 aria-label="User Management"
               >
@@ -133,7 +133,7 @@ const Layout = ({ children }: LayoutProps) => {
               </button>
               <button
                 onClick={() => navigate('/connections')}
-                className="p-2 hover:bg-white/10 rounded-full transition-colors group"
+                className="p-1.5 sm:p-2 hover:bg-white/10 rounded-full transition-colors group"
                 title="Connections"
                 aria-label="Connections"
               >
@@ -144,7 +144,7 @@ const Layout = ({ children }: LayoutProps) => {
                 <button
                   onClick={() => setShowYearDropdown(!showYearDropdown)}
                   onBlur={() => setTimeout(() => setShowYearDropdown(false), 200)}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg transition-colors text-xs font-bold"
+                  className="flex items-center gap-1.5 px-2 py-1 sm:px-2.5 sm:py-1.5 bg-white/10 hover:bg-white/20 rounded-lg transition-colors text-xs font-bold"
                   title={activeYear ? `Active: ${activeYear.name}` : 'No active year'}
                   aria-label="Switch academic year"
                 >
@@ -183,7 +183,7 @@ const Layout = ({ children }: LayoutProps) => {
           )}
           <button
             onClick={() => useAIQueryStore.getState().setOpen(true)}
-            className="p-2 hover:bg-white/10 rounded-full transition-colors group"
+            className="p-1.5 sm:p-2 hover:bg-white/10 rounded-full transition-colors group"
             title="AI Query (Ctrl+K)"
             aria-label="AI Query"
           >
@@ -195,7 +195,7 @@ const Layout = ({ children }: LayoutProps) => {
           </div>
           <button
             onClick={toggleDark}
-            className="p-2 hover:bg-white/10 rounded-full transition-colors group"
+            className="p-1.5 sm:p-2 hover:bg-white/10 rounded-full transition-colors group"
             title={dark ? 'Light Mode' : 'Dark Mode'}
             aria-label={dark ? 'Light Mode' : 'Dark Mode'}
           >
@@ -203,7 +203,7 @@ const Layout = ({ children }: LayoutProps) => {
           </button>
           <button
             onClick={() => navigate('/change-password')}
-            className="p-2 hover:bg-white/10 rounded-full transition-colors group"
+            className="p-1.5 sm:p-2 hover:bg-white/10 rounded-full transition-colors group"
             title="Change Password"
             aria-label="Change Password"
           >
@@ -211,7 +211,7 @@ const Layout = ({ children }: LayoutProps) => {
           </button>
           <button
             onClick={logout}
-            className="p-2 hover:bg-white/10 rounded-full transition-colors group"
+            className="p-1.5 sm:p-2 hover:bg-white/10 rounded-full transition-colors group"
             title="Logout"
             aria-label="Logout"
           >
