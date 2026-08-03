@@ -7,20 +7,25 @@ from decimal import Decimal
 from django.db.models import Sum, Count, Q
 from django.utils import timezone
 from django.conf import settings
-from rest_framework import status
+from rest_framework import permissions, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .permissions import IsParentOfStudent
-from .models import ParentStudentLink
+from .models import ParentStudentLink, StudentConnectLink, PushSubscription, Announcement
 from accounts.permissions import require_permission
+from accounts.throttles import ConnectReadRateThrottle, ConnectWriteRateThrottle
+from core.audit import log_audit
+from .connect import (
+    current_active_link, issue_link, can_manage_connect,
+    id_facts_match, sibling_students, family_parent_exists,
+)
 from .serializers import (
     ParentStudentSerializer, ParentAttendanceSerializer,
     ParentFeeStatusSerializer, ParentResultSerializer,
 )
-from .models import PushSubscription, Announcement
 from students.models import Student
 from attendance.models import AttendanceRecord, Holiday
 from results.models import Result
@@ -360,3 +365,330 @@ class ParentLinkView(APIView):
         if not deleted:
             return Response({'error': 'Link not found'}, status=404)
         return Response({'status': 'deleted'})
+
+
+# ---------------------------------------------------------------------------
+# Guardian connect (magic link) — public claim + admin link management
+# ---------------------------------------------------------------------------
+
+def _set_auth_cookies(response, user):
+    """Mirror CustomTokenObtainPairView cookie behaviour (JWT auth cookies)."""
+    from rest_framework_simplejwt.tokens import RefreshToken
+    refresh = RefreshToken.for_user(user)
+    access = str(refresh.access_token)
+    sj = settings.SIMPLE_JWT
+    response.set_cookie(
+        sj['ACCESS_COOKIE'], access,
+        httponly=True, secure=sj['AUTH_COOKIE_SECURE'],
+        samesite=sj['AUTH_COOKIE_SAMESITE'],
+        max_age=int(sj['ACCESS_TOKEN_LIFETIME'].total_seconds()),
+    )
+    response.set_cookie(
+        sj['REFRESH_COOKIE'], str(refresh),
+        httponly=True, secure=sj['AUTH_COOKIE_SECURE'],
+        samesite=sj['AUTH_COOKIE_SAMESITE'],
+        max_age=int(sj['REFRESH_TOKEN_LIFETIME'].total_seconds()),
+    )
+    return response
+
+
+class StudentConnectView(APIView):
+    """Public magic-link endpoints: inspect a link and claim the student.
+
+    GET  → metadata for the connect page (valid/claimed/… + UI hints).
+    POST → claim:
+      - authenticated parent: sibling-overlap auto-links; otherwise the
+        ID-card facts must match (authorization).
+      - anonymous mode='login'  : parent signs in with their existing
+        guardian account, then claims (same sibling/ID authorization).
+      - anonymous mode='create' : first child in a family — ID-card facts
+        gate, then a guardian account is created and logged in.
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    def get_throttles(self):
+        if self.request.method == 'GET':
+            return [ConnectReadRateThrottle()]
+        return [ConnectWriteRateThrottle()]
+
+    def _get_link(self, token):
+        return StudentConnectLink.objects.select_related(
+            'student', 'student__school_class',
+        ).filter(token=token).first()
+
+    def _link_student(self, link, student, user, now, action='connect_claim'):
+        ParentStudentLink.objects.get_or_create(parent=user, student=student)
+        link.claimed_by = user
+        link.claimed_at = now
+        link.save(update_fields=['claimed_by', 'claimed_at'])
+        log_audit(action, 'student', entity_id=str(student.id),
+                  details={'token': link.token[:8], 'parent': user.email},
+                  request=self.request)
+
+    def _authorize_user(self, user, student, request):
+        """Can this guardian claim this student? (sibling overlap or ID facts)"""
+        if ParentStudentLink.objects.filter(parent=user, student=student).exists():
+            return 'already'
+        sibs = sibling_students(student)
+        overlap = sibs is not None and ParentStudentLink.objects.filter(
+            parent=user, student__in=sibs,
+        ).exists()
+        if overlap:
+            return 'ok'
+        if id_facts_match(
+            student,
+            request.data.get('fatherName') or '',
+            request.data.get('motherName') or '',
+            request.data.get('contact') or '',
+        ):
+            return 'ok'
+        return 'id_mismatch'
+
+    def get(self, request, token):
+        link = self._get_link(token)
+        if link is None:
+            return Response({'valid': False, 'status': 'invalid'})
+        if link.revoked_at:
+            return Response({'valid': False, 'status': 'revoked'})
+        if link.expires_at <= timezone.now():
+            return Response({'valid': False, 'status': 'expired'})
+        student = link.student
+
+        if link.claimed_at and link.claimed_by_id:
+            return Response({
+                'valid': True,
+                'status': 'claimed',
+                'claimedByMe': (
+                    request.user.is_authenticated
+                    and str(request.user.id) == str(link.claimed_by_id)
+                ),
+                'studentName': student.name,
+                'className': student.school_class.name if student.school_class else '',
+            })
+
+        user = request.user
+        return Response({
+            'valid': True,
+            'status': 'unclaimed',
+            'studentName': student.name,
+            'studentRoll': student.roll,
+            'className': student.school_class.name if student.school_class else '',
+            'hasIdFacts': bool(
+                (student.contact or '').strip()
+                or (student.father_name or '').strip()
+                or (student.mother_name or '').strip()
+            ),
+            'authenticated': bool(user.is_authenticated),
+            'isParent': bool(user.is_authenticated and user.role == 'parent'),
+            'alreadyLinked': bool(
+                user.is_authenticated
+                and ParentStudentLink.objects.filter(parent=user, student=student).exists()
+            ),
+            'familyLinked': family_parent_exists(student),
+        })
+
+    def post(self, request, token):
+        link = self._get_link(token)
+        if link is None:
+            return Response({'error': 'This link is not valid.'}, status=404)
+        if link.revoked_at:
+            return Response({'error': 'This link has been revoked by the school.'}, status=410)
+        if link.expires_at <= timezone.now():
+            return Response({'error': 'This link has expired. Ask the school for a new one.'}, status=410)
+        student = link.student
+        now = timezone.now()
+
+        if link.claimed_at and link.claimed_by_id:
+            if request.user.is_authenticated and str(request.user.id) == str(link.claimed_by_id):
+                return Response({'status': 'already_linked', 'studentName': student.name})
+            return Response(
+                {'error': 'This student is already connected to another guardian account.'},
+                status=409,
+            )
+
+        # ---- authenticated parent ----
+        if request.user.is_authenticated:
+            user = request.user
+            if user.role != 'parent':
+                return Response(
+                    {'error': 'Only a guardian account can claim a student link.'}, status=403,
+                )
+            auth = self._authorize_user(user, student, request)
+            if auth == 'already':
+                return Response({'status': 'already_linked', 'studentName': student.name})
+            if auth == 'id_mismatch':
+                return Response(
+                    {'error': 'The ID card details did not match this student.'}, status=409,
+                )
+            self._link_student(link, student, user, now)
+            return Response({'status': 'linked', 'studentName': student.name}, status=201)
+
+        # ---- anonymous ----
+        mode = request.data.get('mode')
+        if mode == 'login':
+            return self._claim_anon_login(request, link, student, now)
+        if mode == 'create':
+            return self._claim_anon_create(request, link, student, now)
+        return Response({'error': 'Invalid request.'}, status=400)
+
+    def _claim_anon_login(self, request, link, student, now):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        email = (request.data.get('email') or '').strip()
+        password = request.data.get('password') or ''
+        if not email or not password:
+            return Response({'error': 'Email and password are required.'}, status=400)
+        user = User.objects.filter(email__iexact=email).first()
+        if not user or not user.check_password(password) or not user.is_active:
+            return Response({'error': 'Invalid email or password.'}, status=401)
+        if user.role != 'parent':
+            return Response(
+                {'error': 'This account is not a guardian account. Sign in with the guardian account.'},
+                status=403,
+            )
+        auth = self._authorize_user(user, student, request)
+        if auth == 'already':
+            return Response({'status': 'already_linked', 'studentName': student.name, 'loggedIn': True})
+        if auth == 'id_mismatch':
+            return Response(
+                {'error': 'The ID card details did not match this student.'}, status=409,
+            )
+        self._link_student(link, student, user, now)
+        response = Response({'status': 'linked', 'studentName': student.name, 'loggedIn': True}, status=201)
+        return _set_auth_cookies(response, user)
+
+    def _claim_anon_create(self, request, link, student, now):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        if family_parent_exists(student):
+            return Response(
+                {'error': 'This family is already connected — sign in with your existing guardian account instead.',
+                 'code': 'family_exists'},
+                status=409,
+            )
+        name = (request.data.get('name') or '').strip()
+        email = (request.data.get('email') or '').strip()
+        password = request.data.get('password') or ''
+        if not name or not email or not password:
+            return Response({'error': 'Name, email and password are required.'}, status=400)
+        if len(password) < 8:
+            return Response({'error': 'Password must be at least 8 characters.'}, status=400)
+        if User.objects.filter(email__iexact=email).exists():
+            return Response(
+                {'error': 'This email is already registered. Sign in with it instead.',
+                 'code': 'email_exists'},
+                status=409,
+            )
+        if not id_facts_match(
+            student,
+            request.data.get('fatherName') or '',
+            request.data.get('motherName') or '',
+            request.data.get('contact') or '',
+        ):
+            return Response(
+                {'error': 'The ID card details did not match this student. Check the details printed on the ID card.'},
+                status=409,
+            )
+        user = User.objects.create_user(
+            email=email, password=password, name=name,
+            role='parent', email_verified=True,
+        )
+        try:
+            ParentStudentLink.objects.create(parent=user, student=student)
+            self._link_student(link, student, user, now, action='connect_create')
+        except Exception:
+            user.delete()
+            raise
+        log_audit('connect_create', 'student', entity_id=str(student.id),
+                  details={'email': email, 'token': link.token[:8]}, request=request)
+        response = Response({'status': 'created', 'studentName': student.name, 'loggedIn': True}, status=201)
+        return _set_auth_cookies(response, user)
+
+
+class StudentConnectLinkAdminView(APIView):
+    """Admin / monitor / class-teacher link management for one student.
+
+    GET  → current shareable link (creates one lazily on first fetch).
+    POST {action: 'revoke'}      → invalidate the current link.
+    POST {action: 'regenerate'}  → invalidate + issue a fresh link.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def _get_student(self, request, student_id):
+        try:
+            student = Student.objects.get(id=student_id, deleted_at__isnull=True)
+        except Student.DoesNotExist:
+            return None, Response({'error': 'Student not found'}, status=404)
+        if not can_manage_connect(request.user, student):
+            return None, Response(
+                {'error': 'You can only manage connection links for your own class.'},
+                status=403,
+            )
+        return student, None
+
+    def _active_payload(self, link):
+        return {
+            'status': 'active',
+            'token': link.token,
+            'expiresAt': link.expires_at.isoformat(),
+            'createdAt': link.created_at.isoformat(),
+        }
+
+    def get(self, request, student_id):
+        student, err = self._get_student(request, student_id)
+        if err:
+            return err
+        active = current_active_link(student)
+        if active is not None:
+            return Response(self._active_payload(active))
+        # No active link — show the last one's state rather than resurrecting it
+        # (a revoked/consumed link stays dead until the staff explicitly re-issues one).
+        last = StudentConnectLink.objects.filter(student=student).order_by('-created_at').first()
+        if last is not None:
+            if last.claimed_at and last.claimed_by_id:
+                return Response({
+                    'status': 'claimed',
+                    'claimedBy': last.claimed_by.email if last.claimed_by else '',
+                    'claimedAt': last.claimed_at.isoformat() if last.claimed_at else None,
+                })
+            return Response({'status': 'revoked'})
+        # First ever link for this student — lazily issue one.
+        active = issue_link(student, request.user)
+        log_audit('create_connect_link', 'student', entity_id=str(student.id),
+                  details={'token': active.token[:8]}, request=request)
+        return Response(self._active_payload(active))
+
+    def post(self, request, student_id):
+        student, err = self._get_student(request, student_id)
+        if err:
+            return err
+        action = request.data.get('action', 'revoke')
+        active = current_active_link(student)
+
+        if action == 'generate':
+            if active is None:
+                active = issue_link(student, request.user)
+                log_audit('create_connect_link', 'student', entity_id=str(student.id),
+                          details={'token': active.token[:8]}, request=request)
+            return Response(self._active_payload(active))
+
+        if action == 'regenerate':
+            if active is not None:
+                active.revoked_at = timezone.now()
+                active.save(update_fields=['revoked_at'])
+                log_audit('revoke_connect_link', 'student', entity_id=str(student.id),
+                          details={'token': active.token[:8]}, request=request)
+            link = issue_link(student, request.user)
+            log_audit('create_connect_link', 'student', entity_id=str(student.id),
+                      details={'token': link.token[:8]}, request=request)
+            return Response(self._active_payload(link))
+
+        if active is not None:
+            active.revoked_at = timezone.now()
+            active.save(update_fields=['revoked_at'])
+            log_audit('revoke_connect_link', 'student', entity_id=str(student.id),
+                      details={'token': active.token[:8]}, request=request)
+            return Response({'status': 'revoked'})
+        return Response({'status': 'none'})

@@ -23,3 +23,11 @@ class PasswordResetRateThrottle(AnonRateThrottle):
 
 class PinLoginRateThrottle(AnonRateThrottle):
     scope = 'pin_login'
+
+
+class ConnectReadRateThrottle(AnonRateThrottle):
+    scope = 'connect_read'
+
+
+class ConnectWriteRateThrottle(AnonRateThrottle):
+    scope = 'connect_write'

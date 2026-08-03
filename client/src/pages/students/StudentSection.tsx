@@ -7,10 +7,11 @@ import type { AcademicYear } from '../../lib/types';
 import CameraModal from '../../components/CameraModal';
 import ImportModal from '../../components/ImportModal';
 import { CardSkeleton } from '../../components/Skeleton';
-import { Settings, RefreshCw, Download, Upload, Camera, Pencil, Trash2, Check, User, GraduationCap, Play, Sprout, Palette, BookOpen, Search, Archive } from 'lucide-react';
+import { Settings, RefreshCw, Download, Upload, Camera, Pencil, Trash2, Check, User, GraduationCap, Play, Sprout, Palette, BookOpen, Search, Archive, Link2 } from 'lucide-react';
 import { contactLinks } from '../../lib/contacts';
 import DeleteConfirmModal from '../../components/DeleteConfirmModal';
 import PromoteModal from '../../components/PromoteModal';
+import ShareLinkModal from '../../components/ShareLinkModal';
 import { API_URL } from '../../lib/config';
 
 let _jsPDF: any = null;
@@ -24,6 +25,7 @@ export default function StudentSection() {
   const role = useAuthStore((s) => s.user?.role);
   const isAdmin = role === 'admin';
   const canEditStudents = role === 'admin' || role === 'teacher';
+  const canShareLink = role === 'admin' || role === 'monitor' || role === 'teacher';
 
   const [activeClass, setActiveClass] = useState<string | null>(null);
   const [showClassManager, setShowClassManager] = useState(false);
@@ -136,7 +138,8 @@ export default function StudentSection() {
   };
 
   const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [deleteLoading, setDeleteLoading] = useState(false);
+    const [shareStudent, setShareStudent] = useState<any>(null);
+    const [deleteLoading, setDeleteLoading] = useState(false);
   const [archiveId, setArchiveId] = useState<string | null>(null);
   const [archiveName, setArchiveName] = useState('');
   const [archiveLoading, setArchiveLoading] = useState(false);
@@ -284,12 +287,18 @@ export default function StudentSection() {
           <button onClick={() => setDeleteId(s.id)} className="flex-1 py-1.5 bg-red-50 text-red-500 rounded-lg text-xs font-medium hover:bg-red-100 flex items-center justify-center gap-1"><Trash2 size={14} /> Delete</button>
         </div>
       )}
+      {canShareLink && (
+        <div className="mt-3 pt-3 border-t border-school-border">
+          <button onClick={() => setShareStudent(s)} className="w-full py-1.5 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-medium hover:bg-emerald-100 flex items-center justify-center gap-1"><Link2 size={14} /> Share with parent</button>
+        </div>
+      )}
     </div>
   );
 
   return (
     <div className="space-y-4">
-      <ClassManagerModal open={showClassManager} onClose={() => setShowClassManager(false)} />
+          <ClassManagerModal open={showClassManager} onClose={() => setShowClassManager(false)} />
+          <ShareLinkModal open={!!shareStudent} onClose={() => setShareStudent(null)} student={shareStudent} />
       <CameraModal open={showCamera} onClose={() => setShowCamera(false)} onCapture={(d) => { setPhoto(d); setShowCamera(false); }} />
       <ImportModal open={showImport} onClose={() => setShowImport(false)} onImported={() => fetchStudents(undefined, true)} />
 

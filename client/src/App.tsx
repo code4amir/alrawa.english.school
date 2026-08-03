@@ -35,6 +35,7 @@ const ChangePassword = lazy(() => import('./pages/ChangePassword'));
 const AdminRoutine = lazy(() => import('./pages/AdminRoutine'));
 const ExamRoutineAdmin = lazy(() => import('./pages/ExamRoutineAdmin'));
 const Connections = lazy(() => import('./pages/admin/Connections'));
+const ConnectParent = lazy(() => import('./pages/parents/ConnectParent'));
 
 function PageLoader() {
   return (
@@ -97,6 +98,7 @@ const App: React.FC = () => {
         <Routes>
           <Route path="/login" element={!user ? <Login /> : <Navigate to={user.role === 'parent' ? '/parent' : user.role === 'teacher' && teacherRoute !== '/' ? teacherRoute : '/'} />} />
           <Route path="/register" element={!user ? <Register /> : <Navigate to={user.role === 'parent' ? '/parent' : user.role === 'teacher' && teacherRoute !== '/' ? teacherRoute : '/'} />} />
+          <Route path="/connect/:token" element={<ConnectParent />} />
           <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/link-child" element={user?.role === 'parent' ? <LinkChild /> : <Navigate to="/" />} />
           <Route path="/change-password" element={user ? <ChangePassword /> : <Navigate to="/login" />} />

@@ -143,6 +143,8 @@ REST_FRAMEWORK = {
         'password_reset': '3/hour',
         'pin_login': '5/min',
         'ai_query': '30/hour',
+        'connect_read': '30/min',
+        'connect_write': '5/min',
     },
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
