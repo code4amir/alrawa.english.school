@@ -1,6 +1,6 @@
 import calendar
 import logging
-from datetime import date
+from datetime import date, timedelta
 from django.db import models
 from django.db import transaction as db_transaction
 from django.utils import timezone
@@ -14,9 +14,9 @@ logger = logging.getLogger(__name__)
 from .models import AttendanceRecord, Holiday
 from .serializers import (
     AttendanceRecordSerializer, BatchAttendanceSerializer,
-    AttendanceSummarySerializer, HolidaySerializer,
+    AttendanceSummarySerializer, HolidaySerializer, BulkHolidaySerializer,
 )
-from .permissions import CanMarkAttendance
+from .permissions import CanMarkAttendance, CanManageHolidays
 from students.models import Student
 from core.models import SchoolClass, SchoolSetting
 from accounts.permissions import require_permission, is_admin_or_superuser
@@ -621,7 +621,7 @@ class HolidayViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
             return [require_permission('students:read')()]
-        return [CanMarkAttendance()]
+        return [CanManageHolidays()]
 
     def perform_create(self, serializer):
         instance = serializer.save()
@@ -631,3 +631,47 @@ class HolidayViewSet(viewsets.ModelViewSet):
         entity_id = str(instance.pk)
         super().perform_destroy(instance)
         log_audit('delete', 'holiday', entity_id=entity_id, request=self.request)
+
+    @action(detail=False, methods=['post'], url_path='bulk')
+    def bulk(self, request):
+        """Create a range of consecutive holiday dates (long holiday) in one call."""
+        serializer = BulkHolidaySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        start = data['start_date']
+        end = data['end_date']
+        name = data['name']
+        htype = data['type']
+
+        existing = set(
+            Holiday.objects.filter(date__gte=start, date__lte=end)
+            .values_list('date', flat=True)
+        )
+
+        created = []
+        skipped = []
+        for i in range((end - start).days + 1):
+            d = start + timedelta(days=i)
+            if d in existing:
+                skipped.append(d.isoformat())
+                continue
+            holiday = Holiday.objects.create(date=d, name=name, type=htype)
+            created.append(holiday.id)
+
+        log_audit(
+            'create', 'holiday',
+            details={
+                'start': start.isoformat(), 'end': end.isoformat(),
+                'name': name, 'type': htype,
+                'created': len(created), 'skipped': len(skipped),
+            },
+            request=request,
+        )
+
+        return Response({
+            'status': 'ok',
+            'created': len(created),
+            'skipped': skipped,
+            'range': {'start': start.isoformat(), 'end': end.isoformat()},
+        })

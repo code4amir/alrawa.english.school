@@ -10,6 +10,18 @@ class HolidaySerializer(serializers.ModelSerializer):
         fields = ['id', 'date', 'name', 'type', 'createdAt']
 
 
+class BulkHolidaySerializer(serializers.Serializer):
+    start_date = serializers.DateField()
+    end_date = serializers.DateField()
+    name = serializers.CharField(max_length=255)
+    type = serializers.ChoiceField(choices=Holiday._meta.get_field('type').choices, default='public')
+
+    def validate(self, attrs):
+        if attrs['end_date'] < attrs['start_date']:
+            raise serializers.ValidationError({'end_date': 'end_date cannot be before start_date.'})
+        return attrs
+
+
 class AttendanceRecordSerializer(serializers.ModelSerializer):
     studentName = serializers.CharField(source='student.name', read_only=True)
     studentRoll = serializers.CharField(source='student.roll', read_only=True)

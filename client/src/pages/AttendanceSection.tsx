@@ -2,13 +2,13 @@ import { useState, useEffect } from 'react';
 import { api, useSchoolStore } from '../store';
 import Toast, { toast } from '../components/Toast';
 import { TERM_NAMES } from '../lib/config';
-import {
-  CalendarCheck, Check, X, Loader2, Download, FileText,
+import { CalendarCheck, Check, X, Loader2, Download, FileText,
   ChevronLeft, ChevronRight,
 } from 'lucide-react';
+import HolidaysPanel from '../components/HolidaysPanel';
 
 type StatusType = 'present' | 'absent' | 'unmarked';
-type Tab = 'daily' | 'report';
+type Tab = 'daily' | 'report' | 'holidays';
 type RptTab = 'daily' | 'monthly';
 type DailySub = 'classwise' | 'allclasses';
 
@@ -330,6 +330,10 @@ export default function AttendanceSection() {
           className={'flex-1 py-2 text-sm font-semibold rounded-lg transition-colors ' + (tab === 'report' ? 'bg-white dark:bg-school-primary shadow-sm text-school-primary dark:text-white' : 'text-school-muted')}>
           Report
         </button>
+        <button onClick={function () { setTab('holidays'); }}
+          className={'flex-1 py-2 text-sm font-semibold rounded-lg transition-colors ' + (tab === 'holidays' ? 'bg-white dark:bg-school-primary shadow-sm text-school-primary dark:text-white' : 'text-school-muted')}>
+          Holidays
+        </button>
       </div>
 
       {/* Daily Marking */}
@@ -400,7 +404,7 @@ export default function AttendanceSection() {
             </button>
           )}
         </>
-      ) : (
+      ) : tab === 'report' ? (
 
         <>
           <div className="flex items-center gap-2">
@@ -644,6 +648,8 @@ export default function AttendanceSection() {
             </>
           )}
         </>
+      ) : (
+        <HolidaysPanel />
       )}
     </div>
   );

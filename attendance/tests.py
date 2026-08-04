@@ -201,6 +201,82 @@ class AttendanceTests(TestCase):
         self.assertEqual(Holiday.objects.count(), 0)
 
 
+class HolidayBulkAndPermissionTests(TestCase):
+    """Range creation (long holidays) + admin/monitor-only write enforcement."""
+
+    def setUp(self):
+        self.client = self._auth(
+            User.objects.create_superuser(
+                email='admin@test.com', name='Admin', password='testpass123',
+            )
+        )
+
+    def _user(self, role):
+        return User.objects.create_user(
+            email=f'{role}@test.com', password='testpass123', name=role, role=role,
+        )
+
+    def _auth(self, user):
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {RefreshToken.for_user(user).access_token}')
+        return client
+
+    def test_bulk_creates_full_range(self):
+        res = self.client.post('/api/holidays/bulk/', {
+            'start_date': '2026-12-20', 'end_date': '2026-12-23',
+            'name': 'Winter Break', 'type': 'public',
+        }, format='json')
+        self.assertEqual(res.status_code, 200, msg=res.content[:300])
+        self.assertEqual(res.data['created'], 4)
+        self.assertEqual(res.data['skipped'], [])
+        self.assertEqual(Holiday.objects.count(), 4)
+        dates = set(Holiday.objects.values_list('date', flat=True))
+        self.assertEqual(dates, {date(2026, 12, d) for d in (20, 21, 22, 23)})
+
+    def test_bulk_skips_existing_dates(self):
+        Holiday.objects.create(date=date(2026, 6, 21), name='Existing', type='public')
+        res = self.client.post('/api/holidays/bulk/', {
+            'start_date': '2026-06-20', 'end_date': '2026-06-22',
+            'name': 'Eid', 'type': 'public',
+        }, format='json')
+        self.assertEqual(res.data['created'], 2)
+        self.assertEqual(res.data['skipped'], ['2026-06-21'])
+        self.assertEqual(Holiday.objects.count(), 3)
+
+    def test_bulk_rejects_inverted_range(self):
+        res = self.client.post('/api/holidays/bulk/', {
+            'start_date': '2026-12-23', 'end_date': '2026-12-20',
+            'name': 'Bad', 'type': 'public',
+        }, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(Holiday.objects.count(), 0)
+
+    def test_teacher_cannot_write_holidays(self):
+        teacher_client = self._auth(self._user('teacher'))
+        res = teacher_client.post('/api/holidays/', {
+            'date': '2026-12-25', 'name': 'Xmas', 'type': 'public',
+        }, format='json')
+        self.assertEqual(res.status_code, 403)
+        res = teacher_client.post('/api/holidays/bulk/', {
+            'start_date': '2026-12-20', 'end_date': '2026-12-21',
+            'name': 'Break', 'type': 'public',
+        }, format='json')
+        self.assertEqual(res.status_code, 403)
+        self.assertEqual(Holiday.objects.count(), 0)
+
+    def test_monitor_can_create_holiday(self):
+        client = self._auth(self._user('monitor'))
+        res = client.post('/api/holidays/', {
+            'date': '2026-12-25', 'name': 'Xmas', 'type': 'public',
+        }, format='json')
+        self.assertEqual(res.status_code, 201)
+
+    def test_teacher_can_still_read_holidays(self):
+        teacher = self._auth(self._user('teacher'))
+        res = teacher.get('/api/holidays/?limit=50')
+        self.assertEqual(res.status_code, 200)
+
+
 class MobileDailyReportTests(TestCase):
     """Tests for /api/m/attendance/class-daily-report/ against the REAL contract.
 
