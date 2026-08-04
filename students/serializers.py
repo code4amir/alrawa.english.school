@@ -1,14 +1,19 @@
 from rest_framework import serializers
 from django.db import transaction as db_transaction
 from .models import Student, StudentService
-from core.models import StudentIdCounter
+from core.models import StudentIdCounter, SchoolClass
 from core.mixins import PhotoUrlMixin
 
 
 class StudentSerializer(PhotoUrlMixin, serializers.ModelSerializer):
     photo_url_prefix = 'students'
     classId = serializers.UUIDField(source='school_class_id', read_only=True, allow_null=True)
-    schoolClass = serializers.UUIDField(source='school_class', required=False, allow_null=True)
+    schoolClass = serializers.PrimaryKeyRelatedField(
+        queryset=SchoolClass.objects.all(),
+        source='school_class',
+        required=False,
+        allow_null=True,
+    )
     className = serializers.CharField(source='school_class.name', read_only=True, allow_null=True)
     studentId = serializers.CharField(source='student_id', read_only=True)
     fatherName = serializers.CharField(source='father_name', read_only=True, allow_null=True)
@@ -27,6 +32,26 @@ class StudentSerializer(PhotoUrlMixin, serializers.ModelSerializer):
             'hasPhoto', 'hasGraduated', 'photoUrl', 'createdAt', 'services',
         ]
         read_only_fields = ['id', 'studentId', 'createdAt']
+        # Disable DRF's auto-generated UniqueTogetherValidator for the
+        # conditional UniqueConstraint(roll, school_class, condition=Q(roll__gt='')).
+        # DRF ignores the condition and demands BOTH fields on every create,
+        # wrongly rejecting classless students (model allows null class).
+        validators = []
+
+    def validate(self, attrs):
+        roll = attrs.get('roll')
+        school_class = attrs.get('school_class')
+        # Mirror the model's conditional uniqueness: only enforced when
+        # roll is non-empty and a class is set (matches Q(roll__gt='')).
+        if roll and school_class:
+            qs = Student.objects.filter(roll=roll, school_class=school_class)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError({
+                    'roll': 'A student with this roll already exists in this class.'
+                })
+        return attrs
 
     def get_hasGraduated(self, obj):
         return obj.graduated_at is not None

@@ -23,7 +23,7 @@ class StudentTests(TestCase):
 
     def test_create_student(self):
         res = self.client.post('/api/students/', {
-            'name': 'John Doe', 'class': self.klass.id, 'roll': '1',
+            'name': 'John Doe', 'schoolClass': self.klass.id, 'roll': '1',
             'fatherName': 'Father', 'motherName': 'Mother', 'contact': '123',
         })
         self.assertEqual(res.status_code, 201)
