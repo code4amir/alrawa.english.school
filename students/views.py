@@ -32,26 +32,30 @@ class StudentViewSet(PhotoHandleMixin, viewsets.ModelViewSet):
         return [require_permission('students:write')()]
 
     def get_queryset(self):
-        qs = Student.objects.select_related('school_class').prefetch_related('services__service_type').all()
-        show_archived = self.request.query_params.get('archived', 'false').lower() == 'true'
-        search = self.request.query_params.get('search')
-        class_id = self.request.query_params.get('class_id')
-        class_name = self.request.query_params.get('class_name')\
-            or self.request.query_params.get('className')
+            qs = Student.objects.select_related('school_class').prefetch_related('services__service_type').all()
+            # Parent role: scope to linked students only
+            if self.request.user.is_authenticated and self.request.user.role == 'parent':
+                student_ids = self.request.user.parent_links.values_list('student_id', flat=True)
+                qs = qs.filter(id__in=student_ids)
+            show_archived = self.request.query_params.get('archived', 'false').lower() == 'true'
+            search = self.request.query_params.get('search')
+            class_id = self.request.query_params.get('class_id')
+            class_name = self.request.query_params.get('class_name') \
+                or self.request.query_params.get('className')
 
-        if not show_archived:
-            qs = qs.filter(deleted_at__isnull=True)
-        if class_id:
-            qs = qs.filter(school_class_id=class_id)
-        if class_name:
-            qs = qs.filter(school_class__name=class_name)
-        if search:
-            qs = qs.filter(
-                models.Q(name__icontains=search) |
-                models.Q(student_id__icontains=search) |
-                models.Q(roll__icontains=search)
-            )
-        return qs
+            if not show_archived:
+                qs = qs.filter(deleted_at__isnull=True)
+            if class_id:
+                qs = qs.filter(school_class_id=class_id)
+            if class_name:
+                qs = qs.filter(school_class__name=class_name)
+            if search:
+                qs = qs.filter(
+                    models.Q(name__icontains=search) |
+                    models.Q(student_id__icontains=search) |
+                    models.Q(roll__icontains=search)
+                )
+            return qs
 
     def perform_create(self, serializer):
         school_class = serializer.validated_data.get('school_class')

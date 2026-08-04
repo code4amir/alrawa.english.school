@@ -100,6 +100,26 @@ class ResultViewSet(viewsets.ModelViewSet):
         class_id = self.request.query_params.get('class_id')
         if class_id:
             qs = qs.filter(student__school_class_id=class_id)
+        # Parent role: scope to linked students AND published terms only
+        if self.request.user.is_authenticated and self.request.user.role == 'parent':
+            student_ids = self.request.user.parent_links.values_list('student_id', flat=True)
+            qs = qs.filter(student_id__in=student_ids)
+            # Filter to published terms only
+            from core.models import SchoolSetting
+            setting = SchoolSetting.objects.filter(key='published_terms').first()
+            if setting and setting.value:
+                import json
+                try:
+                    published = json.loads(setting.value)
+                    allowed_terms = set()
+                    for session_terms in published.values():
+                        allowed_terms.update(str(t) for t in session_terms)
+                    if allowed_terms:
+                        qs = qs.filter(term__in=allowed_terms)
+                except (json.JSONDecodeError, TypeError):
+                    qs = qs.none()  # no published terms = no results visible
+            else:
+                qs = qs.none()
         return qs
 
     @action(detail=False, methods=['get'])

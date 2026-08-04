@@ -171,15 +171,23 @@ class AttendanceViewSet(viewsets.GenericViewSet):
                 status=400,
             )
 
+        # Parent role: verify student is linked to this parent
+        if request.user.is_authenticated and request.user.role == 'parent':
+            parent_student_ids = set(
+                request.user.parent_links.values_list('student_id', flat=True)
+            )
+            if student_id not in parent_student_ids:
+                return Response({'error': 'Student not found'}, status=404)
+
         try:
             student = Student.objects.get(id=student_id)
         except Student.DoesNotExist:
             raise NotFound('Student not found')
 
         base_qs = AttendanceRecord.objects.filter(
-            student_id=student_id,
-            term=term,
-            session=session,
+        student_id=student_id,
+        term=term,
+        session=session,
         )
         if year:
             base_qs = base_qs.filter(date__year=year)
@@ -260,6 +268,14 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         except (ValueError, TypeError):
             return Response({'error': 'Invalid year or month'}, status=400)
 
+        # Parent role: verify student is linked to this parent
+        if request.user.is_authenticated and request.user.role == 'parent':
+            parent_student_ids = set(
+                request.user.parent_links.values_list('student_id', flat=True)
+            )
+            if student_id not in parent_student_ids:
+                return Response({'error': 'Student not found'}, status=404)
+
         try:
             student = Student.objects.get(id=student_id)
         except Student.DoesNotExist:
@@ -336,6 +352,17 @@ class AttendanceViewSet(viewsets.GenericViewSet):
                 {'error': 'class_id, from, and to query params are required'},
                 status=400,
             )
+
+        # Parent role: verify linked student is in this class
+        if request.user.is_authenticated and request.user.role == 'parent':
+            parent_student_ids = set(
+                request.user.parent_links.values_list('student_id', flat=True)
+            )
+            has_linked_student = Student.objects.filter(
+                id__in=parent_student_ids, school_class_id=class_id
+            ).exists()
+            if not has_linked_student:
+                return Response({'error': 'Class not found'}, status=404)
 
         try:
             school_class = SchoolClass.objects.get(id=class_id)
