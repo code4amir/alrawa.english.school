@@ -68,8 +68,8 @@ export const useAuthStore = create<AuthState>((set, get) => {
 
     login: async (email: string, password: string) => {
       const res = await api.post('/auth/login/', { email, password });
-      const { access, refresh, needsLinking } = res.data;
-      setTokens(access, refresh);
+      const { access, needsLinking } = res.data;
+      setTokens(access, null);
       await get().fetchSession();
       return { needsLinking: Boolean(needsLinking) };
     },

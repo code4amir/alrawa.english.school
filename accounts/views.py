@@ -69,7 +69,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
         if response.status_code == 200:
             refresh = response.data.get('refresh')
             access = response.data.get('access')
-            response.data = {'access': access, 'refresh': refresh, 'detail': 'Login successful'}
+            response.data = {'access': access, 'detail': 'Login successful'}
             response.set_cookie(
                 settings.SIMPLE_JWT['ACCESS_COOKIE'],
                 access,
@@ -107,8 +107,6 @@ class CustomTokenRefreshView(APIView):
                 return Response({'detail': 'Invalid refresh token'}, status=status.HTTP_401_UNAUTHORIZED)
             access = str(refresh.access_token)
             data = {'access': access, 'detail': 'Token refreshed'}
-            if settings.SIMPLE_JWT.get('ROTATE_REFRESH_TOKENS'):
-                data['refresh'] = str(refresh)
             response = Response(data, status=status.HTTP_200_OK)
             response.set_cookie(
                 settings.SIMPLE_JWT['ACCESS_COOKIE'],
@@ -245,6 +243,15 @@ class LogoutView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
+        # Blacklist the refresh token before deleting cookies.
+        refresh_token = request.COOKIES.get(settings.SIMPLE_JWT['REFRESH_COOKIE'])
+        if refresh_token:
+            try:
+                from rest_framework_simplejwt.tokens import RefreshToken
+                token = RefreshToken(refresh_token)
+                token.blacklist()
+            except Exception:
+                pass  # token already expired/invalid — still safe to clear cookies
         response = Response({'detail': 'Logged out'}, status=status.HTTP_200_OK)
         response.delete_cookie(
             settings.SIMPLE_JWT['ACCESS_COOKIE'],

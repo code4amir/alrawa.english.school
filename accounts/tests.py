@@ -24,7 +24,7 @@ class AccountTests(TestCase):
         self.assertIn('access_token', res.cookies)
         self.assertIn('refresh_token', res.cookies)
         self.assertIn('access', res.data)
-        self.assertIn('refresh', res.data)
+        self.assertNotIn('refresh', res.data)  # refresh is cookie-only now
 
     def test_login_wrong_password(self):
         res = self.client.post('/api/auth/login/', {'email': 'admin@test.com', 'password': 'wrong'})

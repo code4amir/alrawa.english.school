@@ -272,7 +272,7 @@ export default function StudentSection() {
               try {
                 await api.post(`/students/${s.id}/ungraduate/`);
                 toast('Student unarchived ✓', 'success');
-                fetchStudents(showGraduated ? { showGraduated: 'true' } : undefined, true);
+                fetchStudents(showGraduated ? { archived: 'true' } : undefined, true);
               } catch (e: any) { toast(e.response?.data?.error || e.message || 'Error', 'error'); }
             }} className="flex-1 py-1.5 bg-amber-50 text-amber-600 rounded-lg text-xs font-medium hover:bg-amber-100 flex items-center justify-center gap-1"><Archive size={14} /> Unarchive</button>
           ) : (
@@ -280,7 +280,7 @@ export default function StudentSection() {
               try {
                 await api.post(`/students/${s.id}/graduate/`);
                 toast('Student archived ✓', 'success');
-                fetchStudents(showGraduated ? { showGraduated: 'true' } : undefined, true);
+                fetchStudents(showGraduated ? { archived: 'true' } : undefined, true);
               } catch (e: any) { toast(e.response?.data?.error || e.message || 'Error', 'error'); }
             }} className="flex-1 py-1.5 bg-amber-50 text-amber-600 rounded-lg text-xs font-medium hover:bg-amber-100 flex items-center justify-center gap-1"><Archive size={14} /> Archive</button>
           )}
@@ -368,7 +368,7 @@ export default function StudentSection() {
           <button onClick={() => { setShowGraduated(!showGraduated); }} className={`flex items-center gap-1 px-3 py-1.5 border rounded-lg text-xs ${showGraduated ? 'bg-amber-100 border-amber-300 text-amber-700' : 'border-school-border hover:bg-school-paper'}`}>
             <Archive size={12} /> {showGraduated ? 'All' : 'Active'}
           </button>
-          <button onClick={() => fetchStudents(showGraduated ? { showGraduated: 'true' } : undefined)} className="flex items-center gap-1 px-3 py-1.5 border border-school-border rounded-lg text-xs hover:bg-school-paper">
+          <button onClick={() => fetchStudents(showGraduated ? { archived: 'true' } : undefined)} className="flex items-center gap-1 px-3 py-1.5 border border-school-border rounded-lg text-xs hover:bg-school-paper">
             <RefreshCw size={12} /> Refresh
           </button>
         </div>
