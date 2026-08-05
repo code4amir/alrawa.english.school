@@ -174,9 +174,9 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         # Parent role: verify student is linked to this parent
         if request.user.is_authenticated and request.user.role == 'parent':
             parent_student_ids = set(
-                request.user.parent_links.values_list('student_id', flat=True)
+                map(str, request.user.parent_links.values_list('student_id', flat=True))
             )
-            if student_id not in parent_student_ids:
+            if str(student_id) not in parent_student_ids:
                 return Response({'error': 'Student not found'}, status=404)
 
         try:
@@ -185,9 +185,9 @@ class AttendanceViewSet(viewsets.GenericViewSet):
             raise NotFound('Student not found')
 
         base_qs = AttendanceRecord.objects.filter(
-        student_id=student_id,
-        term=term,
-        session=session,
+            student_id=student_id,
+            term=term,
+            session=session,
         )
         if year:
             base_qs = base_qs.filter(date__year=year)
