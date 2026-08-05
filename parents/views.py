@@ -285,7 +285,16 @@ class AnnouncementListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        announcements = Announcement.objects.select_related('school_class').all()[:20]
+        qs = Announcement.objects.select_related('school_class')
+        # Class scoping: parents see all-school + their linked children's class announcements
+        if request.user.role == 'parent':
+            class_ids = list(
+                ParentStudentLink.objects.filter(parent=request.user)
+                .values_list('student__school_class_id', flat=True)
+            )
+            from django.db.models import Q
+            qs = qs.filter(Q(school_class__isnull=True) | Q(school_class_id__in=class_ids))
+        announcements = qs[:20]
         data = [{
             'id': a.id,
             'title': a.title,
@@ -309,8 +318,11 @@ class AnnouncementListView(APIView):
         if school_class_id:
             kwargs['school_class_id'] = school_class_id
         announcement = Announcement.objects.create(**kwargs)
-        from .services import notify_all_parents
-        notify_all_parents(title, body, url='/#/parent/announcements')
+        from .services import notify_all_parents, notify_parents_of_class
+        if school_class_id:
+            notify_parents_of_class(school_class_id, 'announcement', title, body, url='/#/parent/announcements')
+        else:
+            notify_all_parents(title, body, url='/#/parent/announcements')
         return Response({
             'id': announcement.id,
             'title': announcement.title,

@@ -10,6 +10,7 @@ interface Announcement {
   body: string;
   author: string;
   createdAt: string;
+  school_class?: { id: string; name: string } | null;
 }
 
 export default function ParentAnnouncements() {
@@ -58,6 +59,15 @@ export default function ParentAnnouncements() {
                   {new Date(a.createdAt).toLocaleDateString()}
                 </span>
               </div>
+              {a.school_class ? (
+                <span className="inline-block text-[10px] font-semibold text-purple-700 bg-purple-100 rounded-full px-2 py-0.5">
+                  {a.school_class.name}
+                </span>
+              ) : (
+                <span className="inline-block text-[10px] font-semibold text-school-muted bg-school-paper rounded-full px-2 py-0.5">
+                  All classes
+                </span>
+              )}
               {a.body && <p className="text-sm text-school-muted leading-relaxed">{a.body}</p>}
               <p className="text-[10px] text-school-muted/60">— {a.author}</p>
             </div>
