@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../../store';
 import {
   ChevronRight, GraduationCap, Megaphone, BookOpen, BookText,
-  ClipboardList, Calendar, Wallet,
+  ClipboardList, Calendar, Wallet, Bell,
 } from 'lucide-react';
 import ParentLayout from './ParentLayout';
 import Toast, { toast } from '../../components/Toast';
@@ -37,6 +37,14 @@ interface ExamItem {
   id: string; exam_name: string; subject_name: string; date: string; start_time: string;
 }
 
+interface NoticeItem {
+  id: string;
+  title: string;
+  body: string;
+  event_type: string;
+  createdAt: string;
+}
+
 export default function ParentDashboard() {
   const navigate = useNavigate();
   const [students, setStudents] = useState<Student[]>([]);
@@ -45,6 +53,7 @@ export default function ParentDashboard() {
   const [diaries, setDiaries] = useState<DiaryItem[]>([]);
   const [exams, setExams] = useState<ExamItem[]>([]);
   const [todayRoutine, setTodayRoutine] = useState<string[]>([]);
+  const [notices, setNotices] = useState<NoticeItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -57,13 +66,15 @@ export default function ParentDashboard() {
       api.get('/parents/diary/'),
       api.get('/parents/exam-routine/'),
       api.get('/parents/routine/'),
+      api.get('/parents/notifications/'),
     ])
-      .then(([stuRes, annRes, hwRes, diRes, exRes, rtRes]) => {
+      .then(([stuRes, annRes, hwRes, diRes, exRes, rtRes, notRes]) => {
         setStudents(stuRes.data);
         setAnnouncements(annRes.data.slice(0, 3));
         setHomeworks(hwRes.data.slice(0, 3));
         setDiaries(diRes.data.slice(0, 3));
         setExams(exRes.data.slice(0, 5));
+        setNotices(notRes.data.slice(0, 4));
         setTodayRoutine(
           rtRes.data
             .filter((p: any) => p.day === dayName)
@@ -260,6 +271,33 @@ export default function ParentDashboard() {
             <span className="text-[10px] font-bold uppercase text-school-muted">Results</span>
           </button>
         </div>
+
+        {notices.length > 0 && (
+          <div className="bg-white rounded-xl border border-school-border overflow-hidden card-shadow">
+            <div className="px-4 py-3 bg-gray-50 border-b border-school-border flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Bell size={16} className="text-school-accent" />
+                <span className="font-bold text-sm text-school-primary">Recent Notices</span>
+              </div>
+            </div>
+            {notices.map((n) => (
+              <div key={n.id} className="px-4 py-3 border-b border-school-border last:border-0">
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="font-bold text-sm text-school-primary">{n.title || 'Notice'}</h3>
+                  <span className="text-[10px] text-school-muted whitespace-nowrap shrink-0">
+                    {new Date(n.createdAt).toLocaleDateString()}
+                  </span>
+                </div>
+                {n.body && <p className="text-xs text-school-muted mt-1 whitespace-pre-line">{n.body}</p>}
+                {n.event_type === 'dues_reminder' && (
+                  <span className="inline-block text-[10px] font-semibold text-rose-700 bg-rose-50 rounded-full px-2 py-0.5 mt-1">
+                    Dues Reminder
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
         {announcements.length > 0 && (
           <div className="bg-white rounded-xl border border-school-border overflow-hidden card-shadow">
