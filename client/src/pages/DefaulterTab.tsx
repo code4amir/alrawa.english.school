@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import DOMPurify from 'dompurify';
 import { useSchoolStore, api } from '../store';
 import { toast } from '../components/Toast';
-import { AlertTriangle, Download, Printer, Check, X, Send } from 'lucide-react';
+import { AlertTriangle, Download, Printer, Check, X, Send, Bell } from 'lucide-react';
 import { defaulterPDF } from '../lib/defaulterPdf';
 import { getMonthNameShort, fmt } from '../lib/financeReportPdf';
 import DatePicker from '../components/DatePicker';
@@ -47,6 +47,8 @@ export default function DefaulterTab() {
   const [reminderStudent, setReminderStudent] = useState<DefaulterStudent | null>(null);
   const [reminderNote, setReminderNote] = useState('');
   const [sending, setSending] = useState(false);
+  const [confirmBulkOpen, setConfirmBulkOpen] = useState(false);
+  const [bulkSending, setBulkSending] = useState(false);
   const [monthFrom, setMonthFrom] = useState(() => {
     const d = new Date();
     d.setMonth(d.getMonth() - 3);
@@ -166,6 +168,22 @@ export default function DefaulterTab() {
     }
   }
 
+  async function handleSendToAll() {
+    setBulkSending(true);
+    try {
+      const res = await api.post('/finance/transactions/send_dues_reminder_all/', {
+        className: filterClass || undefined,
+        feeCategory: filterFee || undefined,
+      });
+      toast(res.data.message || 'Reminders sent', 'success');
+      setConfirmBulkOpen(false);
+    } catch {
+      toast('Failed to send reminders', 'error');
+    } finally {
+      setBulkSending(false);
+    }
+  }
+
   function FeeCell({ amount, paid }: { amount: number; paid: boolean }) {
     return (
       <span className={`font-bold text-[10px] ${paid ? 'text-emerald-600' : 'text-rose-600'}`}>
@@ -232,6 +250,10 @@ export default function DefaulterTab() {
           <h4 className="font-serif text-sm text-school-primary">Fee Defaulters</h4>
           <span className="text-[10px] text-school-muted">({filtered.length} students)</span>
           <div className="ml-auto flex gap-2">
+            <button onClick={() => { setConfirmBulkOpen(true); }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 text-white rounded-xl text-xs font-bold hover:bg-rose-700">
+              <Bell size={14} /> Send to All
+            </button>
             <button onClick={handlePdf}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-school-primary text-white rounded-xl text-xs font-bold hover:opacity-90">
               <Download size={14} /> PDF
@@ -379,6 +401,39 @@ export default function DefaulterTab() {
               >
                 {sending && <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" />}
                 Send
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Send-to-All modal */}
+      {confirmBulkOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl border border-school-border w-full max-w-md p-5">
+            <h3 className="font-serif text-sm text-school-primary mb-1">Send Reminders to All Defaulters</h3>
+            <p className="text-xs text-school-muted">
+              This will send a dues reminder to the parent(s) of every student
+              {filterClass ? ` in ${filterClass}` : ''} with outstanding balance
+              {filterFee ? ` for "${filterFee}"` : ''} — <span className="font-semibold text-school-primary">{filtered.length} student(s)</span>.
+              <br /><br />
+              <span className="text-rose-600 font-semibold">Are you sure?</span>
+            </p>
+            <div className="mt-4 flex gap-3 justify-end">
+              <button
+                onClick={() => setConfirmBulkOpen(false)}
+                disabled={bulkSending}
+                className="px-4 py-2 text-xs font-bold text-school-muted hover:text-school-primary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSendToAll}
+                disabled={bulkSending}
+                className="px-4 py-2 bg-rose-600 text-white rounded-xl text-xs font-bold hover:bg-rose-700 disabled:opacity-50 flex items-center gap-2"
+              >
+                {bulkSending && <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" />}
+                Send to All
               </button>
             </div>
           </div>
