@@ -116,6 +116,7 @@ class NotificationLog(models.Model):
         ('fee_received', 'Fee Received'),
         ('result_published', 'Result Published'),
         ('announcement', 'Announcement'),
+        ('dues_reminder', 'Dues Reminder'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
