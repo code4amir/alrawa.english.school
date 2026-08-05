@@ -365,9 +365,7 @@ const FinanceSection = () => {
   const [selectedFeeScheduleId, setSelectedFeeScheduleId] = useState('');
   const [feeStatusList, setFeeStatusList] = useState<any[]>([]);
   const [selectedAllocations, setSelectedAllocations] = useState<Record<string, boolean>>({});
-  const [otherCategory, setOtherCategory] = useState('');
-  const [otherAmount, setOtherAmount] = useState('');
-  const [otherChecked, setOtherChecked] = useState(false);
+  const [otherFees, setOtherFees] = useState<{ checked: boolean; category: string; amount: string }[]>([]);
 
 
   useEffect(() => {
@@ -438,9 +436,7 @@ const FinanceSection = () => {
           if (!f.paid) defaultChecked[f.feeScheduleId] = true;
         });
         setSelectedAllocations(defaultChecked);
-        setOtherChecked(false);
-        setOtherCategory('');
-        setOtherAmount('');
+        setOtherFees([]);
       })
       .catch(() => setFeeStatusList([]));
     return () => ctrl.abort();
@@ -449,16 +445,16 @@ const FinanceSection = () => {
   // Auto-fill amount from checked allocations
   useEffect(() => {
     const selectedFeeIds = Object.keys(selectedAllocations).filter(k => selectedAllocations[k]);
-    if ((selectedFeeIds.length > 0 || otherChecked) && feeStatusList.length > 0 && feeMonth) {
+    if ((selectedFeeIds.length > 0 || otherFees.some(o => o.checked)) && feeStatusList.length > 0 && feeMonth) {
       const total = selectedFeeIds.reduce((s, id) => {
         const f = feeStatusList.find((fs: any) => fs.feeScheduleId === id);
         if (!f) return s;
         return s + Number(f.amount) * (f.numMonths || 1);
       }, 0);
-      const otherTotal = otherChecked ? Number(otherAmount) || 0 : 0;
+      const otherTotal = otherFees.filter(o => o.checked).reduce((s, o) => s + (Number(o.amount) || 0), 0);
       setAmount(String(total + otherTotal));
     }
-  }, [selectedAllocations, feeStatusList, feeMonth, otherChecked, otherAmount]);
+  }, [selectedAllocations, feeStatusList, feeMonth, otherFees]);
 
   const availableStudents = useMemo(() => {
     const classStudents = students.filter((s: any) => s.class === selectedClass);
@@ -545,9 +541,11 @@ const FinanceSection = () => {
             body.allocations.push({ feeScheduleId: id, amount: Number(fs.amount), period: (feeMonth || '').split('-')[0] });
           }
         }
-        if (otherChecked && otherCategory && Number(otherAmount) > 0) {
-          body.category += body.category ? `, ${otherCategory}` : otherCategory;
-          body.allocations.push({ feeScheduleId: '__other__', category: otherCategory, amount: Number(otherAmount), period: feeMonth || '' });
+        for (const o of otherFees) {
+          if (o.checked && o.category && Number(o.amount) > 0) {
+            body.category += body.category ? `, ${o.category}` : o.category;
+            body.allocations.push({ feeScheduleId: '__other__', category: o.category, amount: Number(o.amount), period: feeMonth || '' });
+          }
         }
       } else {
         body.category = finalCategory;
@@ -784,24 +782,55 @@ const FinanceSection = () => {
                                   </tr>
                                 );
                               })}
-                              <tr className="hover:bg-school-paper/30 border-t-2 border-dashed border-school-border">
-                                <td className="px-4 py-2.5 text-center">
-                                  <input type="checkbox" checked={otherChecked}
-                                    onChange={e => setOtherChecked(e.target.checked)}
-                                    className="w-4 h-4 rounded border-school-border accent-school-primary cursor-pointer" />
-                                </td>
-                                <td className="px-4 py-2.5">
-                                  <input type="text" value={otherCategory}
-                                    onChange={e => setOtherCategory(e.target.value)}
-                                    placeholder="Other (Notebook, Accessories...)"
-                                    className="w-full border border-school-border rounded-lg px-2 py-1 text-sm focus:outline-none focus:border-school-accent" />
-                                </td>
-                                <td className="px-4 py-2.5 text-right text-school-muted">—</td>
-                                <td className="px-4 py-2.5 text-right">
-                                  <input type="number" value={otherAmount}
-                                    onChange={e => setOtherAmount(e.target.value)}
-                                    placeholder="0"
-                                    className="w-24 border border-school-border rounded-lg px-2 py-1 text-sm text-right focus:outline-none focus:border-school-accent" />
+                              {otherFees.map((o, i) => (
+                                <tr key={i} className="hover:bg-school-paper/30 border-t-2 border-dashed border-school-border">
+                                  <td className="px-4 py-2.5 text-center">
+                                    <input type="checkbox" checked={o.checked}
+                                      onChange={e => {
+                                        const next = [...otherFees];
+                                        next[i].checked = e.target.checked;
+                                        setOtherFees(next);
+                                      }}
+                                      className="w-4 h-4 rounded border-school-border accent-school-primary cursor-pointer" />
+                                  </td>
+                                  <td className="px-4 py-2.5">
+                                    <input type="text" value={o.category}
+                                      onChange={e => {
+                                        const next = [...otherFees];
+                                        next[i].category = e.target.value;
+                                        setOtherFees(next);
+                                      }}
+                                      placeholder="Other (Notebook, Accessories...)"
+                                      className="w-full border border-school-border rounded-lg px-2 py-1 text-sm focus:outline-none focus:border-school-accent" />
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right text-school-muted">—</td>
+                                  <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                                    <input type="number" value={o.amount}
+                                      onChange={e => {
+                                        const next = [...otherFees];
+                                        next[i].amount = e.target.value;
+                                        setOtherFees(next);
+                                      }}
+                                      placeholder="0"
+                                      className="w-24 border border-school-border rounded-lg px-2 py-1 text-sm text-right focus:outline-none focus:border-school-accent" />
+                                    <button
+                                      type="button"
+                                      onClick={() => setOtherFees(prev => prev.filter((_, j) => j !== i))}
+                                      title="Remove this fee"
+                                      className="ml-1.5 text-[10px] text-rose-600 hover:text-rose-700 font-bold align-middle"
+                                    >✕</button>
+                                  </td>
+                                </tr>
+                              ))}
+                              <tr>
+                                <td colSpan={4} className="px-4 py-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setOtherFees(prev => [...prev, { checked: true, category: '', amount: '' }])}
+                                    className="inline-flex items-center gap-1 text-xs font-bold text-school-accent hover:underline"
+                                  >
+                                    <span className="text-base leading-none">+</span> Add other fee
+                                  </button>
                                 </td>
                               </tr>
                             </tbody>
@@ -814,7 +843,7 @@ const FinanceSection = () => {
                                     .reduce((s, f) => {
                                       const months = f.numMonths || 1;
                                       return s + Number(f.amount) * months;
-                                    }, 0) + (otherChecked ? Number(otherAmount) || 0 : 0))
+                                    }, 0) + otherFees.filter(o => o.checked).reduce((s, o) => s + (Number(o.amount) || 0), 0))
                                     .toLocaleString()}
                                 </td>
                               </tr>
