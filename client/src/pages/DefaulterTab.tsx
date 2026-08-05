@@ -120,12 +120,96 @@ export default function DefaulterTab() {
 
   const subtitle = `${getMonthNameShort(Number(monthFrom.split('-')[1]) - 1)} ${monthFrom.split('-')[0]} — ${getMonthNameShort(Number(monthTo.split('-')[1]) - 1)} ${monthTo.split('-')[0]}`;
 
+  // Fetch EVERY matching defaulter (paginated server-side), ignoring the
+  // on-screen page, so PDF/Print always contain the complete report.
+  async function fetchAllDefaulters(_ctx: 'print' | 'pdf') {
+    const params: Record<string, string> = {};
+    if (filterClass) params.className = filterClass;
+    if (filterStudent) params.studentId = filterStudent;
+    if (filterFee) params.feeCategory = filterFee;
+    params.monthFrom = monthFrom;
+    params.monthTo = monthTo;
+    params.year = monthTo.split('-')[0];
+    params.limit = '200';
+    const rows: DefaulterStudent[] = [];
+    for (let page = 1; ; page++) {
+      try {
+        const res = await api.get('/finance/defaulter', { params: { ...params, page: String(page) } });
+        const batch = res.data.results || res.data.data || res.data || [];
+        rows.push(...batch);
+        const totalPages = res.data.totalPages || 1;
+        if (page >= totalPages || batch.length === 0) break;
+      } catch {
+        toast('Failed to load full defaulter report', 'error');
+        return null;
+      }
+    }
+    const yearlyFeeNames = [...new Set(rows.flatMap(r => r.fees.filter(f => f.type === 'onetime' || f.type === 'global').map(f => f.name)))];
+    const monthlyFeeNames = [...new Set(rows.flatMap(r => r.fees.filter(f => f.type === 'recurring' || f.type === 'special').map(f => f.name)))];
+    const totalDue = rows.reduce((s, r) => s + r.totalDue, 0);
+    const totalPaid = rows.reduce((s, r) => s + r.totalPaid, 0);
+    return { rows, yearlyFeeNames, monthlyFeeNames, totalDue, totalPaid };
+  }
+
+  // Build equivalent print HTML from the full dataset (the on-screen table is
+  // page-scoped, so we render a complete standalone table for the print window).
+  function a11yPrintTable(all: NonNullable<Awaited<ReturnType<typeof fetchAllDefaulters>>>) {
+    const months = monthRange;
+    const hasMonthly = all.monthlyFeeNames.length > 0 && months.length > 0;
+    const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+    const feeCell = (md: { amount: number; paid: boolean } | null | undefined, missing = false) =>
+      md === undefined && missing
+        ? '<td><span class="unpaid">✗</span></td>'
+        : `<td class="${md && !md.paid ? 'unpaid' : 'paid'}">${md ? `${fmt(md.amount)}/-` : '—'}</td>`;
+
+    let html = '<table><thead><tr>'
+      + `<th rowspan="2">Student<br/><small>Class</small></th>`
+      + all.yearlyFeeNames.map(n => `<th rowspan="2">${esc(shortName(n))}</th>`).join('')
+      + (hasMonthly ? months.map(m => {
+          const [yr, mn] = m.split('-');
+          return `<th colspan="${all.monthlyFeeNames.length}">${getMonthNameShort(Number(mn) - 1)} '${yr.slice(2)}</th>`;
+        }).join('') : '')
+      + '<th rowspan="2">Due</th><th rowspan="2">Paid</th><th rowspan="2">Balance</th>'
+      + '</tr>'
+      + (hasMonthly ? `<tr>${Array.from({ length: months.length }).flatMap(() => all.monthlyFeeNames.map(n => `<th>${esc(shortName(n))}</th>`)).join('')}</tr>` : '')
+      + '</thead><tbody>';
+
+    for (const row of all.rows) {
+      html += `<tr><td><b>${esc(row.name)}</b><br/><small>${esc(row.class)}</small></td>`;
+      for (const n of all.yearlyFeeNames) {
+        const f = row.fees.find(x => x.name === n);
+        html += f === undefined
+          ? '<td><span class="muted">—</span></td>'
+          : feeCell(f);
+      }
+      if (hasMonthly) {
+        for (const m of months) {
+          for (const n of all.monthlyFeeNames) {
+            const fee = row.fees.find(x => x.name === n && (x.type === 'recurring' || x.type === 'special'));
+            const md = fee?.months?.find(x => x.month === m);
+            html += md === undefined && months.length > 0 ? feeCell(md, true) : feeCell(md);
+          }
+        }
+      }
+      html += `<td>${fmt(row.totalDue)}/-</td><td>${fmt(row.totalPaid)}/-</td>`
+        + `<td class="${row.balance > 0 ? 'unpaid' : 'paid'}">${fmt(Math.abs(row.balance))}/-</td></tr>`;
+    }
+
+    html += `</tbody><tfoot><tr><td colspan="${1 + all.yearlyFeeNames.length}"><b>Grand Total</b></td>`
+      + (hasMonthly ? `<td colspan="${months.length * all.monthlyFeeNames.length}"></td>` : '')
+      + `<td>${fmt(all.totalDue)}/-</td><td>${fmt(all.totalPaid)}/-</td>`
+      + `<td class="${all.totalDue - all.totalPaid > 0 ? 'unpaid' : 'paid'}">${fmt(Math.abs(all.totalDue - all.totalPaid))}/-</td></tr></tfoot></table>`;
+
+    return html;
+  }
+
   function handlePrint() {
-    const el = document.getElementById('defaulter-print-area');
-    if (!el) return;
-    const w = window.open('', '_blank');
-    if (!w) return;
-    w.document.write(`<html><head><title>Defaulter Report</title><style>
+    void (async () => {
+      const all = await fetchAllDefaulters('print');
+      if (!all) return;
+      const w = window.open('', '_blank');
+      if (!w) return;
+      w.document.write(`<html><head><title>Defaulter Report</title><style>
       @page{size:landscape;margin:10mm}
       body{font-family:system-ui,sans-serif;padding:20px;color:#1a1a2e;font-size:12px}
       table{width:100%;border-collapse:collapse;margin-top:8px}
@@ -136,28 +220,33 @@ export default function DefaulterTab() {
       h2{font-size:14px;margin:0}h3{font-size:11px;margin:2px 0 8px;color:#827c72}
       tfoot td{background:#1a1a2e;color:#fff;font-weight:bold;font-size:11px}
       @media print{body{padding:10px}}
-    </style></head><body><h2>AL RAWA English School</h2><h3>Fee Defaulter Report — ${subtitle}</h3>${DOMPurify.sanitize(el.innerHTML)}</body></html>`);
-    w.document.close();
-    w.print();
+    </style></head><body><h2>AL RAWA English School</h2><h3>Fee Defaulter Report — ${subtitle}</h3>${DOMPurify.sanitize(a11yPrintTable(all))}</body></html>`);
+      w.document.close();
+      w.print();
+    })();
   }
 
   function handlePdf() {
-    try {
-      defaulterPDF({
-        displayData: filtered,
-        monthRange,
-        classLabel: filterClass || 'All Classes',
-        subtitle,
-        totalDueAll: totalDue,
-        totalPaidAll: totalPaid,
-        filterClass,
-        monthFrom,
-        monthTo,
-        yearlyFeeNames,
-        monthlyFeeNames,
-      });
-      toast('PDF downloaded', 'success');
-    } catch { toast('PDF generation failed', 'error'); }
+    void (async () => {
+      const all = await fetchAllDefaulters('pdf');
+      if (!all) return;
+      try {
+        defaulterPDF({
+          displayData: all.rows,
+          monthRange,
+          classLabel: filterClass || 'All Classes',
+          subtitle,
+          totalDueAll: all.totalDue,
+          totalPaidAll: all.totalPaid,
+          filterClass,
+          monthFrom,
+          monthTo,
+          yearlyFeeNames: all.yearlyFeeNames,
+          monthlyFeeNames: all.monthlyFeeNames,
+        });
+        toast('PDF downloaded', 'success');
+      } catch { toast('PDF generation failed', 'error'); }
+    })();
   }
 
   function handleClassChange(value: string) {
