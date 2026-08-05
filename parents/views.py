@@ -14,7 +14,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .permissions import IsParentOfStudent
-from .models import ParentStudentLink, StudentConnectLink, PushSubscription, Announcement
+from .models import ParentStudentLink, StudentConnectLink, PushSubscription, Announcement, NotificationLog
 from accounts.permissions import require_permission
 from accounts.throttles import ConnectReadRateThrottle, ConnectWriteRateThrottle
 from core.audit import log_audit
@@ -330,6 +330,30 @@ class AnnouncementListView(APIView):
             'school_class': {'id': announcement.school_class.id, 'name': announcement.school_class.name} if announcement.school_class else None,
             'createdAt': announcement.created_at.isoformat(),
         }, status=201)
+
+
+class ParentNotificationsView(APIView):
+    """A parent's own notification history (dues reminders, fee receipts, ...).
+
+    Read-only, scoped to the requesting user — a parent can never see another
+    parent's notifications. Newest first, capped at the 50 most recent rows.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if request.user.role != 'parent':
+            return Response({'error': 'Parents only'}, status=403)
+        rows = NotificationLog.objects.filter(user=request.user).order_by('-sent_at')[:50]
+        data = [{
+            'id': n.id,
+            'eventType': n.event_type,
+            'title': n.title,
+            'body': n.body,
+            'payload': n.payload,
+            'sentAt': n.sent_at.isoformat(),
+        } for n in rows]
+        return Response(data)
 
 
 class ParentLinkView(APIView):

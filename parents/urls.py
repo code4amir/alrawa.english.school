@@ -9,6 +9,7 @@ urlpatterns = [
     path('parents/push/subscribe/', views.PushSubscribeView.as_view(), name='push-subscribe'),
     path('parents/push/vapid-key/', views.VapidKeyView.as_view(), name='vapid-key'),
     path('parents/announcements/', views.AnnouncementListView.as_view(), name='parent-announcements'),
+    path('parents/notifications/', views.ParentNotificationsView.as_view(), name='parent-notifications'),
     path('parents/links/', views.ParentLinkView.as_view(), name='parent-links'),
     path('parents/connect/<str:token>/', views.StudentConnectView.as_view(), name='parent-connect'),
     path('students/<uuid:student_id>/connect-link/', views.StudentConnectLinkAdminView.as_view(), name='student-connect-link'),
