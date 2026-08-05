@@ -41,8 +41,8 @@ interface NoticeItem {
   id: string;
   title: string;
   body: string;
-  event_type: string;
-  createdAt: string;
+  eventType: string;
+  sentAt: string;
 }
 
 export default function ParentDashboard() {
@@ -285,11 +285,11 @@ export default function ParentDashboard() {
                 <div className="flex items-start justify-between gap-3">
                   <h3 className="font-bold text-sm text-school-primary">{n.title || 'Notice'}</h3>
                   <span className="text-[10px] text-school-muted whitespace-nowrap shrink-0">
-                    {new Date(n.createdAt).toLocaleDateString()}
+                    {n.sentAt ? new Date(n.sentAt).toLocaleDateString() : ''}
                   </span>
                 </div>
                 {n.body && <p className="text-xs text-school-muted mt-1 whitespace-pre-line">{n.body}</p>}
-                {n.event_type === 'dues_reminder' && (
+                {n.eventType === 'dues_reminder' && (
                   <span className="inline-block text-[10px] font-semibold text-rose-700 bg-rose-50 rounded-full px-2 py-0.5 mt-1">
                     Dues Reminder
                   </span>
