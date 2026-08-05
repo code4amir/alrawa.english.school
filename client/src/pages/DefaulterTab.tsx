@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import DOMPurify from 'dompurify';
 import { useSchoolStore, api } from '../store';
 import { toast } from '../components/Toast';
-import { AlertTriangle, Download, Printer, Check, X } from 'lucide-react';
+import { AlertTriangle, Download, Printer, Check, X, Send } from 'lucide-react';
 import { defaulterPDF } from '../lib/defaulterPdf';
 import { getMonthNameShort, fmt } from '../lib/financeReportPdf';
 import DatePicker from '../components/DatePicker';
@@ -43,6 +43,10 @@ export default function DefaulterTab() {
   const [filterClass, setFilterClass] = useState('');
   const [filterStudent, setFilterStudent] = useState('');
   const [filterFee, setFilterFee] = useState('');
+  const [reminderOpen, setReminderOpen] = useState(false);
+  const [reminderStudent, setReminderStudent] = useState<DefaulterStudent | null>(null);
+  const [reminderNote, setReminderNote] = useState('');
+  const [sending, setSending] = useState(false);
   const [monthFrom, setMonthFrom] = useState(() => {
     const d = new Date();
     d.setMonth(d.getMonth() - 3);
@@ -142,6 +146,24 @@ export default function DefaulterTab() {
   function handleClassChange(value: string) {
     setFilterClass(value);
     setFilterStudent('');
+  }
+
+  async function handleSendReminder() {
+    if (!reminderStudent) return;
+    setSending(true);
+    try {
+      const res = await api.post('/finance/transactions/send_dues_reminder/', {
+        studentId: reminderStudent.studentId,
+        note: reminderNote,
+      });
+      toast(res.data.message || 'Reminder sent', 'success');
+      setReminderOpen(false);
+      setReminderNote('');
+    } catch {
+      toast('Failed to send reminder', 'error');
+    } finally {
+      setSending(false);
+    }
   }
 
   function FeeCell({ amount, paid }: { amount: number; paid: boolean }) {
@@ -282,6 +304,15 @@ export default function DefaulterTab() {
                     <td className="px-3 py-2 text-right font-bold text-xs" data-label="Balance">
                       <span className={row.balance > 0 ? 'text-rose-600' : 'text-emerald-600'}>{fmt(Math.abs(row.balance))} /-</span>
                       {row.balance <= 0 && <span className="text-[9px] text-emerald-500 ml-1">(clear)</span>}
+                      {row.balance > 0 && (
+                        <button
+                          onClick={() => { setReminderStudent(row); setReminderOpen(true); setReminderNote(''); }}
+                          className="ml-2 inline-flex items-center gap-1 text-[9px] font-bold text-rose-600 hover:text-rose-700 underline decoration-dotted underline-offset-1"
+                          title="Send dues reminder to parent"
+                        >
+                          <Send size={9} /> Remind
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))
@@ -314,6 +345,45 @@ export default function DefaulterTab() {
           </table>
         </div>
       </div>
+
+      {/* Send Dues Reminder modal */}
+      {reminderOpen && reminderStudent && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl border border-school-border w-full max-w-md p-5">
+            <h3 className="font-serif text-sm text-school-primary mb-1">Send Dues Reminder</h3>
+            <p className="text-xs text-school-muted mb-3">
+              Send a reminder to the parent(s) of <span className="font-medium text-school-primary">{reminderStudent.name}</span>.
+              The message will list outstanding fees by category (Tuition, Admission, etc.) up to the current month.
+            </p>
+            <label className="text-[10px] uppercase font-bold text-school-muted mb-1 block">Note to parent (optional)</label>
+            <textarea
+              value={reminderNote}
+              onChange={e => setReminderNote(e.target.value)}
+              maxLength={500}
+              rows={3}
+              className="w-full border border-school-border rounded-xl px-3 py-2 text-sm resize-y"
+              placeholder="e.g. Please clear by Friday."
+            />
+            <div className="mt-4 flex gap-3 justify-end">
+              <button
+                onClick={() => setReminderOpen(false)}
+                disabled={sending}
+                className="px-4 py-2 text-xs font-bold text-school-muted hover:text-school-primary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSendReminder}
+                disabled={sending}
+                className="px-4 py-2 bg-school-primary text-white rounded-xl text-xs font-bold hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
+              >
+                {sending && <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" />}
+                Send
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
