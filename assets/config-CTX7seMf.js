@@ -1,0 +1,1 @@
+var e=`Sep`,t=[`Jan`,`Feb`,`Mar`,`Apr`,`May`,`Jun`,`Jul`,`Aug`,`Sep`,`Oct`,`Nov`,`Dec`][19%12],n=`https://ares.alwaysdata.net/api`,r={1:`1st Term`,2:`2nd Term`,3:`3rd Term`};export{r as i,t as n,e as r,n as t};
