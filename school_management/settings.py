@@ -206,6 +206,12 @@ CSRF_TRUSTED_ORIGINS = [
 if os.environ.get('CORS_ORIGINS'):
     for o in os.environ.get('CORS_ORIGINS').split(','):
         CSRF_TRUSTED_ORIGINS.append(get_origin(o))
+# The SPA lives on a different origin from the API (GH Pages vs ares), so the
+# csrftoken cookie must be SameSite=None in prod (like the JWT auth cookies) and
+# the token itself is echoed by the SPA via the X-CSRFToken header.
+CSRF_COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
+CSRF_COOKIE_HTTPONLY = False
+CSRF_USE_SESSIONS = False
 
 
 AI_PROVIDER = os.environ.get('AI_PROVIDER', 'gemini')

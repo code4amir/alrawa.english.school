@@ -236,8 +236,9 @@ const Layout = ({ children }: LayoutProps) => {
         </AnimatePresence>
       </main>
 
-      {/* Footer */}
-      <footer className="bg-school-secondary text-white/50 text-[10px] py-2 px-4 flex justify-between items-center border-t border-white/5">
+      {/* Footer / health status bar — sticky so it always stays at the bottom
+          of the viewport (on mobile, above the fixed BottomNav) */}
+      <footer className="sticky bottom-14 sm:bottom-0 z-40 bg-school-secondary text-white/50 text-[10px] py-2 px-4 flex justify-between items-center border-t border-white/5">
         <span>© 2026 AL RAWA English School</span>
         <div className="flex items-center gap-3">
           {lastFetchedLabel && <span className="hidden sm:inline text-[9px] opacity-60">Updated {lastFetchedLabel}</span>}

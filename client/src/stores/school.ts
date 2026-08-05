@@ -150,9 +150,14 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
       const res = await api.get('/students/', { params: { limit: '2000', ...params } });
       const raw = res.data.results || res.data.data || res.data;
       const normalized = Array.isArray(raw) ? raw.map((s: any) => ({
-        ...s,
-        class: s.schoolClass || s.className || s.class,
-      })) : [];
+              ...s,
+              // Every consumer (class filter, edit-prefill) treats `student.class`
+              // as the class NAME. The serializer exposes the name via `className`;
+              // `schoolClass` is the UUID. Prefer the name so `s.class === activeClass`
+              // matches. (Removing `schoolClass` here fixed students not showing in
+              // the ID Card section.)
+              class: s.className || s.schoolClass || s.class,
+            })) : [];
       set({
         students: normalized,
         studentTotal: res.data.count ?? res.data.total ?? 0,

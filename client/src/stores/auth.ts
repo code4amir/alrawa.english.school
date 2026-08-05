@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import axios from 'axios';
-import { api, setTokens, clearTokens, getRefreshToken } from './api';
+import { api, setTokens, clearTokens, getRefreshToken, getCsrfToken } from './api';
 
 interface User {
   id: string;
@@ -40,8 +40,8 @@ export const useAuthStore = create<AuthState>((set, get) => {
                 `${api.defaults.baseURL}/auth/refresh/`,
                 payload,
               );
-              const { access, refresh: newRefresh } = res.data;
-              setTokens(access, newRefresh || rt);
+              const { access, refresh: newRefresh, csrfToken } = res.data;
+              setTokens(access, newRefresh || rt, csrfToken || getCsrfToken());
               return true;
             } catch {
               return false;
@@ -68,8 +68,8 @@ export const useAuthStore = create<AuthState>((set, get) => {
 
     login: async (email: string, password: string) => {
       const res = await api.post('/auth/login/', { email, password });
-      const { access, needsLinking } = res.data;
-      setTokens(access, null);
+      const { access, needsLinking, csrfToken } = res.data;
+      setTokens(access, null, csrfToken);
       await get().fetchSession();
       return { needsLinking: Boolean(needsLinking) };
     },
@@ -81,6 +81,7 @@ export const useAuthStore = create<AuthState>((set, get) => {
           return;
         }
         const res = await api.get('/auth/get-session/');
+        if (res.data?.csrfToken) setTokens(null, null, res.data.csrfToken);
         set({ user: res.data?.user ?? null, loading: false });
       } catch {
         set({ user: null, loading: false });

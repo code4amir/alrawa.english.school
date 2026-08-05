@@ -69,7 +69,8 @@ class CustomTokenObtainPairView(TokenObtainPairView):
         if response.status_code == 200:
             refresh = response.data.get('refresh')
             access = response.data.get('access')
-            response.data = {'access': access, 'detail': 'Login successful'}
+            from django.middleware.csrf import get_token
+            response.data = {'access': access, 'detail': 'Login successful', 'csrfToken': get_token(request)}
             response.set_cookie(
                 settings.SIMPLE_JWT['ACCESS_COOKIE'],
                 access,
@@ -106,7 +107,8 @@ class CustomTokenRefreshView(APIView):
             if not user_id or not User.objects.filter(pk=user_id, is_active=True).exists():
                 return Response({'detail': 'Invalid refresh token'}, status=status.HTTP_401_UNAUTHORIZED)
             access = str(refresh.access_token)
-            data = {'access': access, 'detail': 'Token refreshed'}
+            from django.middleware.csrf import get_token
+            data = {'access': access, 'detail': 'Token refreshed', 'csrfToken': get_token(request)}
             response = Response(data, status=status.HTTP_200_OK)
             response.set_cookie(
                 settings.SIMPLE_JWT['ACCESS_COOKIE'],
@@ -315,6 +317,7 @@ class AuthGetSessionView(APIView):
     permission_classes = []
 
     def get(self, request):
+        from django.middleware.csrf import get_token
         try:
             from accounts.authentication import CookieJWTAuthentication
             auth_result = CookieJWTAuthentication().authenticate(request)
@@ -329,10 +332,10 @@ class AuthGetSessionView(APIView):
                     'emailVerified': user.email_verified,
                     'mustChangePassword': user.must_change_password,
                     'hasTeacherProfile': getattr(user, 'teacher_profile', None) is not None,
-                }})
+                }, 'csrfToken': get_token(request)})
         except (AuthenticationFailed, Exception):
             pass
-        return JsonResponse({'user': None})
+        return JsonResponse({'user': None, 'csrfToken': get_token(request)})
 
 
 class RoleChoicesView(APIView):

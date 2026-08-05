@@ -1,13 +1,33 @@
 from django.conf import settings
 from rest_framework.authentication import BaseAuthentication
-from rest_framework.exceptions import AuthenticationFailed
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework.authentication import CSRFCheck
+
+
+def _dummy_get_response(request):
+    return None
 
 
 class CookieJWTAuthentication(JWTAuthentication):
-    """JWT authentication that reads tokens from httponly cookies."""
+    """JWT authentication that reads tokens from httponly cookies.
+
+    Header-based auth (Authorization: Bearer) cannot be forged cross-origin,
+    so it is inherently CSRF-safe. Cookie-based auth is the vulnerable path:
+    enforce CSRF there so a cross-site request carrying only cookies is
+    rejected unless it echoes a valid X-CSRFToken.
+    """
+
+    def enforce_csrf(self, request):
+        check = CSRFCheck(_dummy_get_response)
+        # populates request.META['CSRF_COOKIE'], which is used in process_view()
+        check.process_request(request)
+        reason = check.process_view(request, None, (), {})
+        if reason:
+            # CSRF failed, bail with explicit error message
+            raise PermissionDenied('CSRF Failed: %s' % reason)
 
     def authenticate(self, request):
         # Try Authorization header first (backward compat).
@@ -26,6 +46,13 @@ class CookieJWTAuthentication(JWTAuthentication):
 
         try:
             validated_token = self.get_validated_token(raw_token)
+        except Exception:
+            return None
+
+        # Cookie-auth is the CSRF-vulnerable path: require a valid token.
+        self.enforce_csrf(request)
+
+        try:
             return self.get_user(validated_token), validated_token
         except Exception:
             return None

@@ -8,7 +8,12 @@ User = get_user_model()
 
 class AccountTests(TestCase):
     def setUp(self):
-        self.client = APIClient()
+        # Real CSRF behavior (no test-suite escape hatch): cookie-auth state
+        # changes must carry a valid X-CSRFToken. Must be passed to the
+        # constructor — the APIClient forwards it to its ForceAuthClientHandler;
+        # setting the attribute afterwards leaves the handler with False and
+        # Django's test handler then sets request._dont_enforce_csrf_checks.
+        self.client = APIClient(enforce_csrf_checks=True)
         self.admin = User.objects.create_superuser(
             email='admin@test.com', name='Admin', password='testpass123', email_verified=True
         )
@@ -76,3 +81,34 @@ class AccountTests(TestCase):
         res = self.client.delete(f'/api/users/{user.id}/')
         self.assertEqual(res.status_code, 204)
         self.assertEqual(User.objects.count(), 1)
+
+    # ── CSRF enforcement (cookie-auth path) ──
+
+    def test_csrf_token_in_login_response(self):
+        res = self.client.post('/api/auth/login/', {'email': 'admin@test.com', 'password': 'testpass123'})
+        self.assertEqual(res.status_code, 200)
+        self.assertIn('csrfToken', res.data)
+
+    def test_csrf_rejects_cookie_auth_without_token(self):
+        # Authenticate purely via cookie (no Authorization header); a state
+        # change without X-CSRFToken must be rejected.
+        refresh = RefreshToken.for_user(self.admin)
+        self.client.cookies['access_token'] = str(refresh.access_token)
+        self.client.cookies['refresh_token'] = str(refresh)
+        user = User.objects.create_user(name='Staff2', email='staff2@test.com', password='pass123', role='teacher')
+        res = self.client.put(f'/api/users/{user.id}/role/', {'role': 'admin'})
+        self.assertEqual(res.status_code, 403)
+
+    def test_csrf_accepts_cookie_auth_with_token(self):
+        # Same request but with a valid X-CSRFToken → must succeed.
+        login = self.client.post('/api/auth/login/', {'email': 'admin@test.com', 'password': 'testpass123'})
+        csrf = login.cookies.get('csrftoken')
+        refresh = RefreshToken.for_user(self.admin)
+        self.client.cookies['access_token'] = str(refresh.access_token)
+        self.client.cookies['refresh_token'] = str(refresh)
+        user = User.objects.create_user(name='Staff3', email='staff3@test.com', password='pass123', role='teacher')
+        res = self.client.put(
+            f'/api/users/{user.id}/role/', {'role': 'admin'},
+            HTTP_X_CSRFTOKEN=csrf.value if csrf else '',
+        )
+        self.assertEqual(res.status_code, 200)
