@@ -21,7 +21,7 @@ describe('useSchoolStore — academic', () => {
 
       await useSchoolStore.getState().fetchClasses();
 
-      expect(getSpy).toHaveBeenCalledWith('/classes');
+      expect(getSpy).toHaveBeenCalledWith('/classes/');
       expect(useSchoolStore.getState().classes).toEqual(classList);
     });
 
@@ -53,7 +53,7 @@ describe('useSchoolStore — academic', () => {
       const result = await useSchoolStore.getState().createClass('New Class');
 
       expect(postSpy).toHaveBeenCalledWith('/classes/', { name: 'New Class' });
-      expect(getSpy).toHaveBeenCalledWith('/classes');
+      expect(getSpy).toHaveBeenCalledWith('/classes/');
       expect(result).toEqual({ id: 'c1', name: 'New Class' });
     });
   });
@@ -66,7 +66,7 @@ describe('useSchoolStore — academic', () => {
       await useSchoolStore.getState().deleteClass('c1');
 
       expect(deleteSpy).toHaveBeenCalledWith('/classes/c1/');
-      expect(getSpy).toHaveBeenCalledWith('/classes');
+      expect(getSpy).toHaveBeenCalledWith('/classes/');
     });
   });
 
@@ -78,7 +78,7 @@ describe('useSchoolStore — academic', () => {
       await useSchoolStore.getState().reorderClasses(['c2', 'c1']);
 
       expect(putSpy).toHaveBeenCalledWith('/classes/reorder/', { orderedIds: ['c2', 'c1'] });
-      expect(getSpy).toHaveBeenCalledWith('/classes');
+      expect(getSpy).toHaveBeenCalledWith('/classes/');
     });
   });
 
@@ -89,7 +89,7 @@ describe('useSchoolStore — academic', () => {
 
       await useSchoolStore.getState().fetchSubjects('c1');
 
-      expect(getSpy).toHaveBeenCalledWith('/classes/c1/subjects');
+      expect(getSpy).toHaveBeenCalledWith('/classes/c1/subjects/');
       expect(useSchoolStore.getState().subjects).toEqual(subjects);
     });
 
@@ -112,7 +112,7 @@ describe('useSchoolStore — academic', () => {
       const result = await useSchoolStore.getState().createSubject('c1', 'Math', 100);
 
       expect(postSpy).toHaveBeenCalledWith('/classes/c1/subjects/', { name: 'Math', fullMarks: 100 });
-      expect(getSpy).toHaveBeenCalledWith('/classes/c1/subjects');
+      expect(getSpy).toHaveBeenCalledWith('/classes/c1/subjects/');
       expect(result).toEqual(newSubject);
     });
   });
@@ -126,7 +126,7 @@ describe('useSchoolStore — academic', () => {
       await useSchoolStore.getState().updateSubject('s1', { fullMarks: 50 });
 
       expect(putSpy).toHaveBeenCalledWith('/subjects/s1/', { fullMarks: 50 });
-      expect(getSpy).toHaveBeenCalledWith('/classes/c1/subjects');
+      expect(getSpy).toHaveBeenCalledWith('/classes/c1/subjects/');
     });
 
     it('does not re-fetch if subject not found in state', async () => {
@@ -149,7 +149,7 @@ describe('useSchoolStore — academic', () => {
       await useSchoolStore.getState().deleteSubject('s1');
 
       expect(deleteSpy).toHaveBeenCalledWith('/subjects/s1/');
-      expect(getSpy).toHaveBeenCalledWith('/classes/c1/subjects');
+      expect(getSpy).toHaveBeenCalledWith('/classes/c1/subjects/');
     });
 
     it('does not re-fetch if deleted subject not in state', async () => {
@@ -170,7 +170,7 @@ describe('useSchoolStore — academic', () => {
 
       await useSchoolStore.getState().fetchAcademicYears();
 
-      expect(api.get).toHaveBeenCalledWith('/academic-years');
+      expect(api.get).toHaveBeenCalledWith('/academic-years/');
       expect(useSchoolStore.getState().academicYears).toEqual(years);
     });
 
@@ -180,7 +180,7 @@ describe('useSchoolStore — academic', () => {
 
       await useSchoolStore.getState().fetchClassResults('c1', '2025');
 
-      expect(api.get).toHaveBeenCalledWith('/classes/c1/results', { params: { session: '2025' } });
+      expect(api.get).toHaveBeenCalledWith('/classes/c1/results/', { params: { session: '2025' } });
       expect(useSchoolStore.getState().classResults['c1-2025']).toEqual(results);
     });
   });
@@ -192,7 +192,7 @@ describe('useSchoolStore — academic', () => {
 
       const result = await useSchoolStore.getState().getStudentResults('stu1', '2025');
 
-      expect(api.get).toHaveBeenCalledWith('/students/stu1/results', { params: { session: '2025' } });
+      expect(api.get).toHaveBeenCalledWith('/students/stu1/results/', { params: { session: '2025' } });
       expect(result).toEqual(marks);
       expect(useSchoolStore.getState().studentResultsCache['stu1-2025']).toBeDefined();
     });

@@ -17,6 +17,7 @@ describe('createTransactionSchema', () => {
     type: 'INCOME' as const,
     category: 'Tuition Fee',
     description: 'June fee',
+    feeMonth: '2026-06',
     destinationAccount: 'CASH_IN_HAND',
   };
 
@@ -154,7 +155,7 @@ describe('categorySchema', () => {
 
 describe('loginSchema', () => {
   it('accepts valid login', () => {
-    const result = loginSchema.safeParse({ email: 'a@b.com', password: '123456' });
+    const result = loginSchema.safeParse({ email: 'a@b.com', password: 'Password1' });
     expect(result.success).toBe(true);
   });
 
@@ -171,7 +172,7 @@ describe('loginSchema', () => {
 
 describe('registerSchema', () => {
   it('accepts valid registration', () => {
-    const result = registerSchema.safeParse({ name: 'Test', email: 'a@b.com', password: '123456' });
+    const result = registerSchema.safeParse({ name: 'Test', email: 'a@b.com', password: 'Password1' });
     expect(result.success).toBe(true);
   });
 

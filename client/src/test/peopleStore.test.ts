@@ -22,7 +22,7 @@ describe('useSchoolStore — people', () => {
 
       await useSchoolStore.getState().fetchStudents();
 
-      expect(getSpy).toHaveBeenCalledWith('/students', { params: { limit: '2000' } });
+      expect(getSpy).toHaveBeenCalledWith('/students/', { params: { limit: '2000' } });
       expect(useSchoolStore.getState().students).toEqual(studentList);
     });
 
@@ -32,7 +32,7 @@ describe('useSchoolStore — people', () => {
 
       await useSchoolStore.getState().fetchStudents({ class: 'Class 2' });
 
-      expect(api.get).toHaveBeenCalledWith('/students', { params: { class: 'Class 2', limit: '2000' } });
+      expect(api.get).toHaveBeenCalledWith('/students/', { params: { class: 'Class 2', limit: '2000' } });
       const state = useSchoolStore.getState();
       expect(state.students).toEqual(studentList);
       expect(state.studentTotal).toBe(1);
@@ -43,7 +43,7 @@ describe('useSchoolStore — people', () => {
 
       await useSchoolStore.getState().fetchStudents({ class: 'Class 1', session: '2025' });
 
-      expect(api.get).toHaveBeenCalledWith('/students', { params: { class: 'Class 1', session: '2025', limit: '2000' } });
+      expect(api.get).toHaveBeenCalledWith('/students/', { params: { class: 'Class 1', session: '2025', limit: '2000' } });
     });
 
     it('sets loading.students flag', async () => {
@@ -73,7 +73,7 @@ describe('useSchoolStore — people', () => {
 
       await useSchoolStore.getState().fetchTeachers();
 
-      expect(getSpy).toHaveBeenCalledWith('/teachers', { params: { limit: '2000' } });
+      expect(getSpy).toHaveBeenCalledWith('/teachers/', { params: { limit: '2000' } });
       expect(useSchoolStore.getState().teachers).toEqual(teacherList);
     });
 
@@ -83,7 +83,7 @@ describe('useSchoolStore — people', () => {
 
       await useSchoolStore.getState().fetchTeachers({ designation: 'head' });
 
-      expect(api.get).toHaveBeenCalledWith('/teachers', { params: { designation: 'head', limit: '2000' } });
+      expect(api.get).toHaveBeenCalledWith('/teachers/', { params: { designation: 'head', limit: '2000' } });
       expect(useSchoolStore.getState().teachers).toEqual(teacherList);
       expect(useSchoolStore.getState().teacherTotal).toBe(1);
     });
@@ -106,7 +106,7 @@ describe('useSchoolStore — people', () => {
 
       await useSchoolStore.getState().fetchStaff();
 
-      expect(getSpy).toHaveBeenCalledWith('/staff', { params: { limit: '2000' } });
+      expect(getSpy).toHaveBeenCalledWith('/staff/', { params: { limit: '2000' } });
       expect(useSchoolStore.getState().staff).toEqual(staffList);
     });
 
@@ -116,7 +116,7 @@ describe('useSchoolStore — people', () => {
 
       await useSchoolStore.getState().fetchStaff({ designation: 'cleaner' });
 
-      expect(api.get).toHaveBeenCalledWith('/staff', { params: { designation: 'cleaner', limit: '2000' } });
+      expect(api.get).toHaveBeenCalledWith('/staff/', { params: { designation: 'cleaner', limit: '2000' } });
       expect(useSchoolStore.getState().staff).toEqual(staffList);
       expect(useSchoolStore.getState().staffTotal).toBe(1);
     });
@@ -139,7 +139,7 @@ describe('useSchoolStore — people', () => {
 
       await useSchoolStore.getState().fetchSettings();
 
-      expect(getSpy).toHaveBeenCalledWith('/settings');
+      expect(getSpy).toHaveBeenCalledWith('/settings/');
       expect(useSchoolStore.getState().settings).toEqual(settings);
     });
 
@@ -172,7 +172,7 @@ describe('useSchoolStore — people', () => {
 
       await useSchoolStore.getState().fetchBooks();
 
-      expect(api.get).toHaveBeenCalledWith('/books', { params: { limit: '2000' } });
+      expect(api.get).toHaveBeenCalledWith('/books/', { params: { limit: '50', offset: '0' } });
       expect(useSchoolStore.getState().books).toEqual(bookList);
     });
 

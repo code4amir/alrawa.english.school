@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useAuthStore, useDarkMode, useUIStore, useUserManagementStore, api } from '../store';
+import { setTokens, getAccessToken, getRefreshToken } from '../stores/api';
 
 const mockSupabase = {
   auth: {
@@ -29,7 +30,7 @@ describe('useAuthStore', () => {
   });
 
   it('fetchSession sets user null and loading false when no session', async () => {
-    mockSupabase.auth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    vi.spyOn(api, 'get').mockResolvedValue({ data: { user: null } });
 
     await useAuthStore.getState().fetchSession();
 
@@ -39,9 +40,8 @@ describe('useAuthStore', () => {
 
   it('fetchSession fetches user from server when session exists', async () => {
     const mockUser = { id: 'u1', name: 'Alice', email: 'a@b.com', role: 'admin', image: null };
-    mockSupabase.auth.getSession.mockResolvedValue({ data: { session: { user: { id: 'u1' } } }, error: null });
     const getSpy = vi.spyOn(api, 'get').mockResolvedValue({ data: { user: mockUser } });
-    localStorage.setItem('access_token', 'test-token');
+    setTokens('test-token', null);
 
     await useAuthStore.getState().fetchSession();
 
@@ -50,11 +50,9 @@ describe('useAuthStore', () => {
     expect(useAuthStore.getState().loading).toBe(false);
   });
 
-  it('fetchSession skips server call when user id already matches session', async () => {
+  it('fetchSession skips server call when user already set', async () => {
     useAuthStore.setState({ user: { id: 'u1', name: 'Bob', email: 'b@b.com', role: 'viewer', image: null }, loading: false });
-    mockSupabase.auth.getSession.mockResolvedValue({ data: { session: { user: { id: 'u1' } } }, error: null });
     const getSpy = vi.spyOn(api, 'get');
-    localStorage.setItem('access_token', 'test-token');
 
     await useAuthStore.getState().fetchSession();
 
@@ -63,7 +61,7 @@ describe('useAuthStore', () => {
   });
 
   it('fetchSession handles error and clears user', async () => {
-    mockSupabase.auth.getSession.mockRejectedValue(new Error('network error'));
+    vi.spyOn(api, 'get').mockRejectedValue(new Error('network error'));
     vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     await useAuthStore.getState().fetchSession();
@@ -73,14 +71,14 @@ describe('useAuthStore', () => {
   });
 
   it('logout clears tokens and user', async () => {
-    localStorage.setItem('access_token', 'test');
-    localStorage.setItem('refresh_token', 'test');
+    setTokens('test', 'test');
+    vi.spyOn(api, 'post').mockResolvedValue({ data: {} });
     useAuthStore.setState({ user: { id: 'u1', name: 'X', email: 'x@y.com', role: 'admin', image: null }, loading: false });
 
     await useAuthStore.getState().logout();
 
-    expect(localStorage.getItem('access_token')).toBeNull();
-    expect(localStorage.getItem('refresh_token')).toBeNull();
+    expect(getAccessToken()).toBeNull();
+    expect(getRefreshToken()).toBeNull();
     expect(useAuthStore.getState().user).toBeNull();
   });
 });
@@ -178,7 +176,7 @@ describe('useUserManagementStore', () => {
 
     await useUserManagementStore.getState().fetchUsers();
 
-    expect(getSpy).toHaveBeenCalledWith('/users');
+    expect(getSpy).toHaveBeenCalledWith('/users/');
     expect(useUserManagementStore.getState().users).toEqual(mockUsers);
   });
 
@@ -188,7 +186,7 @@ describe('useUserManagementStore', () => {
 
     await useUserManagementStore.getState().fetchRoles();
 
-    expect(getSpy).toHaveBeenCalledWith('/users/roles');
+    expect(getSpy).toHaveBeenCalledWith('/users/roles/');
     expect(useUserManagementStore.getState().roles).toEqual(mockRoles);
   });
 
@@ -199,7 +197,7 @@ describe('useUserManagementStore', () => {
     await useUserManagementStore.getState().updateRole('u1', 'viewer');
 
     expect(putSpy).toHaveBeenCalledWith('/users/u1/role/', { role: 'viewer' });
-    expect(getSpy).toHaveBeenCalledWith('/users');
+    expect(getSpy).toHaveBeenCalledWith('/users/');
   });
 
   it('deleteUser calls DELETE and refreshes users', async () => {
@@ -209,6 +207,6 @@ describe('useUserManagementStore', () => {
     await useUserManagementStore.getState().deleteUser('u1');
 
     expect(deleteSpy).toHaveBeenCalledWith('/users/u1/');
-    expect(getSpy).toHaveBeenCalledWith('/users');
+    expect(getSpy).toHaveBeenCalledWith('/users/');
   });
 });
