@@ -162,3 +162,58 @@ class LedgerActionsMixin:
             'totalPages': total_pages,
             'totalRows': total_rows,
         })
+
+    @action(detail=False, methods=['post'])
+    def send_dues_reminder(self, request):
+        """Send a dues-reminder to the parent(s) of an individual student.
+
+        Computes the student's unpaid fees (up to the current month only), then
+        web-pushes + logs a notification to every linked parent. Gated by the
+        viewset's `finance:write` permission (accountant + admin).
+        """
+        student_id = request.data.get('studentId')
+        note = (request.data.get('note') or '').strip()
+        if not student_id:
+            return Response({'error': 'studentId required'}, status=400)
+        if len(note) > 500:
+            return Response({'error': 'Note must be 500 characters or fewer'}, status=400)
+
+        from django.utils import timezone
+        from students.models import Student
+        from parents.services import notify_parents_dues, compose_dues_body
+
+        student = Student.objects.filter(id=student_id, deleted_at__isnull=True).first()
+        if not student:
+            return Response({'error': 'Student not found'}, status=404)
+
+        # Range anchored at the current month (no future months), ~12 months back
+        # to cover a full academic cycle of monthly dues.
+        now = timezone.now()
+        month_to = f"{now.year}-{now.month:02d}"
+        prev_year = now.year - 1 if now.month == 1 else now.year
+        prev_month = 12 if now.month == 1 else now.month - 1
+        month_from = f"{prev_year}-{prev_month:02d}"
+
+        svc = DefaulterService(
+            student_id=student_id,
+            month_from=month_from, month_to=month_to,
+        )
+        svc.resolve_year()
+        result = svc.compute([student], [student.id])
+        fees = result[0]['fees'] if result else []
+        unpaid_count = len(compose_dues_body(fees))
+        notified = notify_parents_dues(student_id, fees, note)
+
+        from core.audit import log_audit
+        log_audit(
+            'due_reminder_sent', 'student', entity_id=str(student_id),
+            details={'notified_parents': notified, 'unpaid_count': unpaid_count},
+            request=request,
+        )
+        return Response({
+            'studentId': str(student_id),
+            'studentName': student.name,
+            'unpaidCount': unpaid_count,
+            'notifiedParents': notified,
+            'message': 'No unpaid dues to remind about' if unpaid_count == 0 else 'Reminder sent',
+        })

@@ -130,3 +130,68 @@ def notify_all_parents(title, body, url=None, event_type='announcement'):
         )
         count += 1
     return count
+
+
+MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+               'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+
+def _fmt_month(month):
+    """'2026-03' -> 'Mar 2026'"""
+    try:
+        y, m = month.split('-')
+        return f"{MONTH_NAMES[int(m) - 1]} {y}"
+    except (ValueError, IndexError):
+        return month
+
+
+def compose_dues_body(fees):
+    """Line-item breakdown of unpaid fees, ONLY up to the current month.
+
+    fees = DefaulterService.compute() result[0]['fees']:
+        [{name, amount, paid, type: 'onetime'|'global'|'recurring', months?: [...]}]
+    Future months and already-paid items are excluded. Category names come from
+    the FeeSchedule rows, so any fee category (Tuition, Admission, Hifz, ...)
+    is covered automatically with no hardcoding.
+
+    Returns a list of strings like:
+        "Tuition fees: Mar 2026, Apr 2026 — 1500.00/mo"
+        "Admission fees: 5000.00"
+    """
+    from django.utils import timezone
+    now = timezone.now()
+    current_ym = f"{now.year}-{now.month:02d}"
+    lines = []
+    for fee in fees:
+        if fee.get('paid'):
+            continue
+        if fee['type'] in ('onetime', 'global'):
+            lines.append(f"{fee['name']}: {fee['amount']:,.2f}")
+        elif fee['type'] == 'recurring' and fee.get('months'):
+            unpaid = sorted(
+                m['month'] for m in fee['months']
+                if not m.get('paid') and m['month'] <= current_ym
+            )
+            if unpaid:
+                months_str = ', '.join(_fmt_month(m) for m in unpaid)
+                lines.append(f"{fee['name']}: {months_str} — {fee['amount']:,.2f}/mo")
+    return lines
+
+
+def notify_parents_dues(student_id, fees, note=''):
+    """Send a dues-reminder push + log to all linked parents of a student.
+
+    Returns the number of parents notified (0 if the student has no unpaid
+    dues up to the current month — nothing is sent in that case).
+    """
+    lines = compose_dues_body(fees)
+    if not lines:
+        return 0
+    title = 'Fee Dues Reminder'
+    body = 'You have dues:\n' + '\n'.join(lines)
+    if note:
+        body += f"\n\n{note}"
+    return notify_parents_of_student(
+        student_id, 'dues_reminder', title, body,
+        url=f'/#/parent/fees/{student_id}',
+    )

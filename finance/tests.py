@@ -5,6 +5,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from students.models import Student
 from core.models import SchoolClass, AcademicYear
 from .models import Transaction, FeeSchedule, PaymentAllocation, StudentFeeAssignment, OpeningBalance, PeriodClose, FeeWaiver, BankAccount
+from parents.models import ParentStudentLink, NotificationLog
 
 User = get_user_model()
 
@@ -1051,3 +1052,107 @@ class FinanceTests(TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]['numMonths'], 7)
         self.assertEqual(items[0]['expectedTotal'], 2100.0)
+
+
+class DuesReminderTests(TestCase):
+    """send_dues_reminder action — line-item message, current-month cap, parent notify."""
+
+    def setUp(self):
+        self.client = APIClient()
+        # Accountant (finance:write) caller
+        self.admin = User.objects.create_user(
+            email='admin@test.com', name='Admin', password='testpass123',
+            email_verified=True, role='accountant',
+        )
+        self.parent = User.objects.create_user(
+            email='parent@test.com', name='Parent', password='testpass123',
+            email_verified=True, role='parent',
+        )
+        self.teacher = User.objects.create_user(
+            email='teacher@test.com', name='Teacher', password='testpass123',
+            email_verified=True, role='teacher',
+        )
+        self.klass = SchoolClass.objects.create(name='Class 5', order=1)
+        self.year = AcademicYear.objects.create(
+            name='2026', start_date='2026-01-01', end_date='2026-12-31', is_active=True
+        )
+        self.student = Student.objects.create(
+            name='Stu', student_id='S000001', school_class=self.klass, session='2026'
+        )
+        ParentStudentLink.objects.create(parent=self.parent, student=self.student)
+        self.monthly = FeeSchedule.objects.create(
+            academic_year=self.year, school_class=self.klass,
+            category='Tuition', amount=1500, frequency='MONTHLY', applicability='AUTO'
+        )
+        self.yearly = FeeSchedule.objects.create(
+            academic_year=self.year, school_class=self.klass,
+            category='Admission', amount=5000, frequency='YEARLY', applicability='AUTO'
+        )
+        StudentFeeAssignment.objects.create(
+            student=self.student, fee_schedule=self.monthly, active=True,
+            starts_at='2026-01', ends_at='2026-12'
+        )
+
+    def _auth(self, user):
+        refresh = RefreshToken.for_user(user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
+
+    def test_notifies_linked_parent(self):
+        self._auth(self.admin)
+        res = self.client.post('/api/finance/transactions/send_dues_reminder/', {
+            'studentId': str(self.student.id),
+        })
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['notifiedParents'], 1)
+        log = NotificationLog.objects.filter(user=self.parent, event_type='dues_reminder').first()
+        self.assertIsNotNone(log)
+        self.assertTrue(log.body.startswith('You have dues:'))
+
+    def test_message_is_line_item_breakdown(self):
+        self._auth(self.admin)
+        self.client.post('/api/finance/transactions/send_dues_reminder/', {
+            'studentId': str(self.student.id),
+        })
+        log = NotificationLog.objects.filter(user=self.parent, event_type='dues_reminder').first()
+        # Yearly admission line (always unpaid, no month needed)
+        self.assertIn('Admission: 5,000.00', log.body)
+        # Monthly tuition line with /mo suffix
+        self.assertIn('/mo', log.body)
+
+    def test_custom_note_included(self):
+        self._auth(self.admin)
+        self.client.post('/api/finance/transactions/send_dues_reminder/', {
+            'studentId': str(self.student.id),
+            'note': 'Please clear by Friday',
+        })
+        log = NotificationLog.objects.filter(user=self.parent, event_type='dues_reminder').first()
+        self.assertIn('Please clear by Friday', log.body)
+
+    def test_requires_finance_write(self):
+        self._auth(self.teacher)
+        res = self.client.post('/api/finance/transactions/send_dues_reminder/', {
+            'studentId': str(self.student.id),
+        })
+        self.assertEqual(res.status_code, 403)
+
+    def test_no_linked_parent_returns_zero(self):
+        lonely = Student.objects.create(name='Lonely', student_id='S000002', school_class=self.klass, session='2026')
+        self._auth(self.admin)
+        res = self.client.post('/api/finance/transactions/send_dues_reminder/', {
+            'studentId': str(lonely.id),
+        })
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['notifiedParents'], 0)
+
+    def test_missing_student_id_400(self):
+        self._auth(self.admin)
+        res = self.client.post('/api/finance/transactions/send_dues_reminder/', {})
+        self.assertEqual(res.status_code, 400)
+
+    def test_unknown_student_404(self):
+        import uuid
+        self._auth(self.admin)
+        res = self.client.post('/api/finance/transactions/send_dues_reminder/', {
+            'studentId': str(uuid.uuid4()),
+        })
+        self.assertEqual(res.status_code, 404)
