@@ -146,9 +146,10 @@ REST_FRAMEWORK = {
         'ai_query': '30/hour',
         'connect_read': '30/min',
         'connect_write': '5/min',
-        'dues_reminder': '30/hour',
-    },
-    'DEFAULT_RENDERER_CLASSES': [
+                'dues_reminder': '30/hour',
+                'bulk_dues_reminder': '5/hour',
+            },
+            'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
     ] + (['rest_framework.renderers.BrowsableAPIRenderer'] if DEBUG else []),
     'DEFAULT_PARSER_CLASSES': [

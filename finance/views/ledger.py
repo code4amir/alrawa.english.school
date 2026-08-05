@@ -6,7 +6,7 @@ from finance.services.ledger_service import LedgerService
 from finance.services.fee_status_service import FeeStatusService
 from finance.services.defaulter_service import DefaulterService
 from .base import PRIMARY_BANK, SECONDARY_BANK, _internal_accounts, _param
-from ..throttles import DuesReminderRateThrottle
+from ..throttles import DuesReminderRateThrottle, BulkDuesReminderRateThrottle
 
 
 def _serialize_tx(tx, account_name, opening_balance, cancelled_by_names):
@@ -74,6 +74,8 @@ class LedgerActionsMixin:
         throttles = super().get_throttles()
         if getattr(self, 'action', None) == 'send_dues_reminder':
             throttles = list(throttles) + [DuesReminderRateThrottle()]
+        elif getattr(self, 'action', None) == 'send_dues_reminder_all':
+            throttles = list(throttles) + [BulkDuesReminderRateThrottle()]
         return throttles
 
     @action(detail=False, methods=['get'])
@@ -227,4 +229,71 @@ class LedgerActionsMixin:
             'unpaidCount': unpaid_count,
             'notifiedParents': notified,
             'message': 'No unpaid dues to remind about' if unpaid_count == 0 else 'Reminder sent',
+        })
+
+    @action(detail=False, methods=['post'])
+    def send_dues_reminder_all(self, request):
+        """Send dues-reminders to the parents of ALL defaulting students.
+
+        Uses the same filters as the defaulter report (class, fee category,
+        month range) — every matching student with a positive balance gets
+        a reminder. Throttled at 5/hr/user (see BulkDuesReminderRateThrottle).
+        """
+        class_name = request.data.get('class_name') or request.data.get('className')
+        fee_category = request.data.get('fee_category') or request.data.get('feeCategory')
+
+        from django.utils import timezone
+        from students.models import Student
+        from parents.services import notify_parents_dues, compose_dues_body
+
+        # Same current-month-anchored range as the individual action.
+        now = timezone.now()
+        month_to = f"{now.year}-{now.month:02d}"
+        prev_year = now.year - 1 if now.month == 1 else now.year
+        prev_month = 12 if now.month == 1 else now.month - 1
+        month_from = f"{prev_year}-{prev_month:02d}"
+
+        svc = DefaulterService(
+            class_name=class_name or None,
+            fee_category=fee_category or None,
+            month_from=month_from, month_to=month_to,
+        )
+        svc.resolve_year()
+        students = list(svc.get_student_queryset())
+        if not students:
+            return Response({'totalStudents': 0, 'notifiedParents': 0, 'skipped': 0})
+
+        notified = 0
+        skipped = 0
+        processed = 0
+        for student in students:
+            student_ids = [student.id]
+            result = svc.compute([student], student_ids)
+            fees = result[0]['fees'] if result else []
+            if not compose_dues_body(fees):
+                skipped += 1
+                continue
+            processed += 1
+            n = notify_parents_dues(student.id, fees, request.data.get('note') or '')
+            notified += n
+
+        from core.audit import log_audit
+        log_audit(
+            'dues_reminder_bulk_sent', 'student', entity_id=None,
+            details={
+                'class_name': class_name or None,
+                'fee_category': fee_category or None,
+                'students': len(students),
+                'processed': processed,
+                'notified_parents': notified,
+                'skipped': skipped,
+            },
+            request=request,
+        )
+        return Response({
+            'totalStudents': len(students),
+            'processed': processed,
+            'notifiedParents': notified,
+            'skipped': skipped,
+            'message': f'Reminders sent to {notified} parent(s) for {processed} student(s)',
         })

@@ -1177,3 +1177,43 @@ class DuesReminderTests(TestCase):
                 statuses.append(r.status_code)
             self.assertIn(200, statuses)        # first request succeeds
             self.assertIn(429, statuses)        # subsequent ones throttled
+
+    # ── Bulk "send to all defaulters" ──
+
+    def test_bulk_notifies_all_linked_parents(self):
+        self._auth(self.admin)
+        res = self.client.post('/api/finance/transactions/send_dues_reminder_all/', {})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['totalStudents'], 1)
+        self.assertEqual(res.data['notifiedParents'], 1)
+        self.assertEqual(res.data['skipped'], 0)
+        log = NotificationLog.objects.filter(user=self.parent, event_type='dues_reminder').first()
+        self.assertIsNotNone(log)
+
+    def test_bulk_respects_class_filter(self):
+        other_class = SchoolClass.objects.create(name='Class 9', order=9)
+        other = Student.objects.create(name='Other', student_id='S000099', school_class=other_class, session='2026')
+        self._auth(self.admin)
+        res = self.client.post('/api/finance/transactions/send_dues_reminder_all/', {
+            'className': 'Class 5',
+        })
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['totalStudents'], 1)
+        self.assertEqual(res.data['notifiedParents'], 1)
+
+    def test_bulk_skips_students_without_dues(self):
+        # A student in another class with no fee schedules — not a defaulter.
+        other_class = SchoolClass.objects.create(name='Class 9', order=9)
+        Student.objects.create(name='Clean', student_id='S000099', school_class=other_class, session='2026')
+        self._auth(self.admin)
+        res = self.client.post('/api/finance/transactions/send_dues_reminder_all/', {})
+        self.assertEqual(res.status_code, 200)
+        # Only the original defaulter student is counted.
+        self.assertEqual(res.data['totalStudents'], 2)
+        self.assertEqual(res.data['skipped'], 1)
+        self.assertEqual(res.data['notifiedParents'], 1)
+
+    def test_bulk_requires_finance_write(self):
+        self._auth(self.teacher)
+        res = self.client.post('/api/finance/transactions/send_dues_reminder_all/', {})
+        self.assertEqual(res.status_code, 403)
