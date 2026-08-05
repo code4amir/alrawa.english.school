@@ -58,6 +58,9 @@ export default function DefaulterTab() {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalRows, setTotalRows] = useState(0);
 
   useEffect(() => { fetchClasses(); fetchStudents(undefined, true); fetchFeeSchedules(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -71,16 +74,24 @@ export default function DefaulterTab() {
     params.monthFrom = monthFrom;
     params.monthTo = monthTo;
     params.year = monthTo.split('-')[0];
-    // Fetch the full defaulting set in one request (backend caps at 200) —
-    // the report table has no pagination UI, so without this only the first
-    // 25 rows render when "Whole School" is selected.
-    params.limit = '200';
+    // Server-side pagination: 25 per page (backend caps at 200). The report
+    // table has Prev/Next controls below; without paging only the first 25
+    // rows would render for "Whole School".
+    params.limit = '25';
+    params.page = String(page);
     api.get('/finance/defaulter', { params, signal: controller.signal })
-      .then(res => setData(res.data.results || res.data.data || res.data))
+      .then(res => {
+        setData(res.data.results || res.data.data || res.data);
+        setTotalPages(res.data.totalPages || 1);
+        setTotalRows(res.data.totalRows ?? 0);
+      })
       .catch(() => { if (!controller.signal.aborted) toast('Failed to load defaulter data', 'error'); })
       .finally(() => setLoading(false));
     return () => controller.abort();
-  }, [filterClass, filterStudent, filterFee, monthFrom, monthTo]);
+  }, [filterClass, filterStudent, filterFee, monthFrom, monthTo, page]);
+
+  // Reset to page 1 whenever a filter or the month range changes.
+  useEffect(() => { setPage(1); }, [filterClass, filterStudent, filterFee, monthFrom, monthTo]);
 
   const filtered = useMemo(() =>
     filterFee ? data.filter(r => r.fees.some(f => f.name === filterFee)) : data,
@@ -252,7 +263,7 @@ export default function DefaulterTab() {
         <div className="px-5 py-4 border-b border-school-border flex items-center gap-2">
           <AlertTriangle size={18} className="text-amber-500" />
           <h4 className="font-serif text-sm text-school-primary">Fee Defaulters</h4>
-          <span className="text-[10px] text-school-muted">({filtered.length} students)</span>
+          <span className="text-[10px] text-school-muted">({totalRows} students)</span>
           <div className="ml-auto flex gap-2">
             <button onClick={() => { setConfirmBulkOpen(true); }}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 text-white rounded-xl text-xs font-bold hover:bg-rose-700">
@@ -370,6 +381,24 @@ export default function DefaulterTab() {
             )}
           </table>
         </div>
+
+        {!loading && totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-3 bg-school-paper border-t border-school-border">
+            <div className="text-xs text-school-muted">
+              Page {page} of {totalPages} ({totalRows} students)
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
+                className="px-3 py-1 bg-white border border-school-border rounded-lg text-xs disabled:opacity-50 font-bold">
+                Previous
+              </button>
+              <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
+                className="px-3 py-1 bg-white border border-school-border rounded-lg text-xs disabled:opacity-50 font-bold">
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Send Dues Reminder modal */}
@@ -419,7 +448,7 @@ export default function DefaulterTab() {
             <p className="text-xs text-school-muted">
               This will send a dues reminder to the parent(s) of every student
               {filterClass ? ` in ${filterClass}` : ''} with outstanding balance
-              {filterFee ? ` for "${filterFee}"` : ''} — <span className="font-semibold text-school-primary">{filtered.length} student(s)</span>.
+              {filterFee ? ` for "${filterFee}"` : ''} — <span className="font-semibold text-school-primary">{totalRows} student(s)</span>.
               <br /><br />
               <span className="text-rose-600 font-semibold">Are you sure?</span>
             </p>
