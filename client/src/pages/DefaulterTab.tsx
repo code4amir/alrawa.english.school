@@ -71,6 +71,10 @@ export default function DefaulterTab() {
     params.monthFrom = monthFrom;
     params.monthTo = monthTo;
     params.year = monthTo.split('-')[0];
+    // Fetch the full defaulting set in one request (backend caps at 200) —
+    // the report table has no pagination UI, so without this only the first
+    // 25 rows render when "Whole School" is selected.
+    params.limit = '200';
     api.get('/finance/defaulter', { params, signal: controller.signal })
       .then(res => setData(res.data.results || res.data.data || res.data))
       .catch(() => { if (!controller.signal.aborted) toast('Failed to load defaulter data', 'error'); })
