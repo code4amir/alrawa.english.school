@@ -6,6 +6,7 @@ from finance.services.ledger_service import LedgerService
 from finance.services.fee_status_service import FeeStatusService
 from finance.services.defaulter_service import DefaulterService
 from .base import PRIMARY_BANK, SECONDARY_BANK, _internal_accounts, _param
+from ..throttles import DuesReminderRateThrottle
 
 
 def _serialize_tx(tx, account_name, opening_balance, cancelled_by_names):
@@ -63,7 +64,17 @@ def _serialize_tx(tx, account_name, opening_balance, cancelled_by_names):
 
 
 class LedgerActionsMixin:
-    """Ledger, fee_status, and defaulter actions for TransactionViewSet."""
+    """Ledger, fee_status, and defaulter actions for TransactionViewSet.
+
+    Throttles: the send_dues_reminder action is additionally rate-limited
+    (DuesReminderRateThrottle) to prevent accidental mass-send spam.
+    """
+
+    def get_throttles(self):
+        throttles = super().get_throttles()
+        if getattr(self, 'action', None) == 'send_dues_reminder':
+            throttles = list(throttles) + [DuesReminderRateThrottle()]
+        return throttles
 
     @action(detail=False, methods=['get'])
     def ledger(self, request):
@@ -167,9 +178,10 @@ class LedgerActionsMixin:
     def send_dues_reminder(self, request):
         """Send a dues-reminder to the parent(s) of an individual student.
 
-        Computes the student's unpaid fees (up to the current month only), then
-        web-pushes + logs a notification to every linked parent. Gated by the
-        viewset's `finance:write` permission (accountant + admin).
+        Computes the student's unpaid fees (up to the current month only),
+        then web-pushes + logs a notification to every linked parent.
+        Gated by the viewset's `finance:write` permission (accountant + admin).
+        Throttled (30/hr/user) to prevent accidental mass-send spam.
         """
         student_id = request.data.get('studentId')
         note = (request.data.get('note') or '').strip()
@@ -186,8 +198,7 @@ class LedgerActionsMixin:
         if not student:
             return Response({'error': 'Student not found'}, status=404)
 
-        # Range anchored at the current month (no future months), ~12 months back
-        # to cover a full academic cycle of monthly dues.
+        # Range anchored at the current month (no future months), ~12 back.
         now = timezone.now()
         month_to = f"{now.year}-{now.month:02d}"
         prev_year = now.year - 1 if now.month == 1 else now.year

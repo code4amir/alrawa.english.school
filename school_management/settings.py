@@ -146,6 +146,7 @@ REST_FRAMEWORK = {
         'ai_query': '30/hour',
         'connect_read': '30/min',
         'connect_write': '5/min',
+        'dues_reminder': '30/hour',
     },
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',

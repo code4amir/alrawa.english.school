@@ -1156,3 +1156,24 @@ class DuesReminderTests(TestCase):
             'studentId': str(uuid.uuid4()),
         })
         self.assertEqual(res.status_code, 404)
+
+    def test_rate_limited_after_excess(self):
+        from unittest import mock
+        from finance.throttles import DuesReminderRateThrottle
+        from django.core.cache import cache
+        cache.clear()
+        self._auth(self.admin)
+        # Force a 1/minute bucket by pointing the throttle at a tiny rate
+        # table; get_rate() reads THROTTLE_RATES[self.scope] on the class.
+        with mock.patch.object(
+            DuesReminderRateThrottle, 'THROTTLE_RATES',
+            {'dues_reminder': '1/minute'},
+        ):
+            statuses = []
+            for _ in range(3):
+                r = self.client.post('/api/finance/transactions/send_dues_reminder/', {
+                    'studentId': str(self.student.id),
+                })
+                statuses.append(r.status_code)
+            self.assertIn(200, statuses)        # first request succeeds
+            self.assertIn(429, statuses)        # subsequent ones throttled
