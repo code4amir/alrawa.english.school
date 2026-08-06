@@ -3,7 +3,7 @@ import type { ReactNode, FormEvent } from 'react';
 import DOMPurify from 'dompurify';
 import { useSchoolStore, useAuthStore, useUIStore, api } from '../store';
 import { useFocusTrap } from '../lib/useFocusTrap';
-import { Clock, BarChart3, AlertTriangle, Users, Upload, Ban, ChevronLeft, ChevronRight, DollarSign, TrendingDown, RefreshCw, BookOpen, Shield, Lock, Scale, Printer } from 'lucide-react';
+import { Clock, BarChart3, AlertTriangle, Users, Upload, Ban, ChevronLeft, ChevronRight, DollarSign, TrendingDown, RefreshCw, BookOpen, Shield, Lock, Scale, Printer, CheckCircle } from 'lucide-react';
 import Skeleton from '../components/Skeleton';
 import { toast } from '../components/Toast';
 import DatePicker from '../components/DatePicker';
@@ -266,7 +266,7 @@ function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, r
                       onClick={() => pdfPaymentReceipt(
                         {
                           reference: entry.voucher || entry.referenceId || '—',
-                          amount: String(entry.credit ?? ''),
+                          amount: String(entry.amount ?? entry.debit ?? entry.credit ?? 0),
                           category: entry.category || 'Fee',
                           method: entry.sourceAccount === 'CASH_IN_HAND' ? 'Cash' : (entry.sourceAccount || entry.destinationAccount || '—'),
                           date: entry.transactionDate ? new Date(entry.transactionDate + 'T00:00:00').toLocaleDateString() : '—',
@@ -367,6 +367,10 @@ const FinanceSection = () => {
   const [activeTab, setActiveTab] = useState<TxTab>('income');
   const [loading, setLoading] = useState(false);
   const [assignedStudentIds, setAssignedStudentIds] = useState<string[] | null>(null);
+
+  // Confirmation dialog state (shown after recording income)
+  const [confirmData, setConfirmData] = useState<{ studentName: string; className: string; amount: number; category: string; method: string; date: string; reference: string; feeMonth: string } | null>(null);
+  const confirmRef = useFocusTrap(!!confirmData);
 
   // Form state
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
@@ -576,9 +580,25 @@ const FinanceSection = () => {
         body.feeMonth = feeMonth || undefined;
       }
 
-      await api.post(`/finance/transactions/`, body);
+      const res = await api.post(`/finance/transactions/`, body);
 
       toast(activeTab === 'income' ? 'Income recorded ✓' : activeTab === 'expense' ? 'Expense recorded ✓' : 'Transfer recorded ✓', 'success');
+
+      // Capture confirmation data before resetForm clears the state
+      if (activeTab === 'income' && selectedStudent) {
+        const stu = availableStudents.find((s: any) => s.id === selectedStudent);
+        setConfirmData({
+          studentName: stu?.name || '',
+          className: selectedClass,
+          amount: Number(amount),
+          category: body.category || category || '—',
+          method: depositTo === 'CASH_IN_HAND' ? 'Cash' : depositTo === 'AL_RAWA_BANK' ? 'Bank Transfer (AL RAWA)' : depositTo === 'GLOBAL_FORUM_BANK' ? 'Bank Transfer (Global Forum)' : depositTo,
+          date,
+          reference: res.data?.referenceId || res.data?.reference || `TOKEN-${date.replace(/-/g, '')}-${res.data?.tokenNumber || '—'}`,
+          feeMonth: feeMonth || '',
+        });
+      }
+
       resetForm();
       const store = useSchoolStore.getState();
       if (store._fetchedAt) {
@@ -1015,6 +1035,49 @@ const FinanceSection = () => {
       {/* Ledger */}
       <Ledger fmt={fmt} fetchFinance={fetchFinance} fetchFeeSchedules={fetchFeeSchedules} fetchDashboardSummary={fetchDashboardSummary} refreshKey={ledgerRefreshKey} />
       </div>)}
+
+      {/* Confirmation dialog after recording income */}
+      {confirmData && (
+        <div ref={confirmRef} role="dialog" aria-modal="true" aria-label="Payment Confirmed"
+          className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+          onClick={() => setConfirmData(null)}
+          onKeyDown={e => { if (e.key === 'Escape') setConfirmData(null); }}>
+          <div className="bg-white rounded-xl border border-school-border p-6 w-full max-w-md space-y-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <CheckCircle size={28} className="text-emerald-600 flex-shrink-0" />
+              <div>
+                <h4 className="font-serif text-sm text-school-primary font-bold">Payment Recorded ✓</h4>
+                <p className="text-xs text-school-muted">Fee payment confirmed and added to ledger</p>
+              </div>
+            </div>
+            <div className="bg-school-paper/50 rounded-xl p-4 space-y-2 text-xs">
+              <div className="flex justify-between"><span className="text-school-muted">Student</span><span className="font-bold">{confirmData.studentName} ({confirmData.className})</span></div>
+              <div className="flex justify-between"><span className="text-school-muted">Amount</span><span className="font-bold text-emerald-700">৳{confirmData.amount.toLocaleString()}</span></div>
+              <div className="flex justify-between"><span className="text-school-muted">Category</span><span>{confirmData.category}</span></div>
+              <div className="flex justify-between"><span className="text-school-muted">Method</span><span>{confirmData.method}</span></div>
+              <div className="flex justify-between"><span className="text-school-muted">Date</span><span>{confirmData.date}</span></div>
+              {confirmData.feeMonth && <div className="flex justify-between"><span className="text-school-muted">Fee Month</span><span>{confirmData.feeMonth}</span></div>}
+              <div className="flex justify-between"><span className="text-school-muted">Receipt</span><span className="font-mono font-bold">{confirmData.reference}</span></div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => {
+                  pdfPaymentReceipt(
+                    { reference: confirmData.reference, amount: String(confirmData.amount), category: confirmData.category, method: confirmData.method, date: confirmData.date, isCancelled: false },
+                    { name: confirmData.studentName, className: confirmData.className },
+                  );
+                }}
+                className="flex items-center gap-1 px-4 py-2 bg-school-accent text-white rounded-xl text-xs font-bold hover:opacity-90 transition-all"
+              >
+                <Printer size={14} /> Print Receipt
+              </button>
+              <button onClick={() => setConfirmData(null)} className="px-4 py-2 bg-school-primary text-white rounded-xl text-xs font-bold hover:opacity-90">
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
