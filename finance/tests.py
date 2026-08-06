@@ -1223,3 +1223,26 @@ class DuesReminderTests(TestCase):
         self._auth(self.teacher)
         res = self.client.post('/api/finance/transactions/send_dues_reminder_all/', {})
         self.assertEqual(res.status_code, 403)
+
+    # ── send_due_reminders management command (Alwaysdata cron) ──
+
+    def test_command_dry_run_does_not_notify(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('send_due_reminders', dry_run=True, stdout=out)
+        # The defaulter student is in the current-month window → processed, but
+        # dry-run must NOT create notifications.
+        self.assertIn('Processed: 1', out.getvalue())
+        self.assertNotIn('Notified: 1', out.getvalue())
+        self.assertEqual(NotificationLog.objects.filter(event_type='dues_reminder').count(), 0)
+
+    def test_command_sends_to_linked_parent(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('send_due_reminders', stdout=out)
+        self.assertIn('Notified: 1', out.getvalue())
+        self.assertEqual(
+            NotificationLog.objects.filter(event_type='dues_reminder').count(), 1
+        )
