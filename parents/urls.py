@@ -5,6 +5,7 @@ urlpatterns = [
     path('parents/my-students/', views.MyStudentsView.as_view(), name='parent-my-students'),
     path('parents/attendance/<uuid:student_id>/', views.StudentAttendanceView.as_view(), name='parent-student-attendance'),
     path('parents/fees/<uuid:student_id>/', views.StudentFeesView.as_view(), name='parent-student-fees'),
+    path('parents/payments/<uuid:student_id>/', views.StudentPaymentsView.as_view(), name='parent-student-payments'),
     path('parents/results/<uuid:student_id>/', views.StudentResultsView.as_view(), name='parent-student-results'),
     path('parents/push/subscribe/', views.PushSubscribeView.as_view(), name='push-subscribe'),
     path('parents/push/vapid-key/', views.VapidKeyView.as_view(), name='vapid-key'),

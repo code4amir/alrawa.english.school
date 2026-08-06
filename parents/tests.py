@@ -2,10 +2,12 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.tokens import RefreshToken
+from datetime import date
 
 from core.models import SchoolClass
 from students.models import Student
 from parents.models import ParentStudentLink, Announcement, NotificationLog
+from finance.models import BankAccount, Transaction
 
 User = get_user_model()
 
@@ -149,4 +151,55 @@ class ParentNotificationsTests(TestCase):
 
     def test_unauthenticated_gets_401(self):
         res = self.client.get('/api/parents/notifications/')
+        self.assertEqual(res.status_code, 401)
+
+
+class ParentPaymentsTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.parent = User.objects.create_user(
+            name='Mom', email='mom@test.com', password='pass123',
+            email_verified=True, role='parent',
+        )
+        self.klass = SchoolClass.objects.create(name='Test Class')
+        self.student = Student.objects.create(
+            name='Child', student_id='E000100', school_class=self.klass,
+        )
+        ParentStudentLink.objects.create(parent=self.parent, student=self.student)
+        self.cash = BankAccount.objects.get_or_create(
+            name='CASH_IN_HAND', defaults={'display_name': 'Cash in Hand'},
+        )[0]
+        Transaction.objects.create(
+            student=self.student, transaction_type='INCOME',
+            amount='3500.00', category='Tuition Fee',
+            source_account=self.cash, reference_id='RCPT-TEST-1',
+            transaction_date=date(2026, 7, 5),
+        )
+
+    def _auth(self, user):
+        refresh = RefreshToken.for_user(user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
+
+    def test_parent_gets_own_student_payments(self):
+        self._auth(self.parent)
+        res = self.client.get(f'/api/parents/payments/{self.student.id}/')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(len(res.data), 1)
+        self.assertEqual(res.data[0]['reference'], 'RCPT-TEST-1')
+        self.assertEqual(res.data[0]['amount'], '3500.00')
+        self.assertEqual(res.data[0]['category'], 'Tuition Fee')
+        self.assertEqual(res.data[0]['date'], '2026-07-05')
+        self.assertFalse(res.data[0]['isCancelled'])
+
+    def test_unlinked_parent_gets_404(self):
+        stray = User.objects.create_user(
+            name='Stray', email='stray2@test.com', password='pass123',
+            email_verified=True, role='parent',
+        )
+        self._auth(stray)
+        res = self.client.get(f'/api/parents/payments/{self.student.id}/')
+        self.assertEqual(res.status_code, 404)
+
+    def test_unauthenticated_gets_401(self):
+        res = self.client.get(f'/api/parents/payments/{self.student.id}/')
         self.assertEqual(res.status_code, 401)

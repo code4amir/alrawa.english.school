@@ -24,12 +24,12 @@ from .connect import (
 )
 from .serializers import (
     ParentStudentSerializer, ParentAttendanceSerializer,
-    ParentFeeStatusSerializer, ParentResultSerializer,
+    ParentFeeStatusSerializer, ParentPaymentSerializer, ParentResultSerializer,
 )
 from students.models import Student
 from attendance.models import AttendanceRecord, Holiday
 from results.models import Result
-from finance.models import FeeSchedule, StudentFeeAssignment, Transaction
+from finance.models import FeeSchedule, StudentFeeAssignment, Transaction, BankAccount
 from core.models import SchoolSetting
 
 logger = logging.getLogger(__name__)
@@ -197,6 +197,46 @@ class StudentFeesView(APIView):
             'schedules': schedules,
         }
         return Response(ParentFeeStatusSerializer(data).data)
+
+
+class StudentPaymentsView(APIView):
+    """Payment history for a parent's student — feeds the receipt PDF."""
+    permission_classes = [IsParentOfStudent]
+
+    def get(self, request, student_id):
+        parent_student_ids = set(
+            request.user.parent_links.values_list('student_id', flat=True)
+        )
+        if student_id not in parent_student_ids:
+            return Response({'error': 'Student not found'}, status=404)
+
+        txns = (
+            Transaction.objects.filter(
+                student_id=student_id,
+                transaction_type='INCOME',
+            )
+            .select_related('source_account')
+            .order_by('-transaction_date', '-entry_date')
+        )
+        method_map = {
+            'AL_RAWA_BANK': 'Bank Transfer (AL RAWA)',
+            'GLOBAL_FORUM_BANK': 'Bank Transfer (Global Forum)',
+            'CASH_IN_HAND': 'Cash',
+        }
+        payments = []
+        for t in txns:
+            method = 'Cash'
+            if t.source_account:
+                method = method_map.get(t.source_account.name, t.source_account.display_name or t.source_account.name)
+            payments.append({
+                'reference': t.reference_id or (f'TOKEN-{t.token_number}' if t.token_number else str(t.id)[:8]),
+                'amount': t.amount,
+                'category': t.category or '—',
+                'method': method,
+                'date': t.transaction_date,
+                'isCancelled': t.is_cancelled,
+            })
+        return Response(ParentPaymentSerializer(payments, many=True).data)
 
 
 class StudentResultsView(APIView):

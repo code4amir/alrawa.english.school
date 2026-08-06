@@ -39,6 +39,15 @@ class ParentFeeStatusSerializer(serializers.Serializer):
     schedules = ParentFeeScheduleItemSerializer(many=True)
 
 
+class ParentPaymentSerializer(serializers.Serializer):
+    reference = serializers.CharField()
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2)
+    category = serializers.CharField()
+    method = serializers.CharField()
+    date = serializers.DateField()
+    isCancelled = serializers.BooleanField()
+
+
 class ParentResultSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     session = serializers.CharField()
