@@ -234,18 +234,19 @@ class PaymentAllocation(models.Model):
 class ReceiptCounter(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     fiscal_year = models.IntegerField()
+    counter_date = models.DateField(default=datetime.date.today, help_text='Serial resets daily (YYYYMMDD prefix)')
     receipt_type = models.CharField(max_length=20)
     next_sequence = models.IntegerField(default=1)
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=['fiscal_year', 'receipt_type'], name='unique_receipt_counter'),
+            models.UniqueConstraint(fields=['counter_date', 'receipt_type'], name='unique_receipt_counter'),
         ]
         verbose_name = 'receipt counter'
         verbose_name_plural = 'receipt counters'
 
     def __str__(self):
-        return f"{self.receipt_type} - FY{self.fiscal_year}"
+        return f"{self.receipt_type} - {self.counter_date} ({self.next_sequence})"
 
 
 class OpeningBalance(models.Model):

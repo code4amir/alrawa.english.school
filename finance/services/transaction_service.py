@@ -140,27 +140,25 @@ def create_transaction(serializer, request):
 
         if tx_type == 'INCOME' and tx.destination_account and tx.destination_account.name in _internal_accounts():
             tx.affects_income_ledger = True
-            fy = tx.fiscal_year or _fiscal_year_from_date(tx.transaction_date)
             counter, _ = ReceiptCounter.objects.select_for_update().get_or_create(
-                fiscal_year=fy,
+                counter_date=tx.transaction_date,
                 receipt_type='RCPT',
-                defaults={'next_sequence': 1}
+                defaults={'next_sequence': 1, 'fiscal_year': tx.transaction_date.year}
             )
             tx.receipt_sequence = counter.next_sequence
-            tx.reference_id = f"RCPT-{fy}-{counter.next_sequence:04d}"
+            tx.reference_id = f"RCPT-{tx.transaction_date:%Y%m%d}-{counter.next_sequence:04d}"
             counter.next_sequence += 1
             counter.save(update_fields=['next_sequence'])
 
         if tx_type == 'EXPENSE' and tx.source_account and tx.source_account.name in _internal_accounts():
             tx.affects_expense_ledger = True
-            fy = tx.fiscal_year or _fiscal_year_from_date(tx.transaction_date)
             counter, _ = ReceiptCounter.objects.select_for_update().get_or_create(
-                fiscal_year=fy,
+                counter_date=tx.transaction_date,
                 receipt_type='PV',
-                defaults={'next_sequence': 1}
+                defaults={'next_sequence': 1, 'fiscal_year': tx.transaction_date.year}
             )
             tx.receipt_sequence = counter.next_sequence
-            tx.reference_id = f"PV-{fy}-{counter.next_sequence:04d}"
+            tx.reference_id = f"PV-{tx.transaction_date:%Y%m%d}-{counter.next_sequence:04d}"
             counter.next_sequence += 1
             counter.save(update_fields=['next_sequence'])
 
@@ -168,23 +166,21 @@ def create_transaction(serializer, request):
             src_internal = tx.source_account.name in _internal_accounts()
             dst_internal = tx.destination_account.name in _internal_accounts()
             if src_internal and dst_internal:
-                fy = tx.fiscal_year or _fiscal_year_from_date(tx.transaction_date)
                 counter, _ = ReceiptCounter.objects.select_for_update().get_or_create(
-                    fiscal_year=fy,
+                    counter_date=tx.transaction_date,
                     receipt_type='TV',
-                    defaults={'next_sequence': 1}
+                    defaults={'next_sequence': 1, 'fiscal_year': tx.transaction_date.year}
                 )
                 tx.receipt_sequence = counter.next_sequence
-                tx.reference_id = f"TV-{fy}-{counter.next_sequence:04d}"
+                tx.reference_id = f"TV-{tx.transaction_date:%Y%m%d}-{counter.next_sequence:04d}"
                 counter.next_sequence += 1
                 counter.save(update_fields=['next_sequence'])
 
         if not tx.token_number and tx_type in ('INCOME', 'EXPENSE'):
-            fy = tx.fiscal_year or _fiscal_year_from_date(tx.transaction_date)
             token_counter, _ = ReceiptCounter.objects.select_for_update().get_or_create(
-                fiscal_year=fy,
+                counter_date=tx.transaction_date,
                 receipt_type='TOKEN',
-                defaults={'next_sequence': 1}
+                defaults={'next_sequence': 1, 'fiscal_year': tx.transaction_date.year}
             )
             tx.token_number = token_counter.next_sequence
             token_counter.next_sequence += 1

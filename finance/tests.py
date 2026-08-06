@@ -221,6 +221,51 @@ class FinanceTests(TestCase):
         ))
         self.assertEqual(res.status_code, 201)
 
+    # ── Receipt/trx date-based numbering (TYPE-YYYYMMDD-SEQ) ──
+
+    def test_income_receipt_uses_date_serial(self):
+        res = self.client.post('/api/finance/transactions/', self._tx_data())
+        self.assertEqual(res.status_code, 201)
+        t = Transaction.objects.get()
+        # 2026-06-01 -> RCPT-20260601-0001
+        self.assertEqual(t.reference_id, 'RCPT-20260601-0001')
+
+    def test_income_receipt_serial_increments_same_day(self):
+        for _ in range(2):
+            res = self.client.post('/api/finance/transactions/', self._tx_data())
+            self.assertEqual(res.status_code, 201)
+        refs = sorted(Transaction.objects.values_list('reference_id', flat=True))
+        self.assertEqual(refs[0], 'RCPT-20260601-0001')
+        self.assertEqual(refs[1], 'RCPT-20260601-0002')
+
+    def test_receipt_serial_resets_per_day(self):
+        # Same date twice → 0001, 0002
+        self.client.post('/api/finance/transactions/', self._tx_data())
+        self.client.post('/api/finance/transactions/', self._tx_data())
+        # Different date → serial restarts at 0001
+        self.client.post('/api/finance/transactions/', self._tx_data(transaction_date='2026-06-02'))
+        refs = sorted(Transaction.objects.values_list('reference_id', flat=True))
+        self.assertEqual(refs, ['RCPT-20260601-0001', 'RCPT-20260601-0002', 'RCPT-20260602-0001'])
+
+    def test_expense_voucher_uses_date_serial(self):
+        res = self.client.post('/api/finance/transactions/', self._tx_data(
+            transaction_type='EXPENSE', source_account='CASH_IN_HAND',
+            destination_account=None,
+        ), format='json')
+        self.assertEqual(res.status_code, 201)
+        t = Transaction.objects.get()
+        self.assertEqual(t.reference_id, 'PV-20260601-0001')
+
+    def test_reversal_uses_date_serial(self):
+        created = self.client.post('/api/finance/transactions/', self._tx_data())
+        t = Transaction.objects.get()
+        cancel = self.client.post(f'/api/finance/transactions/{t.id}/cancel/', {'reason': 'err'}, format='json')
+        self.assertEqual(cancel.status_code, 200)
+        reversal = Transaction.objects.filter(reversal_of_id=t.id).first()
+        self.assertIsNotNone(reversal)
+        # Reversal flips INCOME→EXPENSE → gets a PV number (isolated test DB, starts at 0001)
+        self.assertEqual(reversal.reference_id, 'PV-20260601-0001')
+
     def test_list_transactions(self):
         Transaction.objects.create(
             transaction_date='2026-06-01', transaction_type='INCOME',

@@ -179,15 +179,14 @@ class TransactionViewSet(AuditLogMixin, LedgerActionsMixin, PeriodClosedMixin, v
                 reversal_type = 'PV'
             else:
                 reversal_type = 'TV'
-            fy = reversal.fiscal_year or _fiscal_year_from_date(reversal.transaction_date)
             counter, _ = ReceiptCounter.objects.select_for_update().get_or_create(
-                fiscal_year=fy, receipt_type=reversal_type,
-                defaults={'next_sequence': 1},
+                counter_date=reversal.transaction_date, receipt_type=reversal_type,
+                defaults={'next_sequence': 1, 'fiscal_year': reversal.transaction_date.year},
             )
             seq = counter.next_sequence
             counter.next_sequence = seq + 1
             counter.save(update_fields=['next_sequence'])
-            reversal.reference_id = f"{reversal_type}-{fy}-{seq:04d}"
+            reversal.reference_id = f"{reversal_type}-{reversal.transaction_date:%Y%m%d}-{seq:04d}"
             reversal.save()
 
         _invalidate_dashboard_cache(tx.fiscal_year)

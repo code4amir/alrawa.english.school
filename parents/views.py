@@ -229,7 +229,7 @@ class StudentPaymentsView(APIView):
             if t.source_account:
                 method = method_map.get(t.source_account.name, t.source_account.display_name or t.source_account.name)
             payments.append({
-                'reference': t.reference_id or (f'TOKEN-{t.token_number}' if t.token_number else str(t.id)[:8]),
+                'reference': t.reference_id or (f"TOKEN-{t.transaction_date:%Y%m%d}-{t.token_number:04d}" if t.token_number else str(t.id)[:8]),
                 'amount': t.amount,
                 'category': t.category or '—',
                 'method': method,
