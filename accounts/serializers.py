@@ -32,7 +32,12 @@ class CreateStaffSerializer(serializers.Serializer):
 class UserListSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'name', 'email', 'role', 'is_active']
+        fields = ['id', 'name', 'email', 'role', 'is_active', 'date_joined']
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['createdAt'] = data.pop('date_joined', None)
+        return data
 
 
 class UserRoleSerializer(serializers.Serializer):

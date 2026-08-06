@@ -112,3 +112,16 @@ class AccountTests(TestCase):
             HTTP_X_CSRFTOKEN=csrf.value if csrf else '',
         )
         self.assertEqual(res.status_code, 200)
+
+    def test_users_list_returns_createdat_date(self):
+        # Regression: UserManagement renders new Date(u.createdAt); the list
+        # serializer must emit a camelCase createdAt so it never shows
+        # "Invalid Date".
+        User.objects.create_user(name='Staff4', email='staff4@test.com', password='pass123', role='teacher')
+        self._auth(self.admin)
+        res = self.client.get('/api/users/')
+        self.assertEqual(res.status_code, 200)
+        staff = next(u for u in res.data['results'] if u['email'] == 'staff4@test.com')
+        self.assertIn('createdAt', staff)
+        self.assertTrue(staff['createdAt'])
+        self.assertNotIn('date_joined', staff)
