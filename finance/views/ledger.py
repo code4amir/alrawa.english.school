@@ -167,6 +167,19 @@ class LedgerActionsMixin:
         student_ids = [s.id for s in students]
         result = svc.compute(students, student_ids)
 
+        # Grand totals across the FULL filtered set (not just this page) so the
+        # UI footer can show authoritative totals regardless of pagination.
+        grand_total_due = 0
+        grand_total_paid = 0
+        if total_rows > len(students):
+            all_students, _ = svc.paginate_students(students_qs, 1, 100000)
+            all_result = svc.compute(all_students, [s.id for s in all_students])
+            grand_total_due = sum(r['totalDue'] for r in all_result)
+            grand_total_paid = sum(r['totalPaid'] for r in all_result)
+        else:
+            grand_total_due = sum(r['totalDue'] for r in result)
+            grand_total_paid = sum(r['totalPaid'] for r in result)
+
         total_pages = max(1, (total_rows + page_size - 1) // page_size)
         return Response({
             'data': result,
@@ -174,6 +187,9 @@ class LedgerActionsMixin:
             'pageSize': page_size,
             'totalPages': total_pages,
             'totalRows': total_rows,
+            'grandTotalDue': grand_total_due,
+            'grandTotalPaid': grand_total_paid,
+            'grandTotalBalance': grand_total_due - grand_total_paid,
         })
 
     @action(detail=False, methods=['post'])

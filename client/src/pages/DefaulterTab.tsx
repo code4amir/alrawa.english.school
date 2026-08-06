@@ -61,6 +61,8 @@ export default function DefaulterTab() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalRows, setTotalRows] = useState(0);
+  const [grandTotalDue, setGrandTotalDue] = useState(0);
+  const [grandTotalPaid, setGrandTotalPaid] = useState(0);
 
   useEffect(() => { fetchClasses(); fetchStudents(undefined, true); fetchFeeSchedules(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -84,6 +86,8 @@ export default function DefaulterTab() {
         setData(res.data.results || res.data.data || res.data);
         setTotalPages(res.data.totalPages || 1);
         setTotalRows(res.data.totalRows ?? 0);
+        setGrandTotalDue(res.data.grandTotalDue ?? 0);
+        setGrandTotalPaid(res.data.grandTotalPaid ?? 0);
       })
       .catch(() => { if (!controller.signal.aborted) toast('Failed to load defaulter data', 'error'); })
       .finally(() => setLoading(false));
@@ -111,10 +115,6 @@ export default function DefaulterTab() {
   );
 
   const hasMonthly = monthlyFeeNames.length > 0 && monthRange.length > 0;
-
-  const totalDue = useMemo(() => filtered.reduce((s, r) => s + r.totalDue, 0), [filtered]);
-  const totalPaid = useMemo(() => filtered.reduce((s, r) => s + r.totalPaid, 0), [filtered]);
-  const totalBalance = totalDue - totalPaid;
 
   const colCount = 1 + yearlyFeeNames.length + (hasMonthly ? monthRange.length * monthlyFeeNames.length : 0) + 3;
 
@@ -342,8 +342,8 @@ export default function DefaulterTab() {
         </div>
 
         <div className="ml-auto flex gap-6 text-right">
-          <SummaryCard label="Total Due" value={totalDue} color="text-rose-600" />
-          <SummaryCard label="Total Paid" value={totalPaid} color="text-emerald-600" />
+          <SummaryCard label="Total Due" value={grandTotalDue} color="text-rose-600" />
+          <SummaryCard label="Total Paid" value={grandTotalPaid} color="text-emerald-600" />
         </div>
       </div>
 
@@ -455,15 +455,15 @@ export default function DefaulterTab() {
               <tfoot>
                 <tr className="bg-school-primary/5 border-t-2 border-school-primary/20">
                   <td className="px-4 py-3 sticky left-0 bg-school-primary/5 text-xs font-bold" colSpan={1 + yearlyFeeNames.length}>
-                    Grand Total
+                    Grand Total {totalRows > filtered.length ? `(all ${totalRows} students)` : ''}
                   </td>
                   {hasMonthly && monthRange.flatMap(m => monthlyFeeNames.map(name => (
                     <td key={`gt_${m}_${name}`} className="px-2 py-3" />
                   )))}
-                  <td className="px-3 py-3 text-right font-bold text-xs">{fmt(totalDue)} /-</td>
-                  <td className="px-3 py-3 text-right font-bold text-xs text-emerald-600">{fmt(totalPaid)} /-</td>
-                  <td className={`px-3 py-3 text-right font-bold text-xs ${totalBalance > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                    {fmt(Math.abs(totalBalance))} /-
+                  <td className="px-3 py-3 text-right font-bold text-xs">{fmt(grandTotalDue)} /-</td>
+                  <td className="px-3 py-3 text-right font-bold text-xs text-emerald-600">{fmt(grandTotalPaid)} /-</td>
+                  <td className={`px-3 py-3 text-right font-bold text-xs ${grandTotalDue - grandTotalPaid > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                    {fmt(Math.abs(grandTotalDue - grandTotalPaid))} /-
                   </td>
                 </tr>
               </tfoot>

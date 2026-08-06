@@ -630,11 +630,17 @@ class FinanceTests(TestCase):
         self.assertIn('totalRows', res.data)
         self.assertEqual(res.data['totalRows'], 2)
         self.assertEqual(len(res.data['data']), 1)
+        # Server-side grand totals span the FULL filtered set, not just the page.
+        self.assertIn('grandTotalDue', res.data)
+        self.assertIn('grandTotalPaid', res.data)
+        self.assertIn('grandTotalBalance', res.data)
 
         res2 = self.client.get('/api/finance/defaulter/?year=2026&limit=1&page=2&monthFrom=2026-01&monthTo=2026-06')
         self.assertEqual(res2.status_code, 200)
         self.assertEqual(len(res2.data['data']), 1)
         self.assertNotEqual(res.data['data'][0]['studentId'], res2.data['data'][0]['studentId'])
+        # Grand totals identical across pages (whole set, not per-page).
+        self.assertEqual(res.data['grandTotalDue'], res2.data['grandTotalDue'])
 
     def test_defaulter_pagination_defaults(self):
         for i in range(3):
