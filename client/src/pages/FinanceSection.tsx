@@ -3,13 +3,14 @@ import type { ReactNode, FormEvent } from 'react';
 import DOMPurify from 'dompurify';
 import { useSchoolStore, useAuthStore, useUIStore, api } from '../store';
 import { useFocusTrap } from '../lib/useFocusTrap';
-import { Clock, BarChart3, AlertTriangle, Users, Upload, Ban, ChevronLeft, ChevronRight, DollarSign, TrendingDown, RefreshCw, BookOpen, Shield, Lock, Scale } from 'lucide-react';
+import { Clock, BarChart3, AlertTriangle, Users, Upload, Ban, ChevronLeft, ChevronRight, DollarSign, TrendingDown, RefreshCw, BookOpen, Shield, Lock, Scale, Printer } from 'lucide-react';
 import Skeleton from '../components/Skeleton';
 import { toast } from '../components/Toast';
 import DatePicker from '../components/DatePicker';
 import FinanceReports from './FinanceReports';
 import DefaulterTab from './DefaulterTab';
 import OptionalFeesTab from './OptionalFeesTab';
+import { pdfPaymentReceipt } from '../lib/parentReceiptPdf';
 import ExcelImportTab from './ExcelImportTab';
 import FeeScheduleTab from './FeeScheduleTab';
 import StudentWaiversTab from './StudentWaiversTab';
@@ -259,12 +260,34 @@ function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, r
                   )}
                 </td>
                 {canWrite && <td className="px-3 py-2.5 text-center">
+                  <div className="flex items-center justify-center gap-1.5">
+                  {entry.status === 'Active' && entry.transactionType === 'INCOME' && entry.studentName ? (
+                    <button
+                      onClick={() => pdfPaymentReceipt(
+                        {
+                          reference: entry.voucher || entry.referenceId || '—',
+                          amount: String(entry.credit ?? ''),
+                          category: entry.category || 'Fee',
+                          method: entry.sourceAccount === 'CASH_IN_HAND' ? 'Cash' : (entry.sourceAccount || entry.destinationAccount || '—'),
+                          date: entry.transactionDate ? new Date(entry.transactionDate + 'T00:00:00').toLocaleDateString() : '—',
+                          isCancelled: false,
+                        },
+                        { name: entry.studentName, className: entry.className || '' },
+                      )}
+                      aria-label="Print receipt"
+                      title="Print receipt (office + parent copy)"
+                      className="p-1 rounded-lg text-school-accent hover:text-emerald-600 hover:bg-emerald-50 transition-all"
+                    >
+                      <Printer size={14} />
+                    </button>
+                  ) : null}
                   {entry.status === 'Active' ? (
                     <button onClick={() => setCancelId(entry.id)} aria-label="Cancel transaction"
                       className="p-1 rounded-lg text-school-muted hover:text-red-600 hover:bg-red-50 transition-all">
                       <Ban size={14} />
                     </button>
                   ) : null}
+                  </div>
                 </td>}
               </tr>
                 );
