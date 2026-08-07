@@ -3,6 +3,8 @@ from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.core.cache import cache
+from unittest.mock import patch
+import os
 from .models import SchoolClass, Subject, AcademicYear, Category
 from students.models import Student
 
@@ -299,3 +301,98 @@ class DashboardCacheTests(TestCase):
         cache.set('dashboard_summary', {'stale': True}, 60)
         s.delete()
         self.assertIsNone(cache.get('dashboard_summary'))
+
+
+class SchedulerTests(TestCase):
+    """In-app scheduled-task management (proxies Alwaysdata `/v1/job/`)."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_superuser(email='sched@test.com', name='Sched Admin', password='testpass123')
+        refresh = RefreshToken.for_user(self.user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
+        os.environ['ALWAYSDATA_SCHED_TOKEN'] = 'test-token'
+
+    def tearDown(self):
+        os.environ.pop('ALWAYSDATA_SCHED_TOKEN', None)
+
+    @staticmethod
+    def _job(**over):
+        from core.scheduler import Job
+        base = dict(
+            id=30737, type='TYPE_COMMAND', date_type='CRONTAB',
+            crontab_syntax='0 11 * * 6',
+            argument='~/schoolenv/bin/python ~/school-management/manage.py send_due_reminders',
+            annotation='AL RAWA - weekly dues reminder', is_disabled=False,
+            working_directory='', href='/v1/job/30737/',
+        )
+        base.update(over)
+        return Job.from_dict(base)
+
+    def test_admin_can_list_jobs(self):
+        with patch('core.scheduler.list_jobs', return_value=[self._job()]):
+            res = self.client.get('/api/scheduler/')
+        self.assertEqual(res.status_code, 200)
+        body = res.data
+        self.assertTrue(body['configured'])
+        self.assertEqual(len(body['jobs']), 1)
+        self.assertEqual(body['jobs'][0]['id'], 30737)
+        self.assertEqual(body['jobs'][0]['crontabSyntax'], '0 11 * * 6')
+
+    def test_non_admin_forbidden(self):
+        self.client.credentials()  # drop auth
+        res = self.client.get('/api/scheduler/')
+        self.assertEqual(res.status_code, 401)
+
+    def test_create_job(self):
+        with patch('core.scheduler.create_job', return_value=self._job(id=99999)) as mock:
+            res = self.client.post('/api/scheduler/', {
+                'crontabSyntax': '0 9 * * 1',
+                'annotation': 'Weekly reminder',
+                'argument': '~/schoolenv/bin/python ~/school-management/manage.py send_due_reminders',
+                'sshUser': 516391,
+                'workingDirectory': 'school-management',
+            })
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.data['id'], 99999)
+        mock.assert_called_once()
+        kwargs = mock.call_args.kwargs
+        self.assertEqual(kwargs['crontab_syntax'], '0 9 * * 1')
+        self.assertEqual(kwargs['ssh_user'], 516391)
+
+    def test_update_toggle_disabled(self):
+        with patch('core.scheduler.update_job', return_value=self._job(is_disabled=True)) as mock:
+            res = self.client.put('/api/scheduler/30737/', {'isDisabled': True})
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.data['isDisabled'])
+        self.assertTrue(mock.call_args.kwargs['is_disabled'])
+
+    def test_delete_job(self):
+        with patch('core.scheduler.delete_job', return_value=None) as mock:
+            res = self.client.delete('/api/scheduler/30737/')
+        self.assertEqual(res.status_code, 204)
+        mock.assert_called_once_with(30737)
+
+    def test_run_now_extracts_command_from_argument(self):
+        with patch('core.scheduler.get_job', return_value=self._job()), \
+             patch('core.scheduler.run_command_now', return_value={'ok': True, 'output': '[DRY-RUN] Students: 97', 'exitCode': 0}) as run:
+            res = self.client.post('/api/scheduler/30737/run/')
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.data['ok'])
+        self.assertEqual(run.call_args.args[0], 'send_due_reminders')
+
+    def test_dry_run_endpoint(self):
+        with patch('core.scheduler.run_command_now', return_value={'ok': True, 'output': '[DRY-RUN] Students: 97', 'exitCode': 0}) as run:
+            res = self.client.post('/api/scheduler/dry-run/')
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.data['ok'])
+        self.assertEqual(run.call_args.args, ('send_due_reminders', '--dry-run'))
+
+    def test_missing_token_returns_configured_false(self):
+            os.environ.pop('ALWAYSDATA_SCHED_TOKEN', None)
+            from core.scheduler import SchedulerConfigError
+            with patch('core.scheduler.list_jobs', side_effect=SchedulerConfigError('ALWAYSDATA_SCHED_TOKEN')):
+                res = self.client.get('/api/scheduler/')
+            self.assertEqual(res.status_code, 200)
+            self.assertFalse(res.data['configured'])
+            self.assertIn('ALWAYSDATA_SCHED_TOKEN', res.data['error'])

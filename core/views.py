@@ -19,7 +19,6 @@ from .audit import log_audit, AuditLogMixin
 
 logger = logging.getLogger(__name__)
 
-
 class ClassViewSet(AuditLogMixin, viewsets.ModelViewSet):
     queryset = SchoolClass.objects.annotate(
         student_count=Subquery(
@@ -276,4 +275,139 @@ class ServiceTypeViewSet(viewsets.ModelViewSet):
         log_audit('create', 'service_type', entity_id=obj.pk, request=self.request)
         if created:
             logger.info(f'Auto-created {len(created)} FeeSchedules for ServiceType "{obj.name}"')
+
+
+class SchedulerViewSet(viewsets.ViewSet):
+    """Admin-only: manage Alwaysdata scheduled tasks (cron jobs) + run now.
+
+    GET    /api/scheduler/                 -> list jobs (and config status)
+    POST   /api/scheduler/                 -> create a job
+    GET    /api/scheduler/<id>/            -> one job
+    PUT    /api/scheduler/<id>/            -> update a job
+    DELETE /api/scheduler/<id>/            -> delete a job
+    POST   /api/scheduler/<id>/run/        -> run the command now (subprocess)
+    POST   /api/scheduler/dry-run/         -> run send_due_reminders --dry-run
+    """
+
+    permission_classes = [require_permission('finance:admin')]
+    def list(self, request):
+        from . import scheduler as svc
+        try:
+            jobs = svc.list_jobs()
+            return Response({
+                'configured': True,
+                'jobs': [j.to_public() for j in jobs],
+            })
+        except svc.SchedulerConfigError as exc:
+            return Response({'configured': False, 'error': str(exc), 'jobs': []})
+        except Exception as exc:
+            logger.exception('scheduler.list failed')
+            return Response(
+                {'configured': True, 'error': f'Alwaysdata API error: {exc}', 'jobs': []},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+    def retrieve(self, request, pk=None):
+        from . import scheduler as svc
+        try:
+            job = svc.get_job(int(pk))
+            return Response(job.to_public())
+        except svc.SchedulerConfigError as exc:
+            return Response({'configured': False, 'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as exc:
+            logger.exception('scheduler.retrieve failed')
+            return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    def create(self, request):
+        from . import scheduler as svc
+        data = request.data
+        try:
+            job = svc.create_job(
+                crontab_syntax=data.get('crontabSyntax') or data.get('crontab_syntax'),
+                argument=data.get('argument'),
+                ssh_user=int(data['sshUser']) if str(data.get('sshUser', '')).isdigit() else data.get('sshUser'),
+                working_directory=data.get('workingDirectory') or data.get('working_directory'),
+                annotation=data.get('annotation'),
+                is_disabled=bool(data.get('isDisabled', data.get('is_disabled', False))),
+            )
+            log_audit('create', 'scheduled_task', entity_id=job.id, request=request,
+                      details={'annotation': job.annotation})
+            return Response(job.to_public(), status=status.HTTP_201_CREATED)
+        except svc.SchedulerConfigError as exc:
+            return Response({'configured': False, 'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as exc:
+            logger.exception('scheduler.create failed')
+            return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    def update(self, request, pk=None):
+        from . import scheduler as svc
+        data = request.data
+        try:
+            job = svc.update_job(
+                int(pk),
+                crontab_syntax=data.get('crontabSyntax') or data.get('crontab_syntax'),
+                argument=data.get('argument'),
+                ssh_user=data.get('sshUser') or data.get('ssh_user'),
+                working_directory=data.get('workingDirectory') or data.get('working_directory'),
+                annotation=data.get('annotation'),
+                is_disabled=data.get('isDisabled', data.get('is_disabled')),
+            )
+            log_audit('update', 'scheduled_task', entity_id=job.id, request=request,
+                      details={'annotation': job.annotation})
+            return Response(job.to_public())
+        except svc.SchedulerConfigError as exc:
+            return Response({'configured': False, 'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as exc:
+            logger.exception('scheduler.update failed')
+            return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    def destroy(self, request, pk=None):
+        from . import scheduler as svc
+        try:
+            svc.delete_job(int(pk))
+            log_audit('delete', 'scheduled_task', entity_id=pk, request=request)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except svc.SchedulerConfigError as exc:
+            return Response({'configured': False, 'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as exc:
+            logger.exception('scheduler.destroy failed')
+            return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    @action(detail=True, methods=['post'])
+    def run(self, request, pk=None):
+        from . import scheduler as svc
+        try:
+            job = svc.get_job(int(pk))
+        except svc.SchedulerConfigError as exc:
+            return Response({'configured': False, 'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception as exc:
+            logger.exception('scheduler.run get_job failed')
+            return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        # Extract the management-command name from the cron argument,
+        # e.g. "…/manage.py send_due_reminders" -> "send_due_reminders".
+        arg = job.argument or ''
+        command = arg.strip().split()[-1] if arg.strip() else 'send_due_reminders'
+        if command.endswith('.py'):
+            command = 'send_due_reminders'
+        log_audit('run', 'scheduled_task', entity_id=job.id, request=request,
+                  details={'command': command})
+        try:
+            result = svc.run_command_now(command)
+            return Response(result)
+        except Exception as exc:
+            logger.exception('scheduler.run failed')
+            return Response({'ok': False, 'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    @action(detail=False, methods=['post'], url_path='dry-run')
+    def dry_run(self, request):
+        from . import scheduler as svc
+        log_audit('run', 'scheduled_task', entity_id=None, request=request,
+                  details={'command': 'send_due_reminders --dry-run'})
+        try:
+            result = svc.run_command_now('send_due_reminders', '--dry-run')
+            return Response(result)
+        except Exception as exc:
+            logger.exception('scheduler.dry_run failed')
+            return Response({'ok': False, 'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 

@@ -15,11 +15,12 @@ import ExamRoutineAdmin from './ExamRoutineAdmin';
 import SessionYearSection from './SessionYearSection';
 import AdminAnnouncements from './AdminAnnouncements';
 import ServiceTypeManager from './admin/ServiceTypeManager';
+import SchedulerSection from './admin/SchedulerSection';
 import EngagementWidget, { QuizPanel, RiddlePanel, MoodPanel, ChallengePanel, TipsPanel, PlannerPanel } from './engagement/EngagementWidget';
 import { CreditCard, BookOpen, BarChart3, Wallet, Users, GraduationCap, Building2, Sparkles, ArrowRight, Clock, MailCheck, CalendarCheck, UserCheck, ClipboardList, Calendar, CalendarDays, Megaphone, Settings } from 'lucide-react';
 import { SCHOOL_LOGO } from '../lib/logo';
 
-type ModeParam = 'idcard' | 'accessories' | 'result' | 'finance' | 'attendance' | 'routine' | 'exam-routine' | 'session-year' | 'announcements' | 'services';
+type ModeParam = 'idcard' | 'accessories' | 'result' | 'finance' | 'attendance' | 'routine' | 'exam-routine' | 'session-year' | 'announcements' | 'services' | 'scheduler';
 
 function TodaysGreeting() {
   const h = new Date().getHours();
@@ -80,7 +81,8 @@ const Dashboard = () => {
     ...(!isTeacher && !isPendingViewer ? [{ key: 'session-year' as ModeParam, label: 'Session Year', desc: 'Manage academic years & promote students', color: 'amber', icon: CalendarDays }] : []),
     ...(!isTeacher && !isPendingViewer ? [{ key: 'announcements' as ModeParam, label: 'Announcements', desc: 'Create & manage notices', color: 'purple', icon: Megaphone }] : []),
     ...(!isTeacher && !isPendingViewer ? [{ key: 'services' as ModeParam, label: 'Services', desc: 'Manage service types & auto-fee setup', color: 'sky', icon: Settings }] : []),
-  ];
+        ...(isAdmin ? [{ key: 'scheduler' as ModeParam, label: 'Scheduling', desc: 'Dues reminders & cron jobs', color: 'cyan', icon: Clock }] : []),
+      ];
 
   return (
     <Layout>
@@ -230,6 +232,7 @@ const Dashboard = () => {
           {effectiveMode === 'session-year' && <SessionYearSection />}
           {effectiveMode === 'announcements' && <AdminAnnouncements />}
           {effectiveMode === 'services' && <ServiceTypeManager />}
+          {effectiveMode === 'scheduler' && isAdmin && <SchedulerSection />}
         </div>
       )}
 
