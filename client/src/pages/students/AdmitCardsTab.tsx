@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
-import { useSchoolStore } from '../../store';
+import { useSchoolStore, api } from '../../store';
 import { toast } from '../../components/Toast';
 import ClassSelect from '../../components/ClassSelect';
 import { downloadAdmitCardsPDF } from '../../lib/admitCardPdf';
 import { CreditCard, Download, RefreshCw } from 'lucide-react';
 
 export default function AdmitCardsTab() {
-  const { classes, students, fetchClasses, fetchStudents, academicYears, fetchAcademicYears, settings, fetchSettings } = useSchoolStore();
+  const { fetchClasses, fetchStudents, academicYears, fetchAcademicYears, settings, fetchSettings } = useSchoolStore();
   const [cls, setCls] = useState<any>(null);
   const [sessionFilter, setSessionFilter] = useState('');
   const [termFilter, setTermFilter] = useState('1');
@@ -31,10 +31,9 @@ export default function AdmitCardsTab() {
     if (!cls) return;
     setLoading(true);
     try {
-      const res = await useSchoolStore.getState() &&
-        (await import('../../store')).api.get(`/classes/${cls.id}/admit-cards/`, {
-          params: { term: termFilter, session: sessionFilter },
-        });
+      const res = await api.get(`/classes/${cls.id}/admit-cards/`, {
+        params: { term: termFilter, session: sessionFilter },
+      });
       setAdmitData(res.data);
       toast(`Loaded ${res.data.students?.length || 0} students`, 'success');
     } catch (e: any) {

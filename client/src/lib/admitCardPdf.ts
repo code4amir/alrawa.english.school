@@ -1,14 +1,10 @@
-import { TERM_NAMES } from './config';
 import { SCHOOL_LOGO } from './logo';
 
 // Color palette — mirrors reportPdf.ts
 const NAVY = [26, 26, 46] as const;
 const RED = [200, 75, 49] as const;
 const GOLD = [209, 250, 229] as const;
-const GREEN = [45, 106, 79] as const;
 const MUTED = [130, 124, 114] as const;
-
-const TERM_LABEL = (term: string) => TERM_NAMES[term] || (term === 'final' ? 'Final' : `Term ${term}`);
 
 let jsPDFClass: any = null;
 async function getJsPDF() {
@@ -186,7 +182,6 @@ function drawCard(
 
   const colW = infoW - 4;
   const subjW = colW * 0.65;
-  const marksW = colW * 0.35;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(4.5);
   doc.setTextColor(255, 255, 255);
