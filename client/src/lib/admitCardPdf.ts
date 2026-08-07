@@ -365,3 +365,4 @@ export async function downloadAdmitCardsPDF(payload: AdmitCardPayload) {
   const safeName = (payload.className || 'Class').replace(/\s+/g, '_');
   doc.save(`${safeName}_AdmitCards_${payload.termLabel.replace(/\s+/g, '_')}.pdf`);
 }
+// trigger CI redeploy
