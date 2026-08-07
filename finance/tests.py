@@ -287,6 +287,42 @@ class FinanceTests(TestCase):
         tx.refresh_from_db()
         self.assertTrue(tx.is_cancelled)
 
+    def test_cancel_income_notifies_linked_parent(self):
+        parent = User.objects.create_user(
+            email='parent_cancel@test.com', name='Parent', password='testpass123',
+            email_verified=True, role='parent',
+        )
+        ParentStudentLink.objects.create(parent=parent, student=self.student)
+        tx = Transaction.objects.create(
+            transaction_date='2026-06-01', transaction_type='INCOME',
+            amount=500, description='Fee', student=self.student,
+            destination_account=self.bank_ar, fiscal_year=2026, category='Tuition',
+        )
+        res = self.client.post(f'/api/finance/transactions/{tx.id}/cancel/', {'reason': 'Wrong amount'})
+        self.assertEqual(res.status_code, 200)
+        log = NotificationLog.objects.filter(user=parent, event_type='fee_reversal').first()
+        self.assertIsNotNone(log, 'fee_reversal notification should be created for the linked parent')
+        self.assertIn('500.00', log.body)
+        self.assertIn('Wrong amount', log.body)
+
+    def test_cancel_expense_does_not_notify_parents(self):
+        parent = User.objects.create_user(
+            email='parent_expense@test.com', name='Parent', password='testpass123',
+            email_verified=True, role='parent',
+        )
+        ParentStudentLink.objects.create(parent=parent, student=self.student)
+        tx = Transaction.objects.create(
+            transaction_date='2026-06-01', transaction_type='EXPENSE',
+            amount=500, description='Electricity', student=None,
+            source_account=self.bank_ar, fiscal_year=2026,
+        )
+        res = self.client.post(f'/api/finance/transactions/{tx.id}/cancel/', {'reason': 'Typo'})
+        self.assertEqual(res.status_code, 200)
+        self.assertFalse(
+            NotificationLog.objects.filter(user=parent, event_type='fee_reversal').exists(),
+            'Expense reversal should not notify parents',
+        )
+
     def test_cancel_already_cancelled(self):
         tx = Transaction.objects.create(
             transaction_date='2026-06-01', transaction_type='INCOME',

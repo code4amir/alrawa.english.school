@@ -1,3 +1,4 @@
+import logging
 from datetime import date
 from decimal import Decimal
 from rest_framework import viewsets, status
@@ -27,6 +28,8 @@ from .ledger import LedgerActionsMixin
 from ..services.transaction_service import create_transaction
 from core.audit import log_audit, AuditLogMixin
 from parents.services import notify_parents_of_student
+
+logger = logging.getLogger(__name__)
 
 
 class TransactionViewSet(AuditLogMixin, LedgerActionsMixin, PeriodClosedMixin, viewsets.ModelViewSet):
@@ -194,6 +197,19 @@ class TransactionViewSet(AuditLogMixin, LedgerActionsMixin, PeriodClosedMixin, v
                   details={'reason': tx.cancel_reason, 'amount': str(tx.amount),
                            'source_account': tx.source_account.name if tx.source_account else None,
                            'destination_account': tx.destination_account.name if tx.destination_account else None}, request=request)
+
+        # Notify parents when an income/fee payment is reversed so they know it no longer counts.
+        if tx.transaction_type == 'INCOME' and tx.student_id:
+            try:
+                notify_parents_of_student(
+                    tx.student_id, 'fee_reversal',
+                    f'Payment reversed for {tx.student.name}',
+                    f'{tx.category or "Fee"} {tx.amount:.2f} was reversed/cancelled (receipt {tx.reference_id or ""}). Reason: {tx.cancel_reason}',
+                    url='/#/parent/fees/' + str(tx.student_id),
+                )
+            except Exception:
+                logger.exception('Failed to notify parents of fee reversal')
+
         return Response(TransactionSerializer(tx).data)
 
     @action(detail=False, methods=['get'])

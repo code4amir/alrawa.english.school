@@ -294,6 +294,11 @@ export default function ParentDashboard() {
                     Dues Reminder
                   </span>
                 )}
+                {n.eventType === 'fee_reversal' && (
+                  <span className="inline-block text-[10px] font-semibold text-amber-700 bg-amber-50 rounded-full px-2 py-0.5 mt-1">
+                    Payment Reversed
+                  </span>
+                )}
               </div>
             ))}
           </div>
