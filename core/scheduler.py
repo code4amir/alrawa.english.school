@@ -220,6 +220,17 @@ def _resolve_python() -> str:
     return sys.executable
 
 
+def _clean_env() -> dict[str, str]:
+    """Environment for spawned management commands.
+
+    The WSGI worker exports a PYTHONHOME/PYTHONPATH that points at the uWSGI
+    runtime, which makes a freshly spawned venv python fail with
+    "No module named 'encodings'". Strip all PYTHON* overrides so the venv
+    python resolves its own stdlib (parity with the cron daemon's clean env).
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}
+
+
 def run_command_now(command: str, *args: str, timeout: int = 600) -> dict[str, Any]:
     """Run a management command synchronously and return {ok, output}.
 
@@ -236,6 +247,7 @@ def run_command_now(command: str, *args: str, timeout: int = 600) -> dict[str, A
     try:
         proc = subprocess.run(
             argv, capture_output=True, text=True, timeout=timeout, cwd=BASE_DIR,
+            env=_clean_env(),
         )
         output = (proc.stdout or "") + (proc.stderr or "")
         return {
