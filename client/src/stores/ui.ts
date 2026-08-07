@@ -23,7 +23,7 @@ if (useDarkMode.getState().dark) {
 }
 
 type MainMode = null | 'idcard' | 'accessories' | 'result' | 'finance' | 'attendance' | 'routine' | 'exam-routine' | 'session-year' | 'announcements' | 'services' | 'scheduler';
-type IdSubMode = 'student' | 'teacher' | 'staff';
+type IdSubMode = 'student' | 'teacher' | 'staff' | 'admit';
 
 interface UIState {
   activeMode: MainMode;

@@ -1,6 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from . import views
+from . import views_admit_card
 
 router = DefaultRouter()
 router.register(r'classes', views.ClassViewSet, basename='class')
@@ -21,6 +22,8 @@ urlpatterns = [
     path('classes/<uuid:class_id>/subjects/',
          views.SubjectViewSet.as_view({'get': 'list', 'post': 'create'}),
          name='class-subjects'),
+    path('classes/<uuid:class_id>/admit-cards/', views_admit_card.class_admit_cards,
+         name='class-admit-cards'),
 ]
 
 
