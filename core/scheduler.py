@@ -195,17 +195,43 @@ def delete_job(job_id: int) -> None:
 # ---------------------------------------------------------------------------
 # "Run now" — execute a Django management command in-process at this host
 # ---------------------------------------------------------------------------
+def _resolve_python() -> str:
+    """Return the python interpreter to spawn for 'run now' commands.
+
+    Inside a WSGI worker ``sys.executable`` is the uWSGI binary, not a
+    python interpreter, so it cannot be used to run ``manage.py``. The
+    cron job on Alwaysdata runs with ``~/schoolenv/bin/python`` — the venv
+    that sits next to the project checkout — so we prefer that layout,
+    then ``VIRTUAL_ENV``, and only fall back to ``sys.executable``.
+    """
+    # 1) venv next to the project checkout (Alwaysdata: ~/schoolenv)
+    candidate = BASE_DIR.parent / "schoolenv" / ("Scripts" if os.name == "nt" else "bin") / (
+        "python.exe" if os.name == "nt" else "python"
+    )
+    if candidate.exists():
+        return str(candidate)
+    # 2) active virtualenv
+    venv = os.environ.get("VIRTUAL_ENV")
+    if venv:
+        return str(
+            Path(venv) / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        )
+    # 3) fallback (manage.py shell / local dev)
+    return sys.executable
+
+
 def run_command_now(command: str, *args: str, timeout: int = 600) -> dict[str, Any]:
     """Run a management command synchronously and return {ok, output}.
 
     `command` is a management-command name (e.g. 'send_due_reminders'); we run
-    `{BASE_DIR}/manage.py <command> [--dry-run ...]`. Uses the current venv's
-    python for parity with the cron invocation.
+    `{BASE_DIR}/manage.py <command> [--dry-run ...]`. Uses the venv python that
+    sits next to the checkout (same interpreter the cron job uses), so the
+    subprocess shares Django + deps with the scheduler.
     """
     if command.endswith(".py") or " " in command:
         argv = [command, *args]
     else:
-        argv = [sys.executable, str(BASE_DIR / "manage.py"), command, *args]
+        argv = [_resolve_python(), str(BASE_DIR / "manage.py"), command, *args]
     logger.info("scheduler.run_command_now: %s", " ".join(argv))
     try:
         proc = subprocess.run(
