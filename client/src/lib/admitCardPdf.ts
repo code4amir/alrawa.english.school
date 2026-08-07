@@ -96,7 +96,7 @@ function drawCard(
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
   doc.setTextColor(...NAVY);
-  doc.text(settings?.school_name || 'AL RAW English School', x + M + logoW + 3, cy + 3.5);
+  doc.text(settings?.school_name || 'AL RAWA English School', x + M + logoW + 3, cy + 3.5);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(6);
   doc.setTextColor(...MUTED);
