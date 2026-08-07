@@ -3,7 +3,6 @@ import { SCHOOL_LOGO } from './logo';
 // Color palette — modern navy / gold
 const NAVY = [26, 26, 46] as const;
 const RED = [200, 75, 49] as const;
-const GOLD = [209, 250, 229] as const;
 const MUTED = [130, 124, 114] as const;
 
 let jsPDFClass: any = null;
@@ -240,8 +239,8 @@ function drawCard(
   doc.setFontSize(4.5);
   doc.setTextColor(...MUTED);
   const noteLines = doc.splitTextToSize(coordinatorSignatureNote, infoW - 4);
-  noteLines.forEach((l: string, i: number) => {
-    doc.text(l, x + M + 2, sigY + 2 + (i + 1) * 2.2);
+  noteLines.forEach((l: string, idx: number) => {
+    doc.text(l, x + M + 2, sigY + 2 + (idx + 1) * 2.2);
   });
 
   return y + h;
@@ -257,7 +256,6 @@ export async function downloadAdmitCardsPDF(payload: AdmitCardPayload) {
 
   const W = 210; // A4 width
   const PAGE_M = 10; // page margin
-  const COLS = 1;
   const ROWS = 4;
   const GAP = 6;
   const cardW = W - PAGE_M * 2; // full width
@@ -284,7 +282,7 @@ export async function downloadAdmitCardsPDF(payload: AdmitCardPayload) {
   let y = PAGE_M;
   let row = 0;
 
-  payload.students.forEach((s, i) => {
+  payload.students.forEach((s) => {
     // Start new page if we've filled the current page
     if (row >= ROWS) {
       doc.addPage();
