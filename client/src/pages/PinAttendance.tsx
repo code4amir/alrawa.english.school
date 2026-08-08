@@ -919,6 +919,15 @@ export default function PinAttendance() {
                                       </tr>
                                     ))}
                                   </tbody>
+                                  <tfoot>
+                                    <tr className="border-t-2 border-school-accent bg-school-accent/10 font-bold">
+                                      <td className="py-1.5 text-school-accent">Total</td>
+                                      <td className="py-1.5 text-school-accent">{allClassesReport.classes.reduce((acc: number, c: any) => acc + (Number(c.total_students) || 0), 0)}</td>
+                                      <td className="py-1.5 text-green-600">{allClassesReport.classes.reduce((acc: number, c: any) => acc + (Number(c.present) || 0), 0)}</td>
+                                      <td className="py-1.5 text-red-600">{allClassesReport.classes.reduce((acc: number, c: any) => acc + (Number(c.absent) || 0), 0)}</td>
+                                      <td className="py-1.5 text-school-muted">{allClassesReport.classes.reduce((acc: number, c: any) => acc + (Number(c.unmarked) || 0), 0)}</td>
+                                    </tr>
+                                  </tfoot>
                                 </table>
                               </div>
                             )}
