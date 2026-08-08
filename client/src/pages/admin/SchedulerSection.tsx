@@ -100,7 +100,7 @@ export default function SchedulerSection() {
     setRunning(job.id);
     setRunOutput(null);
     try {
-      const res = await api.post(`/scheduler/${job.id}/run/`);
+      const res = await api.post(`/scheduler/${job.id}/run/`, undefined, { timeout: 300000 });
       const d = res.data || {};
       const output = d.output || d.stdout || '';
       setRunOutput({ run: output, ok: d.ok });
@@ -116,7 +116,7 @@ export default function SchedulerSection() {
     setRunning('dry');
     setRunOutput(null);
     try {
-      const res = await api.post('/scheduler/dry-run/');
+      const res = await api.post('/scheduler/dry-run/', undefined, { timeout: 300000 });
       const d = res.data || {};
       const output = d.output || '';
       setRunOutput({ run: output, ok: d.ok });
