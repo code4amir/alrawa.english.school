@@ -893,10 +893,17 @@ export default function PinAttendance() {
                                                           const jsPDF = (await import('jspdf')).default;
                                                           const { autoTable } = await import('jspdf-autotable');
                                                           const doc = new jsPDF(); doc.text(`All Classes Daily Report - ${allClassesReport.date}`, 14, 15);
-                                                          const head = [['Class', 'Total', 'Present', 'Absent', 'Unmarked']];
-                                                          const body = allClassesReport.classes.map((c: any) => [c.class.name, c.total_students, c.present, c.absent, c.unmarked]);
-                                                          autoTable(doc, { head, body, startY: 20 });
-                                                          doc.save(`all_classes_${allClassesReport.date}.pdf`);
+                                                                                                                    const head = [['Class', 'Total', 'Present', 'Absent', 'Unmarked']];
+                                                                                                                    const body = allClassesReport.classes.map((c: any) => [c.class.name, c.total_students, c.present, c.absent, c.unmarked]);
+                                                                                                                    const tot = allClassesReport.classes.reduce((acc: any, c: any) => ({ total: acc.total + (Number(c.total_students) || 0), present: acc.present + (Number(c.present) || 0), absent: acc.absent + (Number(c.absent) || 0), unmarked: acc.unmarked + (Number(c.unmarked) || 0) }), { total: 0, present: 0, absent: 0, unmarked: 0 });
+                                                                                                                    autoTable(doc, {
+                                                                                                                                                                              head,
+                                                                                                                                                                              body,
+                                                                                                                      startY: 20,
+                                                                                                                      foot: [['Total', tot.total, tot.present, tot.absent, tot.unmarked]],
+                                                                                                                      footStyles: { fillColor: [37, 99, 235], textColor: 255, fontStyle: 'bold' },
+                                                                                                                    });
+                                                                                                                    doc.save(`all_classes_${allClassesReport.date}.pdf`);
                                                         }} className="px-2 py-1 text-[10px] font-bold bg-school-accent text-white rounded-md shadow-sm">PDF</button>
                                 </div>
                                 <table className="w-full text-xs text-left">
