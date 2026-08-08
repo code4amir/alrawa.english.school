@@ -1312,10 +1312,12 @@ class DuesReminderTests(TestCase):
         from django.core.management import call_command
         out = StringIO()
         call_command('send_due_reminders', dry_run=True, stdout=out)
-        # The defaulter student is in the current-month window → processed, but
-        # dry-run must NOT create notifications.
+        # The defaulter student is in the current-month window → processed; the
+        # dry-run reports how many parents *would* be notified (their linked
+        # parent account) without creating any notifications.
         self.assertIn('Processed: 1', out.getvalue())
-        self.assertNotIn('Notified: 1', out.getvalue())
+        self.assertIn('Notified: 1', out.getvalue())
+        self.assertIn('-> 1 parent(s)', out.getvalue())
         self.assertEqual(NotificationLog.objects.filter(event_type='dues_reminder').count(), 0)
 
     def test_command_sends_to_linked_parent(self):

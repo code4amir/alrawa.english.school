@@ -23,7 +23,7 @@ class Command(BaseCommand):
         # services). Deferring until here lets the app fully load first.
         from django.utils import timezone
         from finance.services.defaulter_service import DefaulterService
-        from parents.services import notify_parents_dues, compose_dues_body
+        from parents.services import count_linked_parents, notify_parents_dues, compose_dues_body
 
         now = timezone.now()
         month_to = f"{now.year}-{now.month:02d}"
@@ -48,7 +48,11 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
             processed += 1
-            n = 0 if options['dry_run'] else notify_parents_dues(student.id, fees, options['note'] or '')
+            if options['dry_run']:
+                # Report how many parents *would* be notified, without sending.
+                n = count_linked_parents(student.id)
+            else:
+                n = notify_parents_dues(student.id, fees, options['note'] or '')
             notified += n
             per_student.append(f"  {student.name} -> {n} parent(s)")
 

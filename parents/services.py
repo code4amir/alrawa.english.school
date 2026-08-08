@@ -49,6 +49,20 @@ def notify(user, title, body, url=None, icon=None):
     return sent
 
 
+def count_linked_parents(student_id):
+    """Number of parent accounts linked to a student (no side effects).
+
+    Used by the dues-reminder dry-run to report how many parents *would*
+    be notified, without sending anything.
+    """
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    return User.objects.filter(
+        role='parent',
+        parent_links__student_id=student_id,
+    ).distinct().count()
+
+
 def notify_parents_of_student(student_id, event_type, title, body, url=None):
     from django.contrib.auth import get_user_model
     User = get_user_model()
