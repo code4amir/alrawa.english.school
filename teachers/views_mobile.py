@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 
 from django.contrib.auth.hashers import make_password, check_password
 from django.db import transaction as db_transaction
@@ -14,6 +15,7 @@ from .models import Teacher, ClassTeacher
 from students.models import Student
 from core.models import SchoolClass, SchoolSetting
 from attendance.models import AttendanceRecord, Holiday
+from attendance.serializers import HolidaySerializer, BulkHolidaySerializer
 from core.audit import log_audit
 
 logger = logging.getLogger(__name__)
@@ -56,6 +58,19 @@ def _get_holiday_dates(year=None, month=None):
     return set(qs.values_list('date', flat=True))
 
 
+def _admin_or_monitor(teacher):
+    """True when the PIN-authenticated teacher's linked account is admin/monitor.
+
+    Admin and monitor have full academic authority (browser app parity): they can
+    submit attendance and view reports for ANY class without being assigned as a
+    class teacher.
+    """
+    user = getattr(teacher, 'user', None)
+    if user is None:
+        return False
+    return bool(getattr(user, 'is_superuser', False)) or user.role in ('admin', 'monitor')
+
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 @throttle_classes([PinLoginRateThrottle])
@@ -82,11 +97,21 @@ def pin_login(request):
 
     token = _make_pin_token(teacher)
 
-    classes = ClassTeacher.objects.filter(
-        teacher=teacher,
-    ).select_related('school_class').values(
-        'school_class__id', 'school_class__name', 'school_class__order',
-    ).order_by('school_class__order', 'school_class__name')
+    if _admin_or_monitor(teacher):
+        # Admin/monitor: full academic authority — no class-teacher assignment needed.
+        classes = SchoolClass.objects.all().order_by('order', 'name')
+    else:
+        classes = ClassTeacher.objects.filter(
+            teacher=teacher,
+        ).select_related('school_class').values(
+            'school_class__id', 'school_class__name', 'school_class__order',
+        ).order_by('school_class__order', 'school_class__name')
+
+    def _class_pair(c):
+        """Extract (id, name) from either a values() dict or a SchoolClass model."""
+        if isinstance(c, dict):
+            return str(c.get('school_class__id') or c.get('id')), c.get('school_class__name') or c.get('name')
+        return str(c.id), c.name
 
     return Response({
         'token': token,
@@ -94,10 +119,12 @@ def pin_login(request):
             'id': str(teacher.id),
             'name': teacher.name,
             'designation': teacher.designation,
+            'role': getattr(getattr(teacher, 'user', None), 'role', None),
         },
         'classes': [
-            {'id': str(c['school_class__id']), 'name': c['school_class__name']}
+            {'id': cid, 'name': cname}
             for c in classes
+            for cid, cname in [_class_pair(c)]
         ],
     })
 
@@ -156,7 +183,7 @@ def mobile_students(request):
     if not class_id:
         return Response({'error': 'class_id query param is required'}, status=400)
 
-    if not ClassTeacher.objects.filter(teacher=teacher, school_class_id=class_id).exists():
+    if not _admin_or_monitor(teacher) and not ClassTeacher.objects.filter(teacher=teacher, school_class_id=class_id).exists():
         return Response({'error': 'You are not assigned to this class'}, status=403)
 
     try:
@@ -227,7 +254,7 @@ def mobile_batch_attendance(request):
     except SchoolClass.DoesNotExist:
         return Response({'error': 'School class not found'}, status=404)
 
-    if not ClassTeacher.objects.filter(teacher=teacher, school_class=school_class).exists():
+    if not _admin_or_monitor(teacher) and not ClassTeacher.objects.filter(teacher=teacher, school_class=school_class).exists():
         return Response({'error': 'You are not assigned to this class'}, status=403)
 
     # Validate students
@@ -290,7 +317,7 @@ def mobile_class_daily_report(request):
     except SchoolClass.DoesNotExist:
         return Response({'error': 'Class not found'}, status=404)
 
-    if not ClassTeacher.objects.filter(teacher=teacher, school_class=school_class).exists():
+    if not _admin_or_monitor(teacher) and not ClassTeacher.objects.filter(teacher=teacher, school_class=school_class).exists():
         return Response({'error': 'You are not assigned to this class'}, status=403)
 
     students = list(
@@ -415,7 +442,7 @@ def mobile_monthly_report(request):
     except SchoolClass.DoesNotExist:
         return Response({'error': 'Class not found'}, status=404)
 
-    if not ClassTeacher.objects.filter(teacher=teacher, school_class=school_class).exists():
+    if not _admin_or_monitor(teacher) and not ClassTeacher.objects.filter(teacher=teacher, school_class=school_class).exists():
         return Response({'error': 'You are not assigned to this class'}, status=403)
 
     import calendar as _cal
@@ -478,3 +505,128 @@ def mobile_monthly_report(request):
         'students': [{'id': str(s['id']), 'name': s['name'], 'roll': s['roll'] or ''} for s in students],
         'days': days,
     })
+
+
+@api_view(['GET'])
+@authentication_classes([PinAuthentication])
+@permission_classes([AllowAny])
+def mobile_all_classes_daily(request):
+    """All-classes daily summary for a date (browser-app parity for PIN UI)."""
+    if not request.user.is_authenticated:
+        return Response({'error': 'Authentication required'}, status=401)
+
+    date_param = request.query_params.get('date')
+    if not date_param:
+        return Response({'error': 'date query param is required'}, status=400)
+
+    summaries = []
+    for klass in SchoolClass.objects.all().order_by('order', 'name'):
+        total = Student.objects.filter(
+            school_class=klass, deleted_at__isnull=True,
+        ).count()
+        qs = AttendanceRecord.objects.filter(school_class=klass, date=date_param)
+        present = qs.filter(status='present').count()
+        absent = qs.filter(status='absent').count()
+        summaries.append({
+            'class': {'id': str(klass.id), 'name': klass.name},
+            'total_students': total,
+            'present': present,
+            'absent': absent,
+            'unmarked': max(total - present - absent, 0),
+        })
+
+    return Response({'date': date_param, 'classes': summaries})
+
+
+@api_view(['GET', 'POST'])
+@authentication_classes([PinAuthentication])
+@permission_classes([AllowAny])
+def mobile_holidays(request):
+    """List holidays (any PIN teacher) / create one (admin or monitor only)."""
+    if not request.user.is_authenticated:
+        return Response({'error': 'Authentication required'}, status=401)
+    teacher = request.user
+
+    if request.method == 'GET':
+        holidays = Holiday.objects.all().order_by('-date')
+        return Response({
+            'holidays': [
+                {'id': str(h.id), 'date': h.date.isoformat(), 'name': h.name, 'type': h.type}
+                for h in holidays
+            ],
+        })
+
+    if not _admin_or_monitor(teacher):
+        return Response({'error': 'Admin or monitor access required'}, status=403)
+
+    serializer = HolidaySerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    instance = serializer.save()
+    log_audit('create', 'holiday', entity_id=str(instance.pk), request=request,
+              details={'via': 'pin_auth', 'teacher': teacher.name})
+    return Response({
+        'id': str(instance.id), 'date': instance.date.isoformat(),
+        'name': instance.name, 'type': instance.type,
+    }, status=201)
+
+
+@api_view(['POST'])
+@authentication_classes([PinAuthentication])
+@permission_classes([AllowAny])
+def mobile_holidays_bulk(request):
+    """Create a range of consecutive holiday dates (long holiday) — admin/monitor only."""
+    if not request.user.is_authenticated:
+        return Response({'error': 'Authentication required'}, status=401)
+    teacher = request.user
+
+    if not _admin_or_monitor(teacher):
+        return Response({'error': 'Admin or monitor access required'}, status=403)
+
+    serializer = BulkHolidaySerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+
+    start = data['start_date']
+    end = data['end_date']
+    name = data['name']
+    htype = data['type']
+
+    existing = set(
+        Holiday.objects.filter(date__gte=start, date__lte=end)
+        .values_list('date', flat=True)
+    )
+
+    created = []
+    for i in range((end - start).days + 1):
+        d = start + timedelta(days=i)
+        if d in existing:
+            continue
+        Holiday.objects.create(date=d, name=name, type=htype)
+        created.append(d.isoformat())
+
+    log_audit('bulk_create', 'holiday', details={
+        'start': start.isoformat(), 'end': end.isoformat(),
+        'count': len(created), 'via': 'pin_auth', 'teacher': teacher.name,
+    }, request=request)
+
+    return Response({'created': created, 'skipped': len(existing)})
+
+
+@api_view(['DELETE'])
+@authentication_classes([PinAuthentication])
+@permission_classes([AllowAny])
+def mobile_holiday_delete(request, holiday_id):
+    """Delete a holiday — admin or monitor only."""
+    if not request.user.is_authenticated:
+        return Response({'error': 'Authentication required'}, status=401)
+    teacher = request.user
+
+    if not _admin_or_monitor(teacher):
+        return Response({'error': 'Admin or monitor access required'}, status=403)
+
+    deleted, _ = Holiday.objects.filter(id=holiday_id).delete()
+    if not deleted:
+        return Response({'error': 'Holiday not found'}, status=404)
+    log_audit('delete', 'holiday', entity_id=str(holiday_id), request=request,
+              details={'via': 'pin_auth', 'teacher': teacher.name})
+    return Response({'status': 'ok'})

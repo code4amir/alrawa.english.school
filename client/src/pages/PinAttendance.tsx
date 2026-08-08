@@ -14,6 +14,7 @@ interface Teacher { id: string; name: string; }
 interface ClassInfo { id: string; name: string; }
 interface Student { id: string; name: string; roll: string; }
 interface QueuedRecord { school_class: string; date: string; term: string; session: string; records: Record<string, string>; timestamp: number; }
+interface Holiday { id: string; date: string; name: string; type: string; }
 
 const STATUS_NAMES: Record<string, string> = { present: 'Present', absent: 'Absent' };
 
@@ -47,6 +48,17 @@ async function apiPost(path: string, token: string, body: unknown) {
   return res.json();
 }
 
+async function apiDelete(path: string, token: string) {
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}${path}`, { method: 'DELETE', headers });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as any).error || `DELETE ${path} failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 function loadQueue(): QueuedRecord[] {
   try { return JSON.parse(localStorage.getItem(LS_QUEUE_KEY) || '[]'); } catch { return []; }
 }
@@ -68,7 +80,8 @@ export default function PinAttendance() {
   const [pinError, setPinError] = useState('');
   const [pinLoading, setPinLoading] = useState(false);
   const [token, setToken] = useState('');
-  const [classes, setClasses] = useState<ClassInfo[]>([]);
+    const [teacherRole, setTeacherRole] = useState<string | null>(null);
+    const [classes, setClasses] = useState<ClassInfo[]>([]);
   const [classId, setClassId] = useState('');
   const [date, setDate] = useState(todayStr());
   const [term, setTerm] = useState('1');
@@ -79,14 +92,22 @@ export default function PinAttendance() {
   const [saving, setSaving] = useState(false);
   const [offline, setOffline] = useState(!navigator.onLine);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [tab, setTab] = useState<'daily' | 'report'>('daily');
-  const [rptTab, setRptTab] = useState<'daily' | 'monthly'>('daily');
-  const [dailyDate, setDailyDate] = useState(() => todayStr());
-  const [dailyReport, setDailyReport] = useState<any>(null);
-  const [monthYear, setMonthYear] = useState({ year: new Date().getFullYear(), month: new Date().getMonth() + 1 });
-  const [monthlyReport, setMonthlyReport] = useState<any>(null);
-  const [rptLoading, setRptLoading] = useState(false);
-  const [rptError, setRptError] = useState('');
+    const [tab, setTab] = useState<'daily' | 'report' | 'holidays'>('daily');
+    const [rptTab, setRptTab] = useState<'daily' | 'monthly'>('daily');
+    const [rptSub, setRptSub] = useState<'classwise' | 'allclasses'>('classwise');
+    const [dailyDate, setDailyDate] = useState(() => todayStr());
+    const [dailyReport, setDailyReport] = useState<any>(null);
+    const [allClassesReport, setAllClassesReport] = useState<any>(null);
+    const [monthYear, setMonthYear] = useState({ year: new Date().getFullYear(), month: new Date().getMonth() + 1 });
+    const [monthlyReport, setMonthlyReport] = useState<any>(null);
+    const [rptLoading, setRptLoading] = useState(false);
+    const [rptError, setRptError] = useState('');
+    const [holidays, setHolidays] = useState<Holiday[]>([]);
+    const [holidayLoading, setHolidayLoading] = useState(false);
+    const [holidayError, setHolidayError] = useState('');
+    const [hForm, setHForm] = useState({ date: todayStr(), name: '', type: 'public' });
+    const [hBulkForm, setHBulkForm] = useState({ start_date: todayStr(), end_date: todayStr(), name: '', type: 'public' });
+    const [holidaySaving, setHolidaySaving] = useState(false);
 
   function monthName(m: number) {
     return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m - 1] || '';
@@ -96,12 +117,13 @@ export default function PinAttendance() {
 
   useEffect(() => {
     const savedToken = localStorage.getItem(LS_TOKEN_KEY);
-    const savedTeacher = localStorage.getItem(LS_TEACHER_KEY);
-    const savedClasses = localStorage.getItem('pin_classes');
-    if (savedToken && savedTeacher) {
-      setToken(savedToken);
-      setSelectedTeacher(JSON.parse(savedTeacher));
-      if (savedClasses) {
+        const savedTeacher = localStorage.getItem(LS_TEACHER_KEY);
+        const savedClasses = localStorage.getItem('pin_classes');
+        if (savedToken && savedTeacher) {
+          setToken(savedToken);
+          setSelectedTeacher(JSON.parse(savedTeacher));
+          try { setTeacherRole(localStorage.getItem('pin_role')); } catch { /* ignore */ }
+          if (savedClasses) {
         try {
           setClasses(JSON.parse(savedClasses));
         } catch { /* ignore */ }
@@ -184,15 +206,18 @@ export default function PinAttendance() {
     setPinError('');
     try {
       const data = await apiPost('/m/auth/pin/', '', { teacher_id: selectedTeacher.id, pin });
-      const jwt = data.access || data.token;
-      setTokens(jwt, null);
-      setToken(jwt);
-      const mappedClasses = (data.classes || []).map((c: any) => ({ id: c.id, name: c.name }));
-      setClasses(mappedClasses);
-      localStorage.setItem(LS_TOKEN_KEY, jwt);
-      localStorage.setItem(LS_TEACHER_KEY, JSON.stringify(selectedTeacher));
-      localStorage.setItem('pin_classes', JSON.stringify(mappedClasses));
-      setScreen('classes');
+            const jwt = data.access || data.token;
+            setTokens(jwt, null);
+            setToken(jwt);
+            const role = data.teacher?.role || null;
+            setTeacherRole(role);
+            const mappedClasses = (data.classes || []).map((c: any) => ({ id: c.id, name: c.name }));
+            setClasses(mappedClasses);
+            localStorage.setItem(LS_TOKEN_KEY, jwt);
+            localStorage.setItem(LS_TEACHER_KEY, JSON.stringify(selectedTeacher));
+            localStorage.setItem('pin_role', role || '');
+            localStorage.setItem('pin_classes', JSON.stringify(mappedClasses));
+            setScreen('classes');
     } catch (e: any) {
       setPinError(e.message || 'Invalid PIN');
     }
@@ -205,18 +230,20 @@ export default function PinAttendance() {
   }
 
   function logout() {
-    localStorage.removeItem(LS_TOKEN_KEY);
-    localStorage.removeItem(LS_TEACHER_KEY);
-    localStorage.removeItem('pin_classes');
-    setToken('');
-    setSelectedTeacher(null);
-    setClasses([]);
-    setClassId('');
-    setDate(todayStr());
-    setStudents([]);
-    setRecords({});
-    setScreen('teachers');
-  }
+      localStorage.removeItem(LS_TOKEN_KEY);
+      localStorage.removeItem(LS_TEACHER_KEY);
+      localStorage.removeItem('pin_role');
+      localStorage.removeItem('pin_classes');
+      setToken('');
+      setTeacherRole(null);
+      setSelectedTeacher(null);
+      setClasses([]);
+      setClassId('');
+      setDate(todayStr());
+      setStudents([]);
+      setRecords({});
+      setScreen('teachers');
+    }
 
   useEffect(() => {
     if (!classId || !token) return;
@@ -366,6 +393,83 @@ export default function PinAttendance() {
     }
     setRptLoading(false);
   }
+
+  async function loadAllClassesReport() {
+    if (!dailyDate || !token) return;
+    setRptLoading(true);
+    setRptError('');
+    try {
+      const data = await apiGet('/m/attendance/all-classes-daily/', token, { date: dailyDate });
+      setAllClassesReport(data);
+    } catch (e: any) {
+      setRptError(e.message || 'Failed to load report');
+      setAllClassesReport(null);
+    }
+    setRptLoading(false);
+  }
+
+  async function loadHolidays() {
+    if (!token) return;
+    setHolidayLoading(true);
+    setHolidayError('');
+    try {
+      const data = await apiGet('/m/holidays/', token);
+      setHolidays(data.holidays || []);
+    } catch (e: any) {
+      setHolidayError(e.message || 'Failed to load holidays');
+    }
+    setHolidayLoading(false);
+  }
+
+  async function addHoliday() {
+    if (!hForm.date || !hForm.name.trim() || !token) return;
+    setHolidaySaving(true);
+    setHolidayError('');
+    try {
+      await apiPost('/m/holidays/', token, { date: hForm.date, name: hForm.name.trim(), type: hForm.type });
+      setHForm({ date: todayStr(), name: '', type: 'public' });
+      await loadHolidays();
+      safeToast('Holiday added', 'success');
+    } catch (e: any) {
+      setHolidayError(e.message || 'Failed to add holiday');
+    }
+    setHolidaySaving(false);
+  }
+
+  async function addHolidayRange() {
+    if (!hBulkForm.start_date || !hBulkForm.end_date || !hBulkForm.name.trim() || !token) return;
+    setHolidaySaving(true);
+    setHolidayError('');
+    try {
+      const data = await apiPost('/m/holidays/bulk/', token, { ...hBulkForm, name: hBulkForm.name.trim() });
+      await loadHolidays();
+      safeToast(`Added ${data.created?.length || 0} holiday(s)`, 'success');
+    } catch (e: any) {
+      setHolidayError(e.message || 'Failed to add holidays');
+    }
+    setHolidaySaving(false);
+  }
+
+  async function deleteHoliday(id: string) {
+    if (!token) return;
+    setHolidayError('');
+    try {
+      await apiDelete(`/m/holidays/${id}/`, token);
+      setHolidays((prev) => prev.filter((h) => h.id !== id));
+      safeToast('Holiday deleted', 'success');
+    } catch (e: any) {
+      setHolidayError(e.message || 'Failed to delete holiday');
+    }
+  }
+
+  const canManageHolidays = teacherRole === 'admin' || teacherRole === 'monitor';
+
+  useEffect(() => {
+    if (tab === 'holidays' && token && holidays.length === 0 && !holidayLoading) {
+      loadHolidays();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, token]);
 
   const markedCount = Object.values(records).filter(s => s !== 'unmarked').length;
   const queueCount = loadQueue().length;
@@ -564,23 +668,31 @@ export default function PinAttendance() {
           )}
         </div>
         <div className="flex px-4 pb-2 gap-1">
-          <button
-            onClick={() => setTab('daily')}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors ${
-              tab === 'daily' ? 'bg-school-accent text-white shadow-sm' : 'bg-school-paper dark:bg-[#2a2a3e] text-school-muted'
-            }`}
-          >
-            Daily
-          </button>
-          <button
-            onClick={() => setTab('report')}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors ${
-              tab === 'report' ? 'bg-school-accent text-white shadow-sm' : 'bg-school-paper dark:bg-[#2a2a3e] text-school-muted'
-            }`}
-          >
-            Range Report
-          </button>
-        </div>
+                  <button
+                    onClick={() => setTab('daily')}
+                    className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors ${
+                      tab === 'daily' ? 'bg-school-accent text-white shadow-sm' : 'bg-school-paper dark:bg-[#2a2a3e] text-school-muted'
+                    }`}
+                  >
+                    Daily
+                  </button>
+                  <button
+                    onClick={() => setTab('report')}
+                    className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors ${
+                      tab === 'report' ? 'bg-school-accent text-white shadow-sm' : 'bg-school-paper dark:bg-[#2a2a3e] text-school-muted'
+                    }`}
+                  >
+                    Range Report
+                  </button>
+                  <button
+                    onClick={() => setTab('holidays')}
+                    className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors ${
+                      tab === 'holidays' ? 'bg-school-accent text-white shadow-sm' : 'bg-school-paper dark:bg-[#2a2a3e] text-school-muted'
+                    }`}
+                  >
+                    Holidays
+                  </button>
+                </div>
       </div>
 
       <div className="flex-1 px-4 pt-3 pb-6 overflow-y-auto space-y-3 max-w-xl mx-auto w-full">
@@ -692,7 +804,68 @@ export default function PinAttendance() {
               </button>
             )}
           </>
-        ) : (
+                  ) : tab === 'holidays' ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-school-muted">School Holidays</span>
+                        <button onClick={loadHolidays} disabled={holidayLoading} className="px-3 py-1.5 border border-school-border rounded-xl text-xs font-semibold text-school-primary dark:text-[#e0e0e8] hover:bg-school-paper dark:hover:bg-white/5 transition-colors">
+                          {holidayLoading ? '...' : 'Refresh'}
+                        </button>
+                      </div>
+                      {holidayError && <div className="text-red-500 text-sm">{holidayError}</div>}
+                      {canManageHolidays && (
+                        <div className="bg-white dark:bg-[#1a1a2e] rounded-2xl border border-school-border p-3 space-y-3 shadow-sm">
+                          <div className="text-xs font-bold text-school-primary dark:text-[#e0e0e8]">Add Holiday</div>
+                          <div className="flex gap-2">
+                            <input type="date" value={hForm.date} onChange={e => setHForm(p => ({ ...p, date: e.target.value }))} className="flex-1 px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none bg-white dark:bg-[#1a1a2e] text-school-primary" />
+                            <select value={hForm.type} onChange={e => setHForm(p => ({ ...p, type: e.target.value }))} className="w-28 px-3 py-2 border border-school-border rounded-xl text-sm bg-white dark:bg-[#1a1a2e] text-school-primary">
+                              <option value="public">Public</option>
+                              <option value="school">School Event</option>
+                            </select>
+                          </div>
+                          <input type="text" value={hForm.name} onChange={e => setHForm(p => ({ ...p, name: e.target.value }))} placeholder="Holiday name (e.g. Eid Day)" className="w-full px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none bg-white dark:bg-[#1a1a2e] text-school-primary" />
+                          <button onClick={addHoliday} disabled={holidaySaving || !hForm.date || !hForm.name.trim()} className="w-full px-4 py-2 bg-school-accent text-white rounded-xl text-sm font-bold disabled:opacity-50 shadow-sm">
+                            {holidaySaving ? '...' : 'Add Single Day'}
+                          </button>
+                          <div className="border-t border-school-border/50 pt-3 text-xs font-bold text-school-muted">Long Holiday (range)</div>
+                          <div className="flex gap-2">
+                            <input type="date" value={hBulkForm.start_date} onChange={e => setHBulkForm(p => ({ ...p, start_date: e.target.value }))} className="flex-1 px-3 py-2 border border-school-border rounded-xl text-sm bg-white dark:bg-[#1a1a2e] text-school-primary" />
+                            <input type="date" value={hBulkForm.end_date} onChange={e => setHBulkForm(p => ({ ...p, end_date: e.target.value }))} className="flex-1 px-3 py-2 border border-school-border rounded-xl text-sm bg-white dark:bg-[#1a1a2e] text-school-primary" />
+                          </div>
+                          <input type="text" value={hBulkForm.name} onChange={e => setHBulkForm(p => ({ ...p, name: e.target.value }))} placeholder="Name (all dates)" className="w-full px-3 py-2 border border-school-border rounded-xl text-sm bg-white dark:bg-[#1a1a2e] text-school-primary" />
+                          <button onClick={addHolidayRange} disabled={holidaySaving || !hBulkForm.start_date || !hBulkForm.end_date || !hBulkForm.name.trim()} className="w-full px-4 py-2 bg-school-secondary text-white rounded-xl text-sm font-bold disabled:opacity-50 shadow-sm">
+                            {holidaySaving ? '...' : 'Add Range'}
+                          </button>
+                        </div>
+                      )}
+                      {holidayLoading ? (
+                        <div className="flex justify-center py-8">
+                          <div className="w-6 h-6 border-2 border-school-primary/20 border-t-school-primary rounded-full animate-spin" />
+                        </div>
+                      ) : holidays.length === 0 ? (
+                        <div className="text-center py-10 text-school-muted text-sm">No holidays found</div>
+                      ) : (
+                        <div className="bg-white dark:bg-[#1a1a2e] rounded-2xl border border-school-border divide-y divide-school-border/50 overflow-hidden shadow-sm">
+                          {holidays.map((h) => (
+                            <div key={h.id} className="flex items-center gap-3 px-4 py-2.5">
+                              <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold ${h.type === 'school' ? 'bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300' : 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400'}`}>
+                                {h.type === 'school' ? 'SE' : 'PH'}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="font-semibold text-sm text-school-primary dark:text-[#e0e0e8] truncate">{h.name}</div>
+                                <div className="text-[10px] text-school-muted">{h.date}</div>
+                              </div>
+                              {canManageHolidays && (
+                                <button onClick={() => deleteHoliday(h.id)} className="px-2 py-1 text-[10px] font-bold text-red-500 border border-red-200 dark:border-red-500/30 rounded-md hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors">
+                                  Delete
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
           <>
             <div className="flex bg-school-paper dark:bg-[#2a2a3e] p-1 rounded-xl mb-4 mt-2 border border-school-border/50">
               <button onClick={() => { setRptTab('daily'); setDailyReport(null); setRptError(''); }} className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg ${rptTab === 'daily' ? 'bg-white dark:bg-[#1a1a2e] text-school-primary shadow-sm' : 'text-school-muted'}`}>Daily Report</button>
@@ -700,46 +873,79 @@ export default function PinAttendance() {
             </div>
 
             {rptTab === 'daily' && (
-              <div className="space-y-3">
-                <div className="flex gap-2">
-                  <input type="date" value={dailyDate} onChange={e => setDailyDate(e.target.value)} className="flex-1 px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none focus:border-school-accent bg-white dark:bg-[#1a1a2e] text-school-primary" />
-                  <button onClick={loadDailyReport} disabled={!dailyDate || rptLoading} className="px-4 py-2 bg-school-accent text-white rounded-xl text-sm font-bold flex items-center justify-center min-w-[80px] shadow-sm">
-                    {rptLoading ? '...' : 'Load'}
-                  </button>
-                </div>
-                {rptError && <div className="text-red-500 text-sm">{rptError}</div>}
-                {dailyReport && (
-                  <div className="bg-white dark:bg-[#1a1a2e] rounded-2xl border border-school-border p-3 overflow-x-auto shadow-sm">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-bold text-school-muted">{dailyReport.total_students} students · <span className="text-green-600">P: {dailyReport.present}</span> · <span className="text-red-600">A: {dailyReport.absent}</span></span>
-                      <button onClick={async () => {
-                        const jsPDF = (await import('jspdf')).default;
-                        // @ts-ignore
-                        await import('jspdf-autotable');
-                        const doc = new jsPDF(); doc.text(`Daily Report - ${dailyReport.date}`, 14, 15);
-                        const head = [['Name', 'Roll', 'Status']];
-                        const body = dailyReport.students.map((s: any) => [s.name, s.roll || '-', STATUS_NAMES[s.status] || s.status]);
-                        (doc as any).autoTable({ head, body, startY: 20 });
-                        doc.save(`daily_report_${dailyReport.date}.pdf`);
-                      }} className="px-2 py-1 text-[10px] font-bold bg-school-accent text-white rounded-md shadow-sm">PDF</button>
-                    </div>
-                    <table className="w-full text-xs text-left">
-                      <thead><tr className="border-b"><th className="pb-1 text-school-muted">Name</th><th className="pb-1 text-school-muted">Roll</th><th className="pb-1 text-school-muted">Status</th></tr></thead>
-                      <tbody>
-                        {dailyReport.students.map((s: any) => (
-                          <tr key={s.id} className="border-b last:border-0 border-school-border/50">
-                            <td className="py-1.5 font-medium">{s.name}</td><td className="py-1.5 text-school-muted">{s.roll}</td>
-                            <td className={`py-1.5 font-bold ${s.status === 'present' ? 'text-green-600' : s.status === 'absent' ? 'text-red-600' : 'text-school-muted'}`}>
-                              {STATUS_NAMES[s.status] || s.status}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
+                          <div className="space-y-3">
+                            <div className="flex bg-school-paper dark:bg-[#2a2a3e] p-1 rounded-xl border border-school-border/50">
+                              <button onClick={() => { setRptSub('classwise'); setDailyReport(null); setRptError(''); }} className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg ${rptSub === 'classwise' ? 'bg-white dark:bg-[#1a1a2e] text-school-primary shadow-sm' : 'text-school-muted'}`}>Class-wise</button>
+                              <button onClick={() => { setRptSub('allclasses'); setAllClassesReport(null); setRptError(''); }} className={`flex-1 py-1.5 text-[11px] font-bold rounded-lg ${rptSub === 'allclasses' ? 'bg-white dark:bg-[#1a1a2e] text-school-primary shadow-sm' : 'text-school-muted'}`}>All Classes</button>
+                            </div>
+                            <div className="flex gap-2">
+                              <input type="date" value={dailyDate} onChange={e => setDailyDate(e.target.value)} className="flex-1 px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none focus:border-school-accent bg-white dark:bg-[#1a1a2e] text-school-primary" />
+                              <button onClick={rptSub === 'classwise' ? loadDailyReport : loadAllClassesReport} disabled={!dailyDate || rptLoading} className="px-4 py-2 bg-school-accent text-white rounded-xl text-sm font-bold flex items-center justify-center min-w-[80px] shadow-sm">
+                                {rptLoading ? '...' : 'Load'}
+                              </button>
+                            </div>
+                            {rptError && <div className="text-red-500 text-sm">{rptError}</div>}
+                            {rptSub === 'allclasses' && allClassesReport && (
+                              <div className="bg-white dark:bg-[#1a1a2e] rounded-2xl border border-school-border p-3 overflow-x-auto shadow-sm">
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="text-xs font-bold text-school-muted">All Classes · {allClassesReport.date}</span>
+                                  <button onClick={async () => {
+                                                          const jsPDF = (await import('jspdf')).default;
+                                                          const { autoTable } = await import('jspdf-autotable');
+                                                          const doc = new jsPDF(); doc.text(`All Classes Daily Report - ${allClassesReport.date}`, 14, 15);
+                                                          const head = [['Class', 'Total', 'Present', 'Absent', 'Unmarked']];
+                                                          const body = allClassesReport.classes.map((c: any) => [c.class.name, c.total_students, c.present, c.absent, c.unmarked]);
+                                                          autoTable(doc, { head, body, startY: 20 });
+                                                          doc.save(`all_classes_${allClassesReport.date}.pdf`);
+                                                        }} className="px-2 py-1 text-[10px] font-bold bg-school-accent text-white rounded-md shadow-sm">PDF</button>
+                                </div>
+                                <table className="w-full text-xs text-left">
+                                  <thead><tr className="border-b"><th className="pb-1 text-school-muted">Class</th><th className="pb-1 text-school-muted">Total</th><th className="pb-1 text-green-600">P</th><th className="pb-1 text-red-600">A</th><th className="pb-1 text-school-muted">U</th></tr></thead>
+                                  <tbody>
+                                    {allClassesReport.classes.map((c: any) => (
+                                      <tr key={c.class.id} className="border-b last:border-0 border-school-border/50">
+                                        <td className="py-1.5 font-medium">{c.class.name}</td>
+                                        <td className="py-1.5 text-school-muted">{c.total_students}</td>
+                                        <td className="py-1.5 text-green-600 font-bold">{c.present}</td>
+                                        <td className="py-1.5 text-red-600 font-bold">{c.absent}</td>
+                                        <td className="py-1.5 text-school-muted">{c.unmarked}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                            {rptSub === 'classwise' && dailyReport && (
+                              <div className="bg-white dark:bg-[#1a1a2e] rounded-2xl border border-school-border p-3 overflow-x-auto shadow-sm">
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="text-xs font-bold text-school-muted">{dailyReport.total_students} students · <span className="text-green-600">P: {dailyReport.present}</span> · <span className="text-red-600">A: {dailyReport.absent}</span></span>
+                                  <button onClick={async () => {
+                                                          const jsPDF = (await import('jspdf')).default;
+                                                          const { autoTable } = await import('jspdf-autotable');
+                                                          const doc = new jsPDF(); doc.text(`Daily Report - ${dailyReport.date}`, 14, 15);
+                                                          const head = [['Name', 'Roll', 'Status']];
+                                                          const body = dailyReport.students.map((s: any) => [s.name, s.roll || '-', STATUS_NAMES[s.status] || s.status]);
+                                                          autoTable(doc, { head, body, startY: 20 });
+                                                          doc.save(`daily_report_${dailyReport.date}.pdf`);
+                                                        }} className="px-2 py-1 text-[10px] font-bold bg-school-accent text-white rounded-md shadow-sm">PDF</button>
+                                </div>
+                                <table className="w-full text-xs text-left">
+                                  <thead><tr className="border-b"><th className="pb-1 text-school-muted">Name</th><th className="pb-1 text-school-muted">Roll</th><th className="pb-1 text-school-muted">Status</th></tr></thead>
+                                  <tbody>
+                                    {dailyReport.students.map((s: any) => (
+                                      <tr key={s.id} className="border-b last:border-0 border-school-border/50">
+                                        <td className="py-1.5 font-medium">{s.name}</td><td className="py-1.5 text-school-muted">{s.roll}</td>
+                                        <td className={`py-1.5 font-bold ${s.status === 'present' ? 'text-green-600' : s.status === 'absent' ? 'text-red-600' : 'text-school-muted'}`}>
+                                          {STATUS_NAMES[s.status] || s.status}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        )}
 
             {rptTab === 'monthly' && (
               <div className="space-y-3">
@@ -758,15 +964,14 @@ export default function PinAttendance() {
                     <div className="p-3 border-b flex items-center justify-between">
                       <span className="text-xs font-bold text-school-primary">{monthName(monthlyReport.month)} {monthlyReport.year}</span>
                       <button onClick={async () => {
-                        const jsPDF = (await import('jspdf')).default;
-                        // @ts-ignore
-                        await import('jspdf-autotable');
-                        const doc = new jsPDF(); doc.text(`Monthly Report - ${monthName(monthlyReport.month)} ${monthlyReport.year}`, 14, 15);
-                        const head = [['Date', 'Present', 'Absent', 'Type']];
-                        const body = monthlyReport.days.map((d: any) => [d.date.slice(-2), d.present, d.absent, d.type]);
-                        (doc as any).autoTable({ head, body, startY: 20 });
-                        doc.save(`monthly_report_${monthlyReport.year}_${monthlyReport.month}.pdf`);
-                      }} className="px-2 py-1 text-[10px] font-bold bg-school-accent text-white rounded-md shadow-sm">PDF</button>
+                                              const jsPDF = (await import('jspdf')).default;
+                                              const { autoTable } = await import('jspdf-autotable');
+                                              const doc = new jsPDF(); doc.text(`Monthly Report - ${monthName(monthlyReport.month)} ${monthlyReport.year}`, 14, 15);
+                                              const head = [['Date', 'Present', 'Absent', 'Type']];
+                                              const body = monthlyReport.days.map((d: any) => [d.date.slice(-2), d.present, d.absent, d.type]);
+                                              autoTable(doc, { head, body, startY: 20 });
+                                              doc.save(`monthly_report_${monthlyReport.year}_${monthlyReport.month}.pdf`);
+                                            }} className="px-2 py-1 text-[10px] font-bold bg-school-accent text-white rounded-md shadow-sm">PDF</button>
                     </div>
                     <div className="overflow-x-auto p-2">
                       <table className="w-full text-xs text-center">

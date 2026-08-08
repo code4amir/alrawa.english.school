@@ -3,6 +3,7 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import make_password
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 from students.models import Student
 from core.models import SchoolClass
@@ -419,4 +420,279 @@ class MobileDailyReportTests(TestCase):
             HTTP_AUTHORIZATION=f'Bearer {token}',
         )
         self.assertEqual(res.status_code, 400)
+
+
+class PinAdminMonitorFeatureTests(TestCase):
+    """Admin/monitor parity for the PIN attendance app.
+
+    Browser-app parity: admin & monitor are NOT required to be assigned as a
+    class teacher — they can submit attendance and view reports for ANY class,
+    and they manage holidays. Regular PIN teachers keep the ClassTeacher gate.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.klass = SchoolClass.objects.create(name='RR Class', order=2)
+        self.klass2 = SchoolClass.objects.create(name='SS Class', order=3)
+        self.s1 = Student.objects.create(
+            name='Alice', student_id='RR0001',
+            school_class=self.klass, session='2026',
+        )
+        self.s2 = Student.objects.create(
+            name='Bob', student_id='SS0001',
+            school_class=self.klass2, session='2026',
+        )
+        # Admin teacher — linked account role=admin, NO ClassTeacher assignment
+        self.admin_user = User.objects.create_user(
+            email='adminpin@test.com', name='Admin PIN', password='x',
+            role='admin', is_staff=True,
+        )
+        self.admin_teacher = Teacher.objects.create(
+            name='Admin PIN', designation='Admin',
+            user=self.admin_user,
+        )
+        # Monitor teacher — role=monitor, NO ClassTeacher assignment
+        self.monitor_user = User.objects.create_user(
+            email='monitorpin@test.com', name='Monitor PIN', password='x',
+            role='monitor',
+        )
+        self.monitor_teacher = Teacher.objects.create(
+            name='Monitor PIN', designation='Monitor',
+            user=self.monitor_user,
+        )
+        # Regular teacher — role=teacher, DOES have ClassTeacher on klass
+        self.plain_user = User.objects.create_user(
+            email='teacherpin@test.com', name='Teacher PIN', password='x',
+            role='teacher',
+        )
+        self.plain_teacher = Teacher.objects.create(
+            name='Teacher PIN', designation='Teacher',
+            user=self.plain_user,
+        )
+        ClassTeacher.objects.create(teacher=self.plain_teacher, school_class=self.klass)
+        today = timezone.now().date()
+        while today.weekday() in (4, 5):
+            today = today.replace(day=today.day - 1)
+        self.at_day = today
+
+    # ── token helpers ──────────────────────────────────────────────
+    def _token_for(self, teacher):
+        tok = AccessToken()
+        tok['teacher_id'] = str(teacher.id)
+        tok['pin_auth'] = True
+        tok.set_exp('exp', lifetime=timedelta(hours=1))
+        return str(tok)
+
+    def _auth(self, teacher):
+        return {'HTTP_AUTHORIZATION': f'Bearer {self._token_for(teacher)}'}
+
+    # ── 1. batch attendance bypass ─────────────────────────────────
+    def test_admin_can_batch_for_class_not_assigned(self):
+        res = self.client.post(
+            '/api/m/attendance/batch/',
+            {
+                'school_class': str(self.klass2.id),
+                'date': self.at_day.isoformat(),
+                'term': '1',
+                'session': '2026',
+                'records': {str(self.s2.id): 'present'},
+            },
+            format='json',
+            **self._auth(self.admin_teacher),
+        )
+        self.assertEqual(res.status_code, 200, msg=res.content[:500])
+
+    def test_monitor_can_batch_for_class_not_assigned(self):
+        res = self.client.post(
+            '/api/m/attendance/batch/',
+            {
+                'school_class': str(self.klass2.id),
+                'date': self.at_day.isoformat(),
+                'term': '1',
+                'session': '2026',
+                'records': {str(self.s2.id): 'present'},
+            },
+            format='json',
+            **self._auth(self.monitor_teacher),
+        )
+        self.assertEqual(res.status_code, 200, msg=res.content[:500])
+
+    def test_plain_teacher_cannot_batch_unassigned_class(self):
+        res = self.client.post(
+            '/api/m/attendance/batch/',
+            {
+                'school_class': str(self.klass2.id),
+                'date': self.at_day.isoformat(),
+                'term': '1',
+                'session': '2026',
+                'records': {str(self.s2.id): 'present'},
+            },
+            format='json',
+            **self._auth(self.plain_teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+
+    def test_admin_students_list_unassigned_class(self):
+        res = self.client.get(
+            f'/api/m/students/?class_id={self.klass2.id}',
+            **self._auth(self.admin_teacher),
+        )
+        self.assertEqual(res.status_code, 200, msg=res.content[:500])
+
+    def test_plain_teacher_students_list_unassigned_class_403(self):
+        res = self.client.get(
+            f'/api/m/students/?class_id={self.klass2.id}',
+            **self._auth(self.plain_teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+
+    # ── 2. reports bypass ──────────────────────────────────────────
+    def test_admin_daily_report_unassigned_class(self):
+        res = self.client.get(
+            f'/api/m/attendance/class-daily-report/?class_id={self.klass2.id}&date={self.at_day.isoformat()}',
+            **self._auth(self.admin_teacher),
+        )
+        self.assertEqual(res.status_code, 200, msg=res.content[:500])
+
+    def test_admin_monthly_report_unassigned_class(self):
+        res = self.client.get(
+            f'/api/m/attendance/monthly-report/?class_id={self.klass2.id}'
+            f'&year={self.at_day.year}&month={self.at_day.month}',
+            **self._auth(self.admin_teacher),
+        )
+        self.assertEqual(res.status_code, 200, msg=res.content[:500])
+
+    # ── 3. all-classes daily report ────────────────────────────────
+    def test_all_classes_daily(self):
+        res = self.client.get(
+            f'/api/m/attendance/all-classes-daily/?date={self.at_day.isoformat()}',
+            **self._auth(self.admin_teacher),
+        )
+        self.assertEqual(res.status_code, 200, msg=res.content[:500])
+        self.assertEqual(res.data['date'], self.at_day.isoformat())
+        names = {c['class']['name'] for c in res.data['classes']}
+        self.assertEqual(names, {'RR Class', 'SS Class'})
+
+    def test_all_classes_daily_requires_date(self):
+        res = self.client.get('/api/m/attendance/all-classes-daily/', **self._auth(self.admin_teacher))
+        self.assertEqual(res.status_code, 400)
+
+    def test_all_classes_daily_open_to_plain_teacher(self):
+        res = self.client.get(
+            f'/api/m/attendance/all-classes-daily/?date={self.at_day.isoformat()}',
+            **self._auth(self.plain_teacher),
+        )
+        self.assertEqual(res.status_code, 200, msg=res.content[:500])
+        self.assertEqual(len(res.data['classes']), 2)
+
+    # ── 4. holidays CRUD ───────────────────────────────────────────
+    def test_holidays_list_any_pin_teacher(self):
+        res = self.client.get('/api/m/holidays/', **self._auth(self.plain_teacher))
+        self.assertEqual(res.status_code, 200, msg=res.content[:500])
+        self.assertEqual(res.data['holidays'], [])
+
+    def test_holiday_create_admin(self):
+        res = self.client.post(
+            '/api/m/holidays/',
+            {'date': self.at_day.isoformat(), 'name': 'Test Holiday', 'type': 'school'},
+            format='json',
+            **self._auth(self.admin_teacher),
+        )
+        self.assertEqual(res.status_code, 201, msg=res.content[:500])
+        self.assertTrue(Holiday.objects.filter(date=self.at_day).exists())
+
+    def test_holiday_create_monitor(self):
+        res = self.client.post(
+            '/api/m/holidays/',
+            {'date': self.at_day.isoformat(), 'name': 'Monitor Holiday'},
+            format='json',
+            **self._auth(self.monitor_teacher),
+        )
+        self.assertEqual(res.status_code, 201, msg=res.content[:500])
+
+    def test_holiday_create_plain_teacher_403(self):
+        res = self.client.post(
+            '/api/m/holidays/',
+            {'date': self.at_day.isoformat(), 'name': 'Nope'},
+            format='json',
+            **self._auth(self.plain_teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+
+    def test_holidays_bulk_skips_existing(self):
+        Holiday.objects.create(date=self.at_day, name='Already', type='public')
+        start = self.at_day - timedelta(days=1)
+        res = self.client.post(
+            '/api/m/holidays/bulk/',
+            {
+                'start_date': start.isoformat(),
+                'end_date': self.at_day.isoformat(),
+                'name': 'Long Holiday',
+                'type': 'school',
+            },
+            format='json',
+            **self._auth(self.admin_teacher),
+        )
+        self.assertEqual(res.status_code, 200, msg=res.content[:500])
+        self.assertEqual(len(res.data['created']), 1)
+        self.assertEqual(res.data['skipped'], 1)
+        self.assertEqual(Holiday.objects.filter(name='Long Holiday').count(), 1)
+
+    def test_holiday_bulk_plain_teacher_403(self):
+        res = self.client.post(
+            '/api/m/holidays/bulk/',
+            {
+                'start_date': self.at_day.isoformat(),
+                'end_date': self.at_day.isoformat(),
+                'name': 'Nope',
+            },
+            format='json',
+            **self._auth(self.plain_teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+
+    def test_holiday_delete_admin(self):
+        h = Holiday.objects.create(date=self.at_day, name='ToDelete', type='public')
+        res = self.client.delete(
+            f'/api/m/holidays/{h.id}/',
+            **self._auth(self.admin_teacher),
+        )
+        self.assertEqual(res.status_code, 200, msg=res.content[:500])
+        self.assertFalse(Holiday.objects.filter(id=h.id).exists())
+
+    def test_holiday_delete_plain_teacher_403(self):
+        h = Holiday.objects.create(date=self.at_day, name='Locked', type='public')
+        res = self.client.delete(
+            f'/api/m/holidays/{h.id}/',
+            **self._auth(self.plain_teacher),
+        )
+        self.assertEqual(res.status_code, 403)
+        self.assertTrue(Holiday.objects.filter(id=h.id).exists())
+
+    # ── 5. pin_login classes list ──────────────────────────────────
+    def test_pin_login_admin_gets_all_classes(self):
+        self.admin_teacher.pin = make_password('593008')
+        self.admin_teacher.save(update_fields=['pin'])
+        res = self.client.post(
+            '/api/m/auth/pin/',
+            {'teacher_id': str(self.admin_teacher.id), 'pin': '593008'},
+            format='json',
+        )
+        self.assertEqual(res.status_code, 200, msg=res.content[:500])
+        names = {c['name'] for c in res.data['classes']}
+        self.assertEqual(names, {'RR Class', 'SS Class'})
+        self.assertEqual(res.data['teacher']['role'], 'admin')
+
+    def test_pin_login_plain_teacher_only_assigned_classes(self):
+        self.plain_teacher.pin = make_password('111111')
+        self.plain_teacher.save(update_fields=['pin'])
+        res = self.client.post(
+            '/api/m/auth/pin/',
+            {'teacher_id': str(self.plain_teacher.id), 'pin': '111111'},
+            format='json',
+        )
+        self.assertEqual(res.status_code, 200, msg=res.content[:500])
+        names = {c['name'] for c in res.data['classes']}
+        self.assertEqual(names, {'RR Class'})
+        self.assertEqual(res.data['teacher']['role'], 'teacher')
 
