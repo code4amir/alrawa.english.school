@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import axios from 'axios';
-import { api, setTokens, clearTokens, getRefreshToken, getCsrfToken } from './api';
+import { api, setTokens, clearTokens, getRefreshToken, getCsrfToken, getAccessToken } from './api';
 
 interface User {
   id: string;
@@ -76,12 +76,12 @@ export const useAuthStore = create<AuthState>((set, get) => {
 
     fetchSession: async () => {
       try {
-        if (get().user) {
-          set({ loading: false });
-          return;
-        }
         const res = await api.get('/auth/get-session/');
-        if (res.data?.csrfToken) setTokens(null, null, res.data.csrfToken);
+        if (res.data?.csrfToken) {
+          const access = getAccessToken();
+          const refresh = getRefreshToken();
+          setTokens(access, refresh, res.data.csrfToken); // keep existing tokens, only update CSRF
+        }
         set({ user: res.data?.user ?? null, loading: false });
       } catch {
         set({ user: null, loading: false });
