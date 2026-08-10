@@ -160,7 +160,11 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
             })) : [];
       set({
         students: normalized,
-        studentTotal: res.data.count ?? res.data.total ?? 0,
+        // Only an UNFILTERED fetch (no params) reflects the school-wide total.
+        // Class-filtered fetches (e.g. visiting a class in the ID Card section)
+        // must NOT clobber the dashboard's global studentTotal with a
+        // single-class count.
+        ...(params ? {} : { studentTotal: res.data.count ?? res.data.total ?? 0 }),
         lastFetched: Date.now()
       });
     } catch (e) { if (import.meta.env.DEV) console.warn("[store]", e); }

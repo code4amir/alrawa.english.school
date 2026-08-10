@@ -35,7 +35,16 @@ describe('useSchoolStore — people', () => {
       expect(api.get).toHaveBeenCalledWith('/students/', { params: { class: 'Class 2', limit: '2000' } });
       const state = useSchoolStore.getState();
       expect(state.students).toEqual(studentList);
-      expect(state.studentTotal).toBe(1);
+      // Class-filtered fetches must NOT clobber the global dashboard total.
+      expect(state.studentTotal).toBe(0);
+    });
+
+    it('sets studentTotal only on unfiltered fetches', async () => {
+      vi.spyOn(api, 'get').mockResolvedValue({ data: { data: [], total: 42 } });
+
+      await useSchoolStore.getState().fetchStudents();
+
+      expect(useSchoolStore.getState().studentTotal).toBe(42);
     });
 
     it('passes params correctly', async () => {

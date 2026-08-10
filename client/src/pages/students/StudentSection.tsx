@@ -129,7 +129,9 @@ export default function StudentSection() {
         toast('Student added ✓', 'success');
       }
       resetForm();
-      fetchStudents();
+      // Force: the store guard skips refetch when students are already loaded,
+      // which left newly-added students invisible until a reload.
+      fetchStudents(undefined, true);
     } catch (e: any) {
       toast(e.response?.data?.error || e.message || 'Error', 'error');
     } finally {
