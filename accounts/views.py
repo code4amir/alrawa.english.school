@@ -70,7 +70,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             refresh = response.data.get('refresh')
             access = response.data.get('access')
             from django.middleware.csrf import get_token
-            response.data = {'access': access, 'detail': 'Login successful', 'csrfToken': get_token(request)}
+            response.data = {'access': access, 'refresh': refresh, 'detail': 'Login successful', 'csrfToken': get_token(request)}
             response.set_cookie(
                 settings.SIMPLE_JWT['ACCESS_COOKIE'],
                 access,

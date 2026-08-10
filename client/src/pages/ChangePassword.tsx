@@ -21,9 +21,13 @@ export default function ChangePassword() {
   }
 
   // Teachers (users with a linked Teacher profile) must set their 6-digit
-  // attendance PIN during the forced first-login flow — the backend rejects
-  // the request without it, so this is enforced server-side too.
-  const needsPin = Boolean(user.hasTeacherProfile);
+  // attendance PIN during the forced first-login flow — the backend enforces
+  // this server-side too (ChangePasswordSerializer requires PIN when
+  // must_change_password is True and a teacher profile exists). Show the PIN
+  // fields when EITHER the must-change-password flag OR a teacher profile
+  // is present, so the UI doesn't hide them due to stale cached session data
+  // on mobile PWAs.
+  const needsPin = Boolean(user.hasTeacherProfile || user.mustChangePassword);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
