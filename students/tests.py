@@ -52,6 +52,40 @@ class StudentTests(TestCase):
         s.refresh_from_db()
         self.assertEqual(s.name, 'Updated')
 
+    def test_create_student_with_class_name_keeps_class(self):
+        # The UI/import send the class under the ``class`` key as its NAME.
+        # Regression: this previously created a classless student because DRF
+        # silently dropped the undeclared key.
+        res = self.client.post('/api/students/', {
+            'name': 'Jane Doe', 'class': self.klass.name, 'roll': '2',
+            'fatherName': 'Father Jane', 'motherName': 'Mother Jane',
+        })
+        self.assertEqual(res.status_code, 201)
+        s = Student.objects.get(name='Jane Doe')
+        self.assertEqual(s.school_class_id, self.klass.id)
+        self.assertEqual(s.father_name, 'Father Jane')
+        self.assertEqual(s.mother_name, 'Mother Jane')
+
+    def test_create_student_class_name_case_insensitive(self):
+        res = self.client.post('/api/students/', {
+            'name': 'Casey', 'class': self.klass.name.lower(), 'roll': '3',
+        })
+        self.assertEqual(res.status_code, 201)
+        s = Student.objects.get(name='Casey')
+        self.assertEqual(s.school_class_id, self.klass.id)
+
+    def test_create_student_null_names_flattened(self):
+        # NOT NULL columns with default '' — API must not 500 on nulls.
+        res = self.client.post('/api/students/', {
+            'name': 'Null Sis', 'class': self.klass.name,
+            'fatherName': None, 'motherName': None, 'contact': None,
+        }, format='json')  # axios sends JSON where null is legal
+        self.assertEqual(res.status_code, 201)
+        s = Student.objects.get(name='Null Sis')
+        self.assertEqual(s.father_name, '')
+        self.assertEqual(s.mother_name, '')
+        self.assertEqual(s.contact, '')
+
     def test_delete_student_soft(self):
         s = Student.objects.create(name='S1', student_id='S000001', school_class=self.klass)
         res = self.client.delete(f'/api/students/{s.id}/')

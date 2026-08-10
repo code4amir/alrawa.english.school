@@ -1,3 +1,5 @@
+import uuid
+
 from rest_framework import serializers
 from django.db import transaction as db_transaction
 from .models import Student, StudentService
@@ -16,8 +18,9 @@ class StudentSerializer(PhotoUrlMixin, serializers.ModelSerializer):
     )
     className = serializers.CharField(source='school_class.name', read_only=True, allow_null=True)
     studentId = serializers.CharField(source='student_id', read_only=True)
-    fatherName = serializers.CharField(source='father_name', read_only=True, allow_null=True)
-    motherName = serializers.CharField(source='mother_name', read_only=True, allow_null=True)
+    fatherName = serializers.CharField(source='father_name', required=False, allow_blank=True, allow_null=True)
+    motherName = serializers.CharField(source='mother_name', required=False, allow_blank=True, allow_null=True)
+    contact = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     hasPhoto = serializers.SerializerMethodField()
     hasGraduated = serializers.SerializerMethodField()
     photoUrl = serializers.SerializerMethodField()
@@ -41,6 +44,24 @@ class StudentSerializer(PhotoUrlMixin, serializers.ModelSerializer):
     def validate(self, attrs):
         roll = attrs.get('roll')
         school_class = attrs.get('school_class')
+        # The UI and the import endpoint send the class as a NAME under the
+        # key ``class`` (e.g. POST {'name': ..., 'class': 'Play'}); the API
+        # also accepts the UUID form via ``schoolClass``. Resolve a name (or
+        # legacy UUID) into the SchoolClass instance so DRF doesn't silently
+        # drop it (which previously created classless students).
+        class_key = self.initial_data.get('class')
+        if class_key and not school_class:
+            try:
+                school_class = SchoolClass.objects.filter(pk=uuid.UUID(str(class_key))).first()
+            except (ValueError, TypeError):
+                school_class = SchoolClass.objects.filter(name__iexact=str(class_key).strip()).first()
+            if school_class:
+                attrs['school_class'] = school_class
+        # Columns are NOT NULL with default '' — flatten nulls the API may
+        # receive (frontend sends undefined/blank for empty fields).
+        for f in ('father_name', 'mother_name', 'contact'):
+            if attrs.get(f) is None:
+                attrs[f] = ''
         # Mirror the model's conditional uniqueness: only enforced when
         # roll is non-empty and a class is set (matches Q(roll__gt='')).
         if roll and school_class:
