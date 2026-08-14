@@ -82,8 +82,6 @@ const App: React.FC = () => {
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
   const showInstallBanner = !!installPrompt && !isStandalone;
 
-  const teacherRoute = isStandalone ? '/teacher' : '/';
-
   if (loading) {
     return <PageLoader />;
   }
@@ -96,8 +94,8 @@ const App: React.FC = () => {
       <ErrorBoundary>
       <Suspense fallback={<PageLoader />}>
         <Routes>
-          <Route path="/login" element={!user ? <Login /> : <Navigate to={user.role === 'parent' ? '/parent' : user.role === 'teacher' && teacherRoute !== '/' ? teacherRoute : '/'} />} />
-          <Route path="/register" element={!user ? <Register /> : <Navigate to={user.role === 'parent' ? '/parent' : user.role === 'teacher' && teacherRoute !== '/' ? teacherRoute : '/'} />} />
+          <Route path="/login" element={!user ? <Login /> : <Navigate to={user.role === 'parent' ? '/parent' : '/'} />} />
+          <Route path="/register" element={!user ? <Register /> : <Navigate to={user.role === 'parent' ? '/parent' : '/'} />} />
           <Route path="/connect/:token" element={<ConnectParent />} />
           <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/link-child" element={user?.role === 'parent' ? <LinkChild /> : <Navigate to="/" />} />
@@ -107,7 +105,7 @@ const App: React.FC = () => {
           <Route path="/pin-attendance" element={<PinAttendance />} />
           <Route path="/m" element={<Navigate to="/?mode=attendance" replace />} />
 
-          <Route path="/" element={user ? (user.role === 'parent' ? <Navigate to="/parent" /> : user.role === 'teacher' && teacherRoute !== '/' ? <Navigate to={teacherRoute} /> : <Dashboard />) : <Navigate to="/login" />} />
+          <Route path="/" element={user ? (user.role === 'parent' ? <Navigate to="/parent" /> : <Dashboard />) : <Navigate to="/login" />} />
           <Route path="/parent" element={user?.role === 'parent' || user?.role === 'admin' ? <ParentDashboard /> : <Navigate to="/" />} />
           <Route path="/parent/attendance" element={user?.role === 'parent' || user?.role === 'admin' ? <ParentAttendance /> : <Navigate to="/" />} />
           <Route path="/parent/attendance/:studentId" element={user?.role === 'parent' || user?.role === 'admin' ? <ParentAttendance /> : <Navigate to="/" />} />
