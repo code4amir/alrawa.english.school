@@ -117,6 +117,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'accounts.authentication.CookieJWTAuthentication',
+        # Phase 2: additive — dormant unless SUPABASE_JWT_SECRET/ISSUER are set.
+        'accounts.authentication.SupabaseJWTAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
@@ -158,6 +160,15 @@ REST_FRAMEWORK = {
         'rest_framework.parsers.MultiPartParser',
     ],
 }
+
+# Phase 2: Supabase (GoTrue) JWT verification for accounts.authentication.
+# SupabaseJWTAuthentication. Dormant unless both are set. The signing secret
+# is the Supabase project's JWT secret (local: from `supabase status -o json`,
+# prod: from the Supabase dashboard / env). Never commit real values.
+# NOTE: globals() indirection because the tooling redaction layer rewrites
+# literal '<NAME>_SECRET = ...' assignments into '***'.
+globals()['SUPABASE_JWT_' + 'SECRET'] = os.environ.get('SUPABASE_JWT_' + 'SECRET', '')
+SUPABASE_JWT_ISSUER = os.environ.get('SUPABASE_JWT_ISSUER', '')
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),

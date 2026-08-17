@@ -321,6 +321,10 @@ class AuthGetSessionView(APIView):
         try:
             from accounts.authentication import CookieJWTAuthentication
             auth_result = CookieJWTAuthentication().authenticate(request)
+            # Phase 2: fall back to Supabase JWT (dormant unless configured).
+            if not auth_result:
+                from accounts.authentication import SupabaseJWTAuthentication
+                auth_result = SupabaseJWTAuthentication().authenticate(request)
             if auth_result:
                 user, _ = auth_result
                 return JsonResponse({'user': {
