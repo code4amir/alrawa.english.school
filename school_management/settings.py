@@ -162,9 +162,12 @@ REST_FRAMEWORK = {
 }
 
 # Phase 2: Supabase (GoTrue) JWT verification for accounts.authentication.
-# SupabaseJWTAuthentication. Dormant unless both are set. The signing secret
-# is the Supabase project's JWT secret (local: from `supabase status -o json`,
-# prod: from the Supabase dashboard / env). Never commit real values.
+# SupabaseJWTAuthentication. Dormant unless SUPABASE_JWT_ISSUER is set.
+# Modern GoTrue signs ES256 — Django verifies via the public JWKS endpoint
+# ({issuer}/.well-known/jwks.json), no shared secret needed. Setting
+# SUPABASE_JWT_SECRET switches to HS256 symmetric verification (legacy
+# GoTrue configs only). Local values come from `supabase status -o json`
+# (injected by alrawa's scripts/dev-backend.py); prod via env. Never commit.
 # NOTE: globals() indirection because the tooling redaction layer rewrites
 # literal '<NAME>_SECRET = ...' assignments into '***'.
 globals()['SUPABASE_JWT_' + 'SECRET'] = os.environ.get('SUPABASE_JWT_' + 'SECRET', '')

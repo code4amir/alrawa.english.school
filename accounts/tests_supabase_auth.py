@@ -158,3 +158,95 @@ class SupabaseJWTAuthenticationTests(TestCase):
         response = self.client.get("/api/auth/get-session/")
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.json()["user"])
+
+
+# --- JWKS mode (modern GoTrue signs ES256; no shared secret) ---------------
+from unittest.mock import patch as mock_patch
+
+from cryptography.hazmat.primitives.asymmetric import ec
+
+
+class _StubSigningKey:
+    def __init__(self, key):
+        self.key = key
+
+
+class _StubJWKClient:
+    def __init__(self, public_key):
+        self._public_key = public_key
+
+    def get_signing_key_from_jwt(self, raw_token):
+        return _StubSigningKey(self._public_key)
+
+
+def make_es256_token(sub, private_key, issuer=TEST_ISSUER, aud="authenticated",
+                     exp_delta=3600, **extra):
+    payload = {
+        "iss": issuer,
+        "sub": sub,
+        "aud": aud,
+        "exp": int(time.time()) + exp_delta,
+        "iat": int(time.time()),
+        "role": "authenticated",
+    }
+    payload.update(extra)
+    return jwt.encode(payload, private_key, algorithm="ES256",
+                      headers={"kid": "test-kid"})
+
+
+@override_settings(SUPABASE_JWT_SECRET="", SUPABASE_JWT_ISSUER=TEST_ISSUER)
+class SupabaseJWKSModeTests(TestCase):
+    """JWKS verification path: ES256 tokens, public key via (stubbed) JWKS."""
+
+    def setUp(self):
+        self.auth = SupabaseJWTAuthentication()
+        self.user = User.objects.create_user(
+            email="jwksuser@alrawa.test", name="JWKS User", role="teacher",
+        )
+        self.private_key = ec.generate_private_key(ec.SECP256R1())
+        self.public_key = self.private_key.public_key()
+        self.client_patcher = mock_patch.object(
+            SupabaseJWTAuthentication, "_get_jwks_client",
+            return_value=_StubJWKClient(self.public_key),
+        )
+        self.client_patcher.start()
+        self.addCleanup(self.client_patcher.stop)
+
+    def test_valid_es256_token_returns_user(self):
+        token = make_es256_token(str(self.user.id), self.private_key)
+        user, payload = self.auth.authenticate(request_with_bearer(token))
+        self.assertEqual(user.id, self.user.id)
+        self.assertEqual(payload["sub"], str(self.user.id))
+
+    def test_valid_es256_token_through_full_drf_chain(self):
+        token = make_es256_token(str(self.user.id), self.private_key)
+        response = _ProtectedView.as_view()(request_with_bearer(token))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["user_id"], str(self.user.id))
+
+    def test_wrong_key_rejected(self):
+        other_key = ec.generate_private_key(ec.SECP256R1())
+        token = make_es256_token(str(self.user.id), other_key)
+        with self.assertRaises(AuthenticationFailed):
+            self.auth.authenticate(request_with_bearer(token))
+
+    def test_expired_es256_rejected(self):
+        token = make_es256_token(str(self.user.id), self.private_key, exp_delta=-100)
+        with self.assertRaises(AuthenticationFailed):
+            self.auth.authenticate(request_with_bearer(token))
+
+    def test_hs256_token_rejected_in_jwks_mode(self):
+        """Algorithm-confusion guard: an HS256 token must not pass when the
+        authenticator is in JWKS mode (only ES256/RS256 allowed)."""
+        token = make_token(str(self.user.id))  # HS256 helper
+        with self.assertRaises(AuthenticationFailed):
+            self.auth.authenticate(request_with_bearer(token))
+
+    def test_get_session_accepts_es256_token(self):
+        token = make_es256_token(str(self.user.id), self.private_key)
+        response = self.client.get(
+            "/api/auth/get-session/",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["user"]["id"], str(self.user.id))

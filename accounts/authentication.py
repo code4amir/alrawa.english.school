@@ -89,10 +89,17 @@ class SupabaseJWTAuthentication(BaseAuthentication):
     """Phase 2: accept Supabase (GoTrue) access tokens.
 
     Additive and dormant until configured: returns None (fall through to the
-    next authenticator) unless SUPABASE_JWT_SECRET is set AND the token's
-    issuer matches SUPABASE_JWT_ISSUER. A token that claims to be Supabase
-    but fails verification raises AuthenticationFailed (401) — it is never
-    silently passed to the next authenticator.
+    next authenticator) unless SUPABASE_JWT_ISSUER is set AND the token's
+    issuer matches it. A token that claims to be Supabase but fails
+    verification raises AuthenticationFailed (401) — it is never silently
+    passed to the next authenticator.
+
+    Two verification modes, selected by configuration:
+    - JWKS mode (default, modern GoTrue): tokens are ES256-signed. Public
+      keys are fetched from {issuer}/.well-known/jwks.json (cached ~5 min,
+      auto-refetch on unknown kid). NO shared secret needed in Django.
+    - HS256 mode: if SUPABASE_JWT_SECRET is set, tokens are verified
+      symmetrically with it (legacy/HS256 GoTrue configs, and unit tests).
 
     The JWT `sub` claim is the user's UUID, which equals Django User.pk
     because scripts/migrate-users-to-supabase.py preserves UUIDs.
@@ -102,10 +109,11 @@ class SupabaseJWTAuthentication(BaseAuthentication):
     CookieJWTAuthentication.
     """
 
+    _jwks_clients = {}  # issuer -> PyJWKClient (module-level cache)
+
     def authenticate(self, request):
-        secret = getattr(settings, "SUPABASE_JWT_SECRET", "") or ""
         issuer = getattr(settings, "SUPABASE_JWT_ISSUER", "") or ""
-        if not secret or not issuer:
+        if not issuer:
             return None  # dormant — SimpleJWT/cookie path unchanged
 
         auth = request.headers.get("Authorization", "")
@@ -124,15 +132,20 @@ class SupabaseJWTAuthentication(BaseAuthentication):
         if unverified.get("iss") != issuer:
             return None  # SimpleJWT token or foreign issuer — not ours
 
+        secret = getattr(settings, "SUPABASE_JWT_SECRET", "") or ""
+        common = dict(
+            audience="authenticated",
+            issuer=issuer,
+            options={"require": ["exp", "iss", "sub"]},
+        )
         try:
-            payload = jwt.decode(
-                raw,
-                secret,
-                algorithms=["HS256"],
-                audience="authenticated",
-                issuer=issuer,
-                options={"require": ["exp", "iss", "sub"]},
-            )
+            if secret:
+                payload = jwt.decode(raw, secret, algorithms=["HS256"], **common)
+            else:
+                signing_key = self._get_jwks_client(issuer).get_signing_key_from_jwt(raw)
+                payload = jwt.decode(
+                    raw, signing_key.key, algorithms=["ES256", "RS256"], **common
+                )
         except jwt.ExpiredSignatureError:
             raise AuthenticationFailed("Supabase token expired")
         except jwt.PyJWTError as exc:
@@ -147,6 +160,16 @@ class SupabaseJWTAuthentication(BaseAuthentication):
         if not user.is_active:
             raise AuthenticationFailed("User inactive or deleted")
         return (user, payload)
+
+    @classmethod
+    def _get_jwks_client(cls, issuer):
+        if issuer not in cls._jwks_clients:
+            cls._jwks_clients[issuer] = jwt.PyJWKClient(
+                issuer.rstrip("/") + "/.well-known/jwks.json",
+                cache_keys=True,
+                lifespan=300,  # refresh JWKS every 5 minutes
+            )
+        return cls._jwks_clients[issuer]
 
     def authenticate_header(self, request):
         return "Bearer"
