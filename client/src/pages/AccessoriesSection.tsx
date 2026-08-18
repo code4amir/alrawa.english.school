@@ -33,6 +33,9 @@ const AccessoriesSection = () => {
   const { classes, books, feeSchedules, settings, loading, fetchClasses, fetchBooks, fetchSettings, fetchFeeSchedules } = useSchoolStore();
   const role = useAuthStore((s) => s.user?.role);
   const isAdmin = role === 'admin' || role === 'accountant';
+  // Teachers & monitors can manage the book list (teachers take ID-card photos too);
+  // fee editing stays admin/accountant-only.
+  const canEditBooks = isAdmin || role === 'teacher' || role === 'monitor';
 
   const [selectedClassId, setSelectedClassId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -344,7 +347,7 @@ const AccessoriesSection = () => {
                 <div className="flex gap-1.5 no-print" onClick={e => e.stopPropagation()}>
                   <button onClick={handlePrintBook} className="flex items-center gap-1 px-3 py-1.5 bg-school-paper rounded-lg text-xs hover:bg-school-border/50"><Printer size={12} /> Print</button>
                   <button onClick={handlePdfBook} className="flex items-center gap-1 px-3 py-1.5 bg-school-paper rounded-lg text-xs hover:bg-school-border/50"><Download size={12} /> PDF</button>
-                  {isAdmin && (
+                  {canEditBooks && (
                     <button onClick={() => { setNewBook(true); setNewBookData({ name: '', sell: '' }); }} className="flex items-center gap-1 px-3 py-1.5 bg-school-primary text-white rounded-lg text-xs font-bold hover:opacity-90">
                       <Plus size={12} /> Add Book
                     </button>
@@ -415,7 +418,7 @@ const AccessoriesSection = () => {
                             <span className="font-bold font-mono">৳ {fmt(Number(b.sell))}</span>
                           )}
                         </td>
-                        {isAdmin && (
+                        {canEditBooks && (
                           <td className="px-4 py-2.5 text-center">
                             {isEditing ? (
                               <div className="flex gap-1 justify-center">

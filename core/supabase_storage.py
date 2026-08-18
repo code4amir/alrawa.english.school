@@ -24,10 +24,12 @@ def _get_headers():
     }
 
 
-def _req(method, url, data=None, content_type=None, raw=False):
+def _req(method, url, data=None, content_type=None, raw=False, extra_headers=None):
     h = {k: v for k, v in _get_headers().items() if k != 'Content-Type'}
     if content_type:
         h["Content-Type"] = content_type
+    if extra_headers:
+        h.update(extra_headers)
     if data is not None and isinstance(data, bytes) and raw:
         pass
     elif data is not None:
@@ -59,6 +61,11 @@ def get_signed_url(path, expires_in=3600):
     return None
 
 
+def _bust_signed_url(path):
+    """Invalidate any cached signed URL so a freshly re-uploaded photo is served."""
+    cache.delete(f"supabase_signed_url_{path}")
+
+
 def delete_photo(path):
     if not path:
         return
@@ -67,6 +74,19 @@ def delete_photo(path):
 
 
 def upload_photo(path, photo_bytes):
+    # Use PUT (not POST) so re-uploading to the same path OVERWRITES the existing
+    # object instead of failing with a "already exists" error. x-upsert guards
+    # against create-vs-update ambiguity; cache-control: no-cache prevents the
+    # CDN from serving a stale image after an update.
     url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{path}"
-    result = _req("POST", url, data=photo_bytes, content_type="image/jpeg", raw=True)
-    return result is not None
+    ok = _req(
+        "PUT",
+        url,
+        data=photo_bytes,
+        content_type="image/jpeg",
+        raw=True,
+        extra_headers={"cache-control": "no-cache", "x-upsert": "true"},
+    ) is not None
+    if ok:
+        _bust_signed_url(path)
+    return ok
