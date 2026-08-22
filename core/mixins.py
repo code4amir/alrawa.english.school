@@ -102,6 +102,9 @@ class PhotoHandleMixin:
         if instance.photo_path:
             url = get_signed_url(instance.photo_path)
             if url:
+                # no-store: the photoUrl token is deterministic per object, so
+                # without this the browser serves its cached (stale) image
+                # forever after a photo is re-uploaded.
                 if request.query_params.get('proxy') or authenticated:
                     import urllib.request
                     from django.http import HttpResponse
@@ -109,10 +112,14 @@ class PhotoHandleMixin:
                         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                         resp = urllib.request.urlopen(req, timeout=10)
                         content_type = resp.headers.get('Content-Type', 'image/jpeg')
-                        return HttpResponse(resp.read(), content_type=content_type)
+                        r = HttpResponse(resp.read(), content_type=content_type)
+                        r['Cache-Control'] = 'no-store, max-age=0'
+                        return r
                     except Exception as e:
                         logger.error("Photo proxy failed for pk=%s: %s", pk, e)
-                return redirect(url)
+                redirect_resp = redirect(url)
+                redirect_resp['Cache-Control'] = 'no-store, max-age=0'
+                return redirect_resp
         return Response({'error': 'No photo'}, status=404)
 
     @action(detail=True, methods=['post'])
