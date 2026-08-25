@@ -50,7 +50,11 @@ export default function EnterByStudent() {
 
   const loadResults = async (clsId: string) => {
     const key = `${clsId}-${sessionFilter}`;
-    if (classResults[key]) { setAllResults(classResults[key]); return; }
+    // Skip the cache only when it hasn't been invalidated: saveStudentResult
+    // zeroes _fetchedAt for classResults keys after a save, so a plain truthy
+    // check here used to serve STALE marks until a full page reload.
+    const invalidated = useSchoolStore.getState()._fetchedAt[`classResults_${key}`] === 0;
+    if (classResults[key] && !invalidated) { setAllResults(classResults[key]); return; }
     await fetchClassResults(clsId, sessionFilter);
     setAllResults(useSchoolStore.getState().classResults[key] || []);
   };
@@ -113,7 +117,7 @@ export default function EnterByStudent() {
     setMarks(next);
     marksRef.current = next;
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(save, 500);
+    saveTimer.current = setTimeout(() => { save().catch((e) => { console.error('Auto-save failed', e?.response?.data || e); toast('Auto-save failed — press Save to retry', 'error'); setSaveStatus(''); }); }, 500);
   };
 
   return (
@@ -217,7 +221,7 @@ export default function EnterByStudent() {
           </div>
           <div className="bg-white rounded-2xl border border-school-border p-4">
             <h4 className="font-bold text-sm mb-3 flex items-center gap-1.5"><MessageSquare size={16} /> Teacher's Comment</h4>
-            <textarea value={comment} onChange={(e) => { setHasUnsavedChanges(true); setComment(e.target.value); commentRef.current = e.target.value; clearTimeout(saveTimer.current); saveTimer.current = setTimeout(save, 500); }} rows={3} placeholder="Write about the student's performance…" className="w-full px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none focus:border-school-accent resize-none" />
+            <textarea value={comment} onChange={(e) => { setHasUnsavedChanges(true); setComment(e.target.value); commentRef.current = e.target.value; clearTimeout(saveTimer.current); saveTimer.current = setTimeout(() => { save().catch((err) => { console.error('Auto-save failed', err?.response?.data || err); toast('Auto-save failed — press Save to retry', 'error'); setSaveStatus(''); }); }, 500); }} rows={3} placeholder="Write about the student's performance…" className="w-full px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none focus:border-school-accent resize-none" />
           </div>
         </div>
       )}

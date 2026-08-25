@@ -29,7 +29,11 @@ export default function EnterBySubject() {
 
   const loadResults = async (clsId: string) => {
     const key = `${clsId}-${sessionFilter}`;
-    if (classResults[key]) { setAllResults(classResults[key]); return; }
+    // Skip the cache only when it hasn't been invalidated: saveStudentResult
+    // zeroes _fetchedAt for classResults keys after a save, so a plain truthy
+    // check here used to serve STALE marks until a full page reload.
+    const invalidated = useSchoolStore.getState()._fetchedAt[`classResults_${key}`] === 0;
+    if (classResults[key] && !invalidated) { setAllResults(classResults[key]); return; }
     await fetchClassResults(clsId, sessionFilter);
     setAllResults(useSchoolStore.getState().classResults[key] || []);
   };
@@ -92,43 +96,64 @@ export default function EnterBySubject() {
     if (!selectedSubj) return;
     toast('Saving…');
     const canonicalSubject = SUBJECT_KEY_MAP[bulkSubject] || bulkSubject;
+    let failures = 0;
     for (const s of clsStudents) {
-      const v = bulkMarks[s.id];
-      const marksData: Record<string, number> = {};
-      const existing = allResults.find((x: any) => x.studentId === s.id && x.term === bulkTerm);
-      if (existing?.marks) Object.entries(existing.marks).forEach(([k, val]) => { marksData[k] = +(val as number); });
-      if (v !== '' && v !== undefined && !isNaN(+v)) marksData[canonicalSubject] = Math.min(+v, selectedSubj.fullMarks);
-      else delete marksData[canonicalSubject];
-      await saveStudentResult(s.id, bulkTerm, marksData, existing?.attendance || undefined, undefined, sessionFilter);
+      try {
+        const v = bulkMarks[s.id];
+        const marksData: Record<string, number> = {};
+        const existing = allResults.find((x: any) => x.studentId === s.id && x.term === bulkTerm);
+        if (existing?.marks) Object.entries(existing.marks).forEach(([k, val]) => { marksData[k] = +(val as number); });
+        if (v !== '' && v !== undefined && !isNaN(+v)) marksData[canonicalSubject] = Math.min(+v, selectedSubj.fullMarks);
+        else delete marksData[canonicalSubject];
+        await saveStudentResult(s.id, bulkTerm, marksData, existing?.attendance || undefined, undefined, sessionFilter);
+      } catch (e: any) {
+        failures++;
+        console.error('Result save failed for', s.name, e?.response?.data || e);
+      }
     }
     setHasUnsavedChanges(false);
-    toast(`Marks saved for ${clsStudents.length} students ✓`, 'success');
+    if (failures > 0) toast(`Saved with ${failures} failure(s) — check connection & retry`, 'error');
+    else toast(`Marks saved for ${clsStudents.length} students ✓`, 'success');
     loadResults(cls.id);
   };
 
   const saveBulkAttendance = async () => {
     toast('Saving…');
+    let failures = 0;
     for (const s of clsStudents) {
-      const att = bulkAtt[s.id] || { days: '', present: '' };
-      const existing = allResults.find((x: any) => x.studentId === s.id && x.term === bulkTerm);
-      const days = parseInt(att.days) || 0;
-      const present = parseInt(att.present) || 0;
-      const attendanceData = days > 0 ? { days, present } : undefined;
-      await saveStudentResult(s.id, bulkTerm, existing?.marks || {}, attendanceData, undefined, sessionFilter);
+      try {
+        const att = bulkAtt[s.id] || { days: '', present: '' };
+        const existing = allResults.find((x: any) => x.studentId === s.id && x.term === bulkTerm);
+        const days = parseInt(att.days) || 0;
+        const present = parseInt(att.present) || 0;
+        const attendanceData = days > 0 ? { days, present } : undefined;
+        await saveStudentResult(s.id, bulkTerm, existing?.marks || {}, attendanceData, undefined, sessionFilter);
+      } catch (e: any) {
+        failures++;
+        console.error('Attendance save failed for', s.name, e?.response?.data || e);
+      }
     }
     setHasUnsavedChanges(false);
-    toast(`Attendance saved ✓`, 'success');
+    if (failures > 0) toast(`Saved with ${failures} failure(s) — check connection & retry`, 'error');
+    else toast(`Attendance saved ✓`, 'success');
     loadResults(cls.id);
   };
 
   const saveBulkComments = async () => {
     toast('Saving…');
+    let failures = 0;
     for (const s of clsStudents) {
-      const existing = allResults.find((x: any) => x.studentId === s.id && x.term === bulkTerm);
-      await saveStudentResult(s.id, bulkTerm, existing?.marks || {}, existing?.attendance || undefined, bulkComment[s.id] || '', sessionFilter);
+      try {
+        const existing = allResults.find((x: any) => x.studentId === s.id && x.term === bulkTerm);
+        await saveStudentResult(s.id, bulkTerm, existing?.marks || {}, existing?.attendance || undefined, bulkComment[s.id] || '', sessionFilter);
+      } catch (e: any) {
+        failures++;
+        console.error('Comment save failed for', s.name, e?.response?.data || e);
+      }
     }
     setHasUnsavedChanges(false);
-    toast(`Comments saved ✓`, 'success');
+    if (failures > 0) toast(`Saved with ${failures} failure(s) — check connection & retry`, 'error');
+    else toast(`Comments saved ✓`, 'success');
     loadResults(cls.id);
   };
 

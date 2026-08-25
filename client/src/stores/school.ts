@@ -401,7 +401,23 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
   },
 
   saveStudentResult: async (studentId: string, term: string, marks: Record<string, number>, attendance?: { days: number; present: number }, comment?: string, session?: string) => {
-    await api.post(`/students/${studentId}/results/`, { term, marks, attendance, session, ...(comment !== undefined && { comment }) });
+    const payload = { term, marks, attendance, session, ...(comment !== undefined && { comment }) };
+    // Upsert: Result has UniqueConstraint(student, term, session) and POSTing a
+    // duplicate returns 400 ("must make a unique set"), which previously aborted
+    // bulk saves silently. Create first; on that specific conflict, PATCH the
+    // existing row (id comes from the per-student results endpoint).
+    try {
+      await api.post(`/students/${studentId}/results/`, payload);
+    } catch (e: any) {
+      const errs = e?.response?.data?.non_field_errors;
+      const isDup = e?.response?.status === 400 && Array.isArray(errs) && errs.some((m: string) => String(m).includes('unique set'));
+      if (!isDup) throw e;
+      const existing = await api.get(`/students/${studentId}/results/`, { params: session ? { session } : {} });
+      const rows = existing.data.results || existing.data.data || existing.data || [];
+      const row = rows.find((r: any) => String(r.term) === String(term));
+      if (!row) throw e;
+      await api.patch(`/results/${row.id}/`, payload);
+    }
     set((s) => {
       const next = { ...s.studentResultsCache };
       for (const key of Object.keys(next)) {
