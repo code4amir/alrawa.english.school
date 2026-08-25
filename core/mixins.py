@@ -62,7 +62,10 @@ class PhotoHandleMixin:
             return
         if photo_data.startswith('http'):
             return
-        mime_prefix = photo_data.split(',')[0] if ',' in photo_data else ''
+        # Standard data URLs are "data:image/jpeg;base64,<payload>" — strip the
+        # ";base64" marker before whitelisting, otherwise the comparison below
+        # ALWAYS fails and every photo upload is silently rejected.
+        mime_prefix = photo_data.split(',', 1)[0].split(';', 1)[0] if ',' in photo_data else ''
         if mime_prefix and mime_prefix not in self.ALLOWED_PHOTO_MIME_PREFIXES:
             logger.error("Rejected photo upload with disallowed MIME type: %s", mime_prefix)
             return
