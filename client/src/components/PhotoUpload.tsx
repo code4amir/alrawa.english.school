@@ -25,17 +25,18 @@ const PhotoUpload: React.FC<Props> = ({ photo, onPhotoChange, onOpenCamera, size
     const reader = new FileReader();
     reader.onload = (ev: ProgressEvent<FileReader>) => {
       img.onload = () => {
+        // Photos display in a CIRCLE app-wide — center-crop to a SQUARE here so
+        // gallery shots match camera captures and CSS never surprise-crops.
         const MAX = 400;
-        let w = img.width;
-        let h = img.height;
-        if (w > MAX || h > MAX) {
-          if (w > h) { h = Math.round((h * MAX) / w); w = MAX; }
-          else { w = Math.round((w * MAX) / h); h = MAX; }
-        }
+        const side = Math.min(img.width, img.height);
+        const scale = Math.min(1, MAX / side);
+        const out = Math.max(1, Math.round(side * scale));
+        const sx = Math.round((img.width - side) / 2);
+        const sy = Math.round((img.height - side) / 2);
         const canvas = document.createElement('canvas');
-        canvas.width = w;
-        canvas.height = h;
-        canvas.getContext('2d')?.drawImage(img, 0, 0, w, h);
+        canvas.width = out;
+        canvas.height = out;
+        canvas.getContext('2d')?.drawImage(img, sx, sy, side, side, 0, 0, out, out);
         onPhotoChange(canvas.toDataURL('image/jpeg', 0.6));
       };
       img.src = ev.target?.result as string;
