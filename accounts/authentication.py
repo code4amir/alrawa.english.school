@@ -70,6 +70,12 @@ class PinAuthentication(BaseAuthentication):
         raw = auth.split(' ', 1)[1]
         if not raw:
             return None
+        # FIX (2026-08-23): Teacher was imported inside the try block but
+        # referenced in the except clause — any token that raised TokenError
+        # before the import line ran triggered UnboundLocalError -> 500.
+        # Import moved to the top of the method; Supabase JWTs now fall
+        # through cleanly (return None) instead of crashing the view.
+        from teachers.models import Teacher
         try:
             validated = AccessToken(raw)
             if not validated.get('pin_auth'):
@@ -77,7 +83,6 @@ class PinAuthentication(BaseAuthentication):
             teacher_id = validated.get('teacher_id')
             if not teacher_id:
                 return None
-            from teachers.models import Teacher
             teacher = Teacher.objects.get(id=teacher_id, deleted_at__isnull=True)
             teacher.is_authenticated = True  # ponytail: duck-punch for DRF compat
             return (teacher, validated)
