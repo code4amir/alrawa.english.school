@@ -27,12 +27,15 @@ class TeacherSubjectSerializer(serializers.ModelSerializer):
 
 class TeacherSerializer(PhotoUrlMixin, serializers.ModelSerializer):
     photo_url_prefix = 'teachers'
-    designation = serializers.CharField(read_only=True)
+    # NOTE: designation/email are plain model columns and MUST stay writable —
+    # the ID-card edit form sends {designation, name, email, contact}. They were
+    # read_only for a time, which silently dropped edits to both fields.
+    designation = serializers.CharField()
     hasPhoto = serializers.SerializerMethodField()
     photoUrl = serializers.SerializerMethodField()
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     userId = serializers.UUIDField(source='user.id', read_only=True)
-    email = serializers.EmailField(read_only=True)
+    email = serializers.EmailField(required=False, allow_blank=True, allow_null=True)
     classTeacherOf = serializers.SerializerMethodField()
     subjectAssignments = serializers.SerializerMethodField()
 
