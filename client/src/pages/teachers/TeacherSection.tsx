@@ -9,6 +9,7 @@ import { RefreshCw, Mail, Download, Upload, Camera, Pencil, Trash2, Check, Gradu
 import { contactLinks } from '../../lib/contacts';
 import DeleteConfirmModal from '../../components/DeleteConfirmModal';
 import { API_URL } from '../../lib/config';
+import { useNativeCamera } from '../../hooks/useNativeCamera';
 
 let _jsPDF: any = null;
 async function loadJsPDF() {
@@ -31,6 +32,10 @@ export default function TeacherSection() {
 
   const [photo, setPhoto] = useState<string | null>(null);
   const [form, setForm] = useState({ designation: '', name: '', email: '', contact: '' });
+  const { openNativeCamera, nativeInput } = useNativeCamera((d) => {
+    if (d) setPhoto(d);
+    setShowCamera(false);
+  });
 
   useEffect(() => { document.title = 'Teachers - AL RAWA English School'; }, []);
   useEffect(() => {
@@ -110,7 +115,7 @@ export default function TeacherSection() {
   const renderEditCard = (isNew: boolean) => (
     <div className={`p-4 rounded-2xl border-2 transition-all ${isNew ? 'border-violet-400 bg-violet-50/50' : 'border-blue-400 bg-blue-50/50'}`} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); } }}>
       <div className="flex justify-center mb-3">
-        <button onClick={() => setShowCamera(true)} className="relative group" aria-label="Take photo">
+        <button onClick={() => { if (!openNativeCamera()) setShowCamera(true); }} className="relative group" aria-label="Take photo">
           {photo ? (
             <img src={photo} alt="" className="w-20 h-20 rounded-full object-cover border-2 border-white shadow-md" />
           ) : (
@@ -217,6 +222,7 @@ export default function TeacherSection() {
 
   return (
     <div className="space-y-4">
+      {nativeInput}
       <CameraModal open={showCamera} onClose={() => setShowCamera(false)} onCapture={(d) => { setPhoto(d); setShowCamera(false); }} />
       <ImportModal open={showImport} onClose={() => setShowImport(false)} onImported={() => fetchTeachers()} entity="teacher" />
 

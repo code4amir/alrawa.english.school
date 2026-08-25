@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import { Camera, Image } from 'lucide-react';
+import { useNativeCamera } from '../hooks/useNativeCamera';
 
 interface Props {
   photo: string | null;
@@ -10,6 +11,7 @@ interface Props {
 
 const PhotoUpload: React.FC<Props> = ({ photo, onPhotoChange, onOpenCamera, size = 'md' }) => {
   const inputRef = useRef<HTMLInputElement>(null);
+  const { openNativeCamera, nativeInput } = useNativeCamera((d) => { if (d) onPhotoChange(d); });
 
   const sizeClasses = {
     sm: 'w-14 h-14',
@@ -59,11 +61,12 @@ const PhotoUpload: React.FC<Props> = ({ photo, onPhotoChange, onOpenCamera, size
       <div className="flex gap-2">
         <button
           type="button"
-          onClick={onOpenCamera}
+          onClick={() => { if (!openNativeCamera()) onOpenCamera(); }}
           className="flex items-center gap-1 px-3 py-1.5 bg-school-primary text-white rounded-lg text-xs font-medium hover:opacity-90"
         >
           <Camera size={14} /> Camera
         </button>
+        {nativeInput}
         <label className="flex items-center gap-1 px-3 py-1.5 bg-school-secondary text-white rounded-lg text-xs font-medium cursor-pointer hover:opacity-90">
           <Image size={14} /> Gallery
           <input

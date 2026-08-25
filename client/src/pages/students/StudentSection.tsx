@@ -13,6 +13,7 @@ import DeleteConfirmModal from '../../components/DeleteConfirmModal';
 import PromoteModal from '../../components/PromoteModal';
 import ShareLinkModal from '../../components/ShareLinkModal';
 import { API_URL } from '../../lib/config';
+import { useNativeCamera } from '../../hooks/useNativeCamera';
 
 let _jsPDF: any = null;
 async function loadJsPDF() {
@@ -55,6 +56,10 @@ export default function StudentSection() {
 
   const [photo, setPhoto] = useState<string | null>(null);
   const [form, setForm] = useState({ className: '', roll: '', name: '', fatherName: '', motherName: '', contact: '' });
+  const { openNativeCamera, nativeInput } = useNativeCamera((d) => {
+    if (d) setPhoto(d);
+    setShowCamera(false);
+  });
 
   useEffect(() => { 
     if (classes.length === 0) fetchClasses(); 
@@ -182,7 +187,7 @@ export default function StudentSection() {
     return (
       <div className={`p-4 rounded-2xl border-2 transition-all ${isNew ? 'border-violet-400 bg-violet-50/50' : 'border-blue-400 bg-blue-50/50'}`} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); } }}>
         <div className="flex justify-center mb-3">
-          <button onClick={() => setShowCamera(true)} className="relative group" aria-label="Take photo">
+          <button onClick={() => { if (!openNativeCamera()) setShowCamera(true); }} className="relative group" aria-label="Take photo">
             {photo ? (
               <img src={photo} alt="" className="w-20 h-20 rounded-full object-cover border-2 border-white shadow-md" />
             ) : (
@@ -301,6 +306,7 @@ export default function StudentSection() {
     <div className="space-y-4">
           <ClassManagerModal open={showClassManager} onClose={() => setShowClassManager(false)} />
           <ShareLinkModal open={!!shareStudent} onClose={() => setShareStudent(null)} student={shareStudent} />
+      {nativeInput}
       <CameraModal open={showCamera} onClose={() => setShowCamera(false)} onCapture={(d) => { setPhoto(d); setShowCamera(false); }} />
       <ImportModal open={showImport} onClose={() => setShowImport(false)} onImported={() => fetchStudents(undefined, true)} />
 
