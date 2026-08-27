@@ -1,4 +1,10 @@
-const CACHE = 'alrawa-v7';
+// The build-stamp placeholder below is replaced with the build timestamp by
+// the vite plugin in vite.config.ts. Because the SW file's bytes change on
+// every deploy, the browser always detects a new service worker, which (via
+// skipWaiting + clients.claim below) takes control and triggers the
+// controllerchange reload in main.tsx — so devices never keep executing a
+// stale cached bundle.
+const CACHE = 'alrawa-__BUILD_STAMP__';
 const PARENT_CACHE = 'parent-cache-v1';
 const PRECACHE_URLS = ['manifest.json'];
 
