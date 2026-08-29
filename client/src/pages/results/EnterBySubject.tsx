@@ -1,6 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useSchoolStore, useAuthStore } from '../../store';
-import { toast } from '../../components/Toast';
 import ClassSelect from '../../components/ClassSelect';
 import { gradeFromMarks, gradeChip } from '../../lib/grading';
 import { Save } from 'lucide-react';
@@ -26,6 +25,8 @@ export default function EnterBySubject() {
   const [bulkAtt, setBulkAtt] = useState<Record<string, { days: string; present: string }>>({});
   const [bulkComment, setBulkComment] = useState<Record<string, string>>({});
   const bulkTerm = termFilter;
+  const [saveStatus, setSaveStatus] = useState<'' | 'saving' | 'saved' | 'error'>('');
+  const statusTimer = useRef<any>(null);
 
   const loadResults = async (clsId: string) => {
     const key = `${clsId}-${sessionFilter}`;
@@ -94,7 +95,8 @@ export default function EnterBySubject() {
 
   const saveBulkMarks = async () => {
     if (!selectedSubj) return;
-    toast('Saving…');
+    setSaveStatus('saving');
+    clearTimeout(statusTimer.current);
     const canonicalSubject = SUBJECT_KEY_MAP[bulkSubject] || bulkSubject;
     let failures = 0;
     for (const s of clsStudents) {
@@ -112,13 +114,14 @@ export default function EnterBySubject() {
       }
     }
     setHasUnsavedChanges(false);
-    if (failures > 0) toast(`Saved with ${failures} failure(s) — check connection & retry`, 'error');
-    else toast(`Marks saved for ${clsStudents.length} students ✓`, 'success');
     loadResults(cls.id);
+    setSaveStatus(failures > 0 ? 'error' : 'saved');
+    statusTimer.current = setTimeout(() => setSaveStatus(''), 2500);
   };
 
   const saveBulkAttendance = async () => {
-    toast('Saving…');
+    setSaveStatus('saving');
+    clearTimeout(statusTimer.current);
     let failures = 0;
     for (const s of clsStudents) {
       try {
@@ -134,13 +137,14 @@ export default function EnterBySubject() {
       }
     }
     setHasUnsavedChanges(false);
-    if (failures > 0) toast(`Saved with ${failures} failure(s) — check connection & retry`, 'error');
-    else toast(`Attendance saved ✓`, 'success');
     loadResults(cls.id);
+    setSaveStatus(failures > 0 ? 'error' : 'saved');
+    statusTimer.current = setTimeout(() => setSaveStatus(''), 2500);
   };
 
   const saveBulkComments = async () => {
-    toast('Saving…');
+    setSaveStatus('saving');
+    clearTimeout(statusTimer.current);
     let failures = 0;
     for (const s of clsStudents) {
       try {
@@ -152,9 +156,9 @@ export default function EnterBySubject() {
       }
     }
     setHasUnsavedChanges(false);
-    if (failures > 0) toast(`Saved with ${failures} failure(s) — check connection & retry`, 'error');
-    else toast(`Comments saved ✓`, 'success');
     loadResults(cls.id);
+    setSaveStatus(failures > 0 ? 'error' : 'saved');
+    statusTimer.current = setTimeout(() => setSaveStatus(''), 2500);
   };
 
   return (
@@ -241,6 +245,11 @@ export default function EnterBySubject() {
           {canSaveResults && <button onClick={isComment ? saveBulkComments : isAttendance ? saveBulkAttendance : saveBulkMarks} className="w-full py-2 bg-green-600 text-white rounded-xl text-sm font-bold hover:opacity-90 flex items-center justify-center gap-1.5">
             <Save size={14} /> Save {isComment ? 'All Comments' : isAttendance ? `${TERM_NAMES[bulkTerm]} Attendance` : 'All Marks'}
           </button>}
+          <div className="flex items-center justify-center gap-2 min-h-[1.25rem]">
+            {saveStatus === 'saving' && <span className="text-[11px] text-school-muted animate-pulse">Saving…</span>}
+            {saveStatus === 'saved' && <span className="text-[11px] text-green-600 font-bold flex items-center gap-1"><Save size={12} /> Saved ✓</span>}
+            {saveStatus === 'error' && <span className="text-[11px] text-red-500 font-bold flex items-center gap-1">Saved with errors — check connection &amp; retry</span>}
+          </div>
         </div>
       )}
     </div>
