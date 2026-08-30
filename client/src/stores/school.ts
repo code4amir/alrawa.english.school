@@ -62,7 +62,7 @@ interface SchoolState {
   updateSubject: (id: string, data: Partial<Subject>) => Promise<void>;
   deleteSubject: (id: string) => Promise<void>;
 
-  saveStudentResult: (studentId: string, term: string, marks: Record<string, number>, attendance?: { days: number; present: number }, comment?: string, session?: string) => Promise<void>;
+  saveStudentResult: (studentId: string, term: string, marks: Record<string, number>, attendance?: { days: number; present: number }, comment?: string, session?: string, existingRow?: any) => Promise<void>;
   studentResultsCache: Record<string, { data: Result[]; ts: number }>;
   getStudentResults: (studentId: string, session?: string) => Promise<Result[]>;
 
@@ -400,23 +400,43 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
     finally { set((s) => ({ loading: { ...s.loading, expenseCategories: false } })); }
   },
 
-  saveStudentResult: async (studentId: string, term: string, marks: Record<string, number>, attendance?: { days: number; present: number }, comment?: string, session?: string) => {
-    const payload = { term, marks, attendance, session, ...(comment !== undefined && { comment }) };
+  saveStudentResult: async (studentId: string, term: string, marks: Record<string, number>, attendance?: { days: number; present: number }, comment?: string, session?: string, existingRow?: any) => {
+    // The backend PATCH *replaces* the entire `marks` JSON (DRF JSONField, no
+    // merge). A partial payload — e.g. Enter-by-Subject saving just one subject —
+    // would silently WIPE every other subject for that term. So we ALWAYS merge
+    // onto the authoritative existing row first. If the caller didn't hand us a
+    // usable row (stale/missing local cache), fetch it ourselves.
+    let existing: any = (existingRow && String(existingRow.term) === String(term)) ? existingRow : null;
+    if (!existing) {
+      try {
+        const ex = await api.get(`/students/${studentId}/results/`, { params: session ? { session } : {} });
+        const rows = ex.data.results || ex.data.data || ex.data || [];
+        existing = rows.find((r: any) => String(r.term) === String(term)) || null;
+      } catch { existing = null; }
+    }
+    const mergedMarks: Record<string, number> = { ...(existing?.marks || {}), ...(marks || {}) };
+    const payload: any = { term, marks: mergedMarks, session };
+    if (attendance !== undefined) payload.attendance = attendance;
+    else if (existing?.attendance !== undefined) payload.attendance = existing.attendance;
+    if (comment !== undefined) payload.comment = comment;
+    else if (existing?.comment !== undefined) payload.comment = existing.comment;
+
     // Upsert: Result has UniqueConstraint(student, term, session) and POSTing a
-    // duplicate returns 400 ("must make a unique set"), which previously aborted
-    // bulk saves silently. Create first; on that specific conflict, PATCH the
-    // existing row (id comes from the per-student results endpoint).
+    // duplicate returns 400 ("must make a unique set"). Create first; on that
+    // specific conflict, PATCH the existing row.
     try {
       await api.post(`/students/${studentId}/results/`, payload);
     } catch (e: any) {
       const errs = e?.response?.data?.non_field_errors;
       const isDup = e?.response?.status === 400 && Array.isArray(errs) && errs.some((m: string) => String(m).includes('unique set'));
       if (!isDup) throw e;
-      const existing = await api.get(`/students/${studentId}/results/`, { params: session ? { session } : {} });
-      const rows = existing.data.results || existing.data.data || existing.data || [];
-      const row = rows.find((r: any) => String(r.term) === String(term));
-      if (!row) throw e;
-      await api.patch(`/results/${row.id}/`, payload);
+      if (!existing) {
+        const ex = await api.get(`/students/${studentId}/results/`, { params: session ? { session } : {} });
+        const rows = ex.data.results || ex.data.data || ex.data || [];
+        existing = rows.find((r: any) => String(r.term) === String(term)) || null;
+      }
+      if (!existing) throw e;
+      await api.patch(`/results/${existing.id}/`, payload);
     }
     set((s) => {
       const next = { ...s.studentResultsCache };

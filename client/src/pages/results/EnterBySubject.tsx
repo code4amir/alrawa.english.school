@@ -107,7 +107,9 @@ export default function EnterBySubject() {
         if (existing?.marks) Object.entries(existing.marks).forEach(([k, val]) => { marksData[k] = +(val as number); });
         if (v !== '' && v !== undefined && !isNaN(+v)) marksData[canonicalSubject] = Math.min(+v, selectedSubj.fullMarks);
         else delete marksData[canonicalSubject];
-        await saveStudentResult(s.id, bulkTerm, marksData, existing?.attendance || undefined, undefined, sessionFilter);
+        // Pass `existing` so the store merges other subjects/attendance instead
+        // of overwriting the whole marks JSON (backend PATCH replaces, no merge).
+        await saveStudentResult(s.id, bulkTerm, marksData, existing?.attendance || undefined, undefined, sessionFilter, existing);
       } catch (e: any) {
         failures++;
         console.error('Result save failed for', s.name, e?.response?.data || e);
@@ -130,7 +132,7 @@ export default function EnterBySubject() {
         const days = parseInt(att.days) || 0;
         const present = parseInt(att.present) || 0;
         const attendanceData = days > 0 ? { days, present } : undefined;
-        await saveStudentResult(s.id, bulkTerm, existing?.marks || {}, attendanceData, undefined, sessionFilter);
+        await saveStudentResult(s.id, bulkTerm, existing?.marks || {}, attendanceData, undefined, sessionFilter, existing);
       } catch (e: any) {
         failures++;
         console.error('Attendance save failed for', s.name, e?.response?.data || e);
@@ -149,7 +151,7 @@ export default function EnterBySubject() {
     for (const s of clsStudents) {
       try {
         const existing = allResults.find((x: any) => x.studentId === s.id && x.term === bulkTerm);
-        await saveStudentResult(s.id, bulkTerm, existing?.marks || {}, existing?.attendance || undefined, bulkComment[s.id] || '', sessionFilter);
+        await saveStudentResult(s.id, bulkTerm, existing?.marks || {}, existing?.attendance || undefined, bulkComment[s.id] || '', sessionFilter, existing);
       } catch (e: any) {
         failures++;
         console.error('Comment save failed for', s.name, e?.response?.data || e);
