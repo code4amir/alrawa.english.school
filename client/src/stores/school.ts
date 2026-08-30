@@ -201,12 +201,22 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
     if (!force && get().books.length > 0 && !params) return;
     set((s) => ({ loading: { ...s.loading, books: true } }));
     try {
-      const res = await api.get('/books/', { params: { offset: String((page - 1) * 50), limit: '50', ...params } });
-      set({
-        books: res.data.results || res.data.data || res.data,
-        bookTotal: res.data.count ?? res.data.total ?? 0,
-        lastFetched: Date.now()
-      });
+      // DRF paginates at 50/page — accumulate ALL pages so every class's
+      // books appear in the table (otherwise later classes silently drop).
+      let offset = (page - 1) * 50;
+      let all: any[] = [];
+      let total = 0;
+      let next: string | null = 'https://placeholder';
+      while (next !== null) {
+        const res = await api.get('/books/', { params: { offset: String(offset), limit: '50', ...params } });
+        const results: any[] = res.data.results || res.data.data || res.data;
+        all = all.concat(results);
+        total = res.data.count ?? res.data.total ?? total;
+        // DRF LimitOffsetPagination: res.data.next is a full URL or null.
+        next = res.data.next ?? null;
+        offset += 50;
+      }
+      set({ books: all, bookTotal: total, lastFetched: Date.now() });
     } catch (e) { if (import.meta.env.DEV) console.warn("[store]", e); }
     finally { set((s) => ({ loading: { ...s.loading, books: false } })); }
   },
