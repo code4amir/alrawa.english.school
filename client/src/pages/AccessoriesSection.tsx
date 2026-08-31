@@ -426,7 +426,7 @@ const AccessoriesSection = () => {
                                 <button onClick={() => setEditBook(null)} className="p-1 text-red-500 hover:bg-red-50 rounded" aria-label="Cancel"><X size={14} /></button>
                               </div>
                             ) : (
-                              <div className="flex gap-1 justify-center opacity-0 group-hover:opacity-100 transition-all">
+                              <div className="flex gap-1 justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all">
                                 <button onClick={() => setEditBook({ id: b.id, name: b.name, sell: String(Number(b.sell)) })} className="p-1 text-blue-500 hover:bg-blue-50 rounded" aria-label="Edit"><Pencil size={12} /></button>
                                 <button onClick={() => setDeleteId(b.id)} className="p-1 text-red-400 hover:bg-red-50 rounded" aria-label="Delete"><Trash2 size={12} /></button>
                               </div>
