@@ -59,6 +59,70 @@ class AttendanceTests(TestCase):
         self.assertEqual(res.data['count'], 2)
         self.assertEqual(AttendanceRecord.objects.count(), 2)
 
+    def test_monthly_report_date_range(self):
+        """Range mode: from_date/to_date spanning multiple months."""
+        d1 = self._today()                      # a weekday
+        d2 = d1 + timedelta(days=1)
+        while d2.weekday() in (4, 5):
+            d2 = d2 + timedelta(days=1)
+        self.client.post('/api/attendance/batch/', {
+            'school_class': str(self.klass.id),
+            'date': d1.isoformat(),
+            'term': '1', 'session': '2026',
+            'records': {str(self.s1.id): 'present', str(self.s2.id): 'absent'},
+        }, format='json')
+        self.client.post('/api/attendance/batch/', {
+            'school_class': str(self.klass.id),
+            'date': d2.isoformat(),
+            'term': '1', 'session': '2026',
+            'records': {str(self.s1.id): 'present', str(self.s2.id): 'present'},
+        }, format='json')
+
+        res = self.client.get('/api/attendance/monthly-report/', {
+            'class_id': str(self.klass.id),
+            'from_date': d1.isoformat(),
+            'to_date': d2.isoformat(),
+        })
+        self.assertEqual(res.status_code, 200, msg=res.content[:500])
+        data = res.data
+        self.assertEqual(data['from_date'], d1.isoformat())
+        self.assertEqual(data['to_date'], d2.isoformat())
+        # days list covers the exact range (weekends included as type=weekend)
+        self.assertEqual(data['days'][0]['date'], d1.isoformat())
+        self.assertEqual(data['days'][-1]['date'], d2.isoformat())
+        self.assertEqual(
+            (data['days'][-1]['date'] >= data['days'][0]['date']),
+            True,
+        )
+        by_date = {d['date']: d for d in data['days']}
+        self.assertEqual(by_date[d1.isoformat()]['present'], 1)
+        self.assertEqual(by_date[d1.isoformat()]['absent'], 1)
+        self.assertEqual(by_date[d2.isoformat()]['present'], 2)
+
+    def test_monthly_report_range_validation(self):
+        # missing class_id -> 400
+        res = self.client.get('/api/attendance/monthly-report/', {
+            'from_date': '2026-01-01', 'to_date': '2026-01-31',
+        })
+        self.assertEqual(res.status_code, 400)
+        # from > to -> 400
+        res = self.client.get('/api/attendance/monthly-report/', {
+            'class_id': str(self.klass.id),
+            'from_date': '2026-02-01', 'to_date': '2026-01-01',
+        })
+        self.assertEqual(res.status_code, 400)
+        # bad format -> 400
+        res = self.client.get('/api/attendance/monthly-report/', {
+            'class_id': str(self.klass.id),
+            'from_date': '01-2026-01', 'to_date': '2026-01-31',
+        })
+        self.assertEqual(res.status_code, 400)
+        # neither range nor month -> 400
+        res = self.client.get('/api/attendance/monthly-report/', {
+            'class_id': str(self.klass.id),
+        })
+        self.assertEqual(res.status_code, 400)
+
     def test_batch_mixed_statuses(self):
         today = self._today()
         res = self.client.post('/api/attendance/batch/', {

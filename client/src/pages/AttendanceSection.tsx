@@ -30,6 +30,8 @@ interface MonthlyReportData {
   class: { id: string; name: string };
   year: number;
   month: number;
+  from_date?: string;
+  to_date?: string;
   students: StudentInfo[];
   days: { date: string; weekday: number; type: string; present: number; absent: number; unmarked: number }[];
 }
@@ -131,11 +133,14 @@ async function downloadMonthlyPDF(data: MonthlyReportData) {
   const doc = new JsPDF({ format: 'a4', unit: 'mm' });
   const M = 12, W = 210, CW = W - M * 2;
   const NAVY = [26, 26, 46] as const, MUTED = [130, 124, 114] as const;
+  const isRange = Boolean(data.from_date && data.to_date);
   let y = 20;
   doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(...NAVY);
-  doc.text('Monthly Attendance Report', M, y); y += 8;
+  doc.text(isRange ? 'Attendance Report (Date Range)' : 'Monthly Attendance Report', M, y); y += 8;
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...MUTED);
-  doc.text(data.class.name + ' --- ' + monthName(data.month) + ' ' + data.year, M, y); y += 10;
+  doc.text(isRange
+    ? data.class.name + ' --- ' + data.from_date + ' to ' + data.to_date
+    : data.class.name + ' --- ' + monthName(data.month) + ' ' + data.year, M, y); y += 10;
 
   const HH = 7, RH = 6;
   doc.setFillColor(...NAVY); doc.rect(M, y, CW, HH, 'F');
@@ -169,7 +174,10 @@ async function downloadMonthlyPDF(data: MonthlyReportData) {
   const netDays = data.days.filter(function(d) { return d.type !== 'weekend' && d.type !== 'holiday'; }).length;
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...NAVY);
   doc.text('Total Present: ' + totalPre + '  |  Total Absent: ' + totalAbs + '  |  Net Days: ' + netDays, M, y);
-  doc.save('Monthly_Attendance_' + data.class.name + '_' + monthName(data.month) + '_' + data.year + '.pdf');
+  const fname = isRange
+    ? 'Attendance_' + data.class.name + '_' + data.from_date + '_to_' + data.to_date + '.pdf'
+    : 'Monthly_Attendance_' + data.class.name + '_' + monthName(data.month) + '_' + data.year + '.pdf';
+  doc.save(fname);
 }
 
 /* --- Main component --- */
@@ -201,6 +209,9 @@ export default function AttendanceSection() {
   /* monthly report */
   const [monthlyClassId, setMonthlyClassId] = useState('');
   const [monthYear, setMonthYear] = useState({ year: new Date().getFullYear(), month: new Date().getMonth() + 1 });
+  const [rptRangeMode, setRptRangeMode] = useState<'month' | 'range'>('month');
+  const [rptFrom, setRptFrom] = useState(todayStr());
+  const [rptTo, setRptTo] = useState(todayStr());
   const [monthlyData, setMonthlyData] = useState<MonthlyReportData | null>(null);
   const [monthlyLoading, setMonthlyLoading] = useState(false);
   const [monthlyError, setMonthlyError] = useState('');
@@ -295,17 +306,22 @@ export default function AttendanceSection() {
   /* load monthly report */
   var loadMonthlyReport = async function () {
     if (!monthlyClassId) { toast('Select a class', 'error'); return; }
+    if (rptRangeMode === 'range' && rptFrom > rptTo) { setMonthlyError('From date must be before To date'); return; }
     setMonthlyLoading(true); setMonthlyError('');
     try {
-      var res = await api.get('/attendance/monthly-report/', {
-        params: { class_id: monthlyClassId, year: monthYear.year, month: monthYear.month },
-      });
+      var params: Record<string, string>;
+      if (rptRangeMode === 'range') {
+        params = { class_id: monthlyClassId, from_date: rptFrom, to_date: rptTo };
+      } else {
+        params = { class_id: monthlyClassId, year: String(monthYear.year), month: String(monthYear.month) };
+      }
+      var res = await api.get('/attendance/monthly-report/', { params });
       setMonthlyData(res.data);
-    } catch (_) { setMonthlyError('Failed to load monthly report'); }
+    } catch (_) { setMonthlyError('Failed to load report'); }
     setMonthlyLoading(false);
   };
 
-  useEffect(function () { if (monthlyClassId) loadMonthlyReport(); }, [monthlyClassId, monthYear]);
+  useEffect(function () { if (monthlyClassId) loadMonthlyReport(); }, [monthlyClassId, monthYear, rptRangeMode, rptFrom, rptTo]);
 
   return (
     <div className="space-y-4 animate-fade-in max-w-2xl mx-auto">
@@ -553,6 +569,19 @@ export default function AttendanceSection() {
                   <option value="">Select Class</option>
                   {classes.map(function (c) { return <option key={c.id} value={c.id}>{c.name}</option>; })}
                 </select>
+                <div className="flex bg-school-border/30 dark:bg-[#2a2a3e]/50 rounded-xl p-1">
+                  <button onClick={function () { setRptRangeMode('month'); }}
+                    className={'flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors ' + (rptRangeMode === 'month' ? 'bg-white dark:bg-school-primary shadow-sm text-school-primary dark:text-white' : 'text-school-muted')}>
+                    Month
+                  </button>
+                  <button onClick={function () { setRptRangeMode('range'); }}
+                    className={'flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors ' + (rptRangeMode === 'range' ? 'bg-white dark:bg-school-primary shadow-sm text-school-primary dark:text-white' : 'text-school-muted')}>
+                    Date Range
+                  </button>
+                </div>
+              </div>
+
+              {rptRangeMode === 'month' ? (
                 <div className="flex items-center gap-2">
                   <button onClick={function () { setMonthYear(function (p) { var m = p.month - 1; return m < 1 ? { year: p.year - 1, month: 12 } : { year: p.year, month: m }; }); }}
                     className="p-2 hover:bg-school-paper dark:hover:bg-white/5 rounded-xl transition-colors">
@@ -566,7 +595,20 @@ export default function AttendanceSection() {
                     <ChevronRight size={18} className="text-school-muted" />
                   </button>
                 </div>
-              </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] font-bold uppercase text-school-muted tracking-wider mb-1 block">From</label>
+                    <input type="date" value={rptFrom} onChange={function (e) { setRptFrom(e.target.value); }}
+                      className="w-full px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none focus:border-school-accent bg-white dark:bg-[#1a1a2e] text-school-primary dark:text-[#e0e0e8]" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase text-school-muted tracking-wider mb-1 block">To</label>
+                    <input type="date" value={rptTo} onChange={function (e) { setRptTo(e.target.value); }}
+                      className="w-full px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none focus:border-school-accent bg-white dark:bg-[#1a1a2e] text-school-primary dark:text-[#e0e0e8]" />
+                  </div>
+                </div>
+              )}
 
               {monthlyError && <div className="text-center text-red-500 text-sm">{monthlyError}</div>}
 
@@ -593,38 +635,75 @@ export default function AttendanceSection() {
                     );
                   })()}
 
-                  <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold uppercase text-school-muted tracking-wider">
-                    {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(function (d) { return <div key={d} className="py-1">{d}</div>; })}
-                  </div>
+                  {monthlyData.from_date ? (
+                    /* Range mode: day-by-day table */
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-school-paper dark:bg-[#2a2a3e]">
+                            <th className="text-left px-2 py-1.5 font-bold text-school-muted">Date</th>
+                            <th className="text-left px-2 py-1.5 font-bold text-school-muted">Day</th>
+                            <th className="text-center px-2 py-1.5 font-bold text-green-600">Present</th>
+                            <th className="text-center px-2 py-1.5 font-bold text-red-600">Absent</th>
+                            <th className="text-center px-2 py-1.5 font-bold text-school-muted">Unmarked</th>
+                            <th className="text-center px-2 py-1.5 font-bold text-school-muted">Type</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {monthlyData.days.map(function (d, i) {
+                            var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                            var off = d.type === 'weekend' || d.type === 'holiday';
+                            return (
+                              <tr key={d.date} className={'border-t border-school-border/30 dark:border-[#2a2a3e] ' + (off ? 'bg-school-paper/50 dark:bg-[#2a2a3e]/30 opacity-70' : i % 2 ? 'bg-gray-50 dark:bg-transparent' : '')}>
+                                <td className="px-2 py-1.5 font-semibold text-school-primary dark:text-[#e0e0e8]">{d.date}</td>
+                                <td className="px-2 py-1.5 text-school-muted">{DAYS[d.weekday]}</td>
+                                <td className="px-2 py-1.5 text-center font-semibold text-green-600">{off ? '-' : d.present}</td>
+                                <td className="px-2 py-1.5 text-center font-semibold text-red-600">{off ? '-' : d.absent}</td>
+                                <td className="px-2 py-1.5 text-center text-school-muted">{off ? '-' : d.unmarked}</td>
+                                <td className="px-2 py-1.5 text-center text-[10px] uppercase tracking-wider text-school-muted">{d.type}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    /* Month mode: calendar grid */
+                    <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold uppercase text-school-muted tracking-wider">
+                      {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(function (d) { return <div key={d} className="py-1">{d}</div>; })}
+                    </div>
+                  )}
 
-                  <div className="grid grid-cols-7 gap-1">
-                    {monthlyData.days.map(function (day, i) {
-                      var dt = new Date(day.date + 'T00:00:00');
-                      var firstDow = new Date(monthlyData.year, monthlyData.month - 1, 1).getDay();
-                      var isWeekend = day.type === 'weekend';
-                      var isHoliday = day.type === 'holiday';
-                      var bgColor = isWeekend ? 'bg-school-border/20 dark:bg-[#2a2a3e]/30'
-                        : isHoliday ? 'bg-amber-50 dark:bg-amber-500/10'
-                        : 'bg-white dark:bg-[#1a1a2e]';
-                      return (
-                        <div key={day.date}
-                          className={'min-h-[44px] rounded-lg flex flex-col items-center justify-center text-xs border border-school-border/30 dark:border-[#2a2a3e] ' + bgColor}
-                          style={i === 0 ? { gridColumnStart: firstDow + 1 } : undefined}
-                          title={day.date + ': ' + day.present + ' present, ' + day.absent + ' absent'}>
-                          <span className={'font-semibold text-[11px] ' + (isWeekend ? 'text-school-muted/50' : isHoliday ? 'text-amber-600 dark:text-amber-400' : 'text-school-primary dark:text-[#e0e0e8]')}>
-                            {dt.getDate()}
-                          </span>
-                          {!isWeekend && !isHoliday && (
-                            <div className="flex gap-0.5 mt-0.5">
-                              {day.present > 0 && <span className="text-[8px] text-green-600 font-bold">{day.present}</span>}
-                              {day.absent > 0 && <span className="text-[8px] text-red-600 font-bold">{day.absent}</span>}
-                            </div>
-                          )}
-                          {isHoliday && <span className="text-[7px] text-amber-600 dark:text-amber-400 leading-none">H</span>}
-                        </div>
-                      );
-                    })}
-                  </div>
+                  {!monthlyData.from_date && (
+                    <div className="grid grid-cols-7 gap-1">
+                      {monthlyData.days.map(function (day, i) {
+                        var dt = new Date(day.date + 'T00:00:00');
+                        var firstDow = new Date(monthlyData.year, monthlyData.month - 1, 1).getDay();
+                        var isWeekend = day.type === 'weekend';
+                        var isHoliday = day.type === 'holiday';
+                        var bgColor = isWeekend ? 'bg-school-border/20 dark:bg-[#2a2a3e]/30'
+                          : isHoliday ? 'bg-amber-50 dark:bg-amber-500/10'
+                          : 'bg-white dark:bg-[#1a1a2e]';
+                        return (
+                          <div key={day.date}
+                            className={'min-h-[44px] rounded-lg flex flex-col items-center justify-center text-xs border border-school-border/30 dark:border-[#2a2a3e] ' + bgColor}
+                            style={i === 0 ? { gridColumnStart: firstDow + 1 } : undefined}
+                            title={day.date + ': ' + day.present + ' present, ' + day.absent + ' absent'}>
+                            <span className={'font-semibold text-[11px] ' + (isWeekend ? 'text-school-muted/50' : isHoliday ? 'text-amber-600 dark:text-amber-400' : 'text-school-primary dark:text-[#e0e0e8]')}>
+                              {dt.getDate()}
+                            </span>
+                            {!isWeekend && !isHoliday && (
+                              <div className="flex gap-0.5 mt-0.5">
+                                {day.present > 0 && <span className="text-[8px] text-green-600 font-bold">{day.present}</span>}
+                                {day.absent > 0 && <span className="text-[8px] text-red-600 font-bold">{day.absent}</span>}
+                              </div>
+                            )}
+                            {isHoliday && <span className="text-[7px] text-amber-600 dark:text-amber-400 leading-none">H</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
 
                   <div className="flex flex-wrap gap-3 text-[10px] text-school-muted pt-2 border-t border-school-border/30 dark:border-[#2a2a3e]">
                     {[

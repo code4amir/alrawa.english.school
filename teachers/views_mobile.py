@@ -427,15 +427,28 @@ def mobile_monthly_report(request):
     class_id = request.query_params.get('class_id')
     year = request.query_params.get('year')
     month = request.query_params.get('month')
+    from_date = request.query_params.get('from_date')
+    to_date = request.query_params.get('to_date')
 
-    if not class_id or not year or not month:
-        return Response({'error': 'class_id, year, and month are required'}, status=400)
+    # Range mode (from_date/to_date) or legacy month mode (year/month)
+    if from_date and to_date:
+        try:
+            d_from = datetime.strptime(from_date, '%Y-%m-%d').date()
+            d_to = datetime.strptime(to_date, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'error': 'Invalid from_date or to_date'}, status=400)
+        if d_from > d_to:
+            return Response({'error': 'from_date must be <= to_date'}, status=400)
+    elif year and month:
+        d_from = d_to = None
+    else:
+        return Response(
+            {'error': 'class_id plus either (from_date & to_date) or (year & month) are required'},
+            status=400,
+        )
 
-    try:
-        year = int(year)
-        month = int(month)
-    except (ValueError, TypeError):
-        return Response({'error': 'Invalid year or month'}, status=400)
+    if not class_id:
+        return Response({'error': 'class_id is required'}, status=400)
 
     try:
         school_class = SchoolClass.objects.get(id=class_id)
@@ -445,20 +458,38 @@ def mobile_monthly_report(request):
     if not _admin_or_monitor(teacher) and not ClassTeacher.objects.filter(teacher=teacher, school_class=school_class).exists():
         return Response({'error': 'You are not assigned to this class'}, status=403)
 
-    import calendar as _cal
-    from datetime import date as _date
-    _, days_in_month = _cal.monthrange(year, month)
-    weekend_set = _get_weekend_set()
-    holiday_set = _get_holiday_dates(year=year, month=month)
+    if d_from is not None:
+        import calendar as _cal
+        from datetime import date as _date
+        day_list = []
+        cur = d_from
+        while cur <= d_to:
+            day_list.append(cur)
+            cur += timedelta(days=1)
+        weekend_set = _get_weekend_set()
+        holiday_set = {h for h in _get_holiday_dates(year=None, month=None) if d_from <= h <= d_to}
+        resp_year, resp_month = d_from.year, d_from.month
+        records = AttendanceRecord.objects.filter(
+            school_class=school_class, date__gte=d_from, date__lte=d_to,
+        ).values('student_id', 'date', 'status')
+        days_in_range = day_list
+    else:
+        import calendar as _cal
+        from datetime import date as _date
+        year, month = int(year), int(month)
+        _, days_in_month = _cal.monthrange(year, month)
+        weekend_set = _get_weekend_set()
+        holiday_set = _get_holiday_dates(year=year, month=month)
+        resp_year, resp_month = year, month
+        records = AttendanceRecord.objects.filter(
+            school_class=school_class, date__year=year, date__month=month,
+        ).values('student_id', 'date', 'status')
+        days_in_range = [_date(year, month, day) for day in range(1, days_in_month + 1)]
 
     students = list(
         Student.objects.filter(school_class=school_class, deleted_at__isnull=True)
         .order_by('roll', 'name').values('id', 'name', 'roll')
     )
-
-    records = AttendanceRecord.objects.filter(
-        school_class=school_class, date__year=year, date__month=month,
-    ).values('student_id', 'date', 'status')
 
     records_map = {}
     for r in records:
@@ -470,8 +501,7 @@ def mobile_monthly_report(request):
 
     days = []
     student_ids = [str(s['id']) for s in students]
-    for day in range(1, days_in_month + 1):
-        d = _date(year, month, day)
+    for d in days_in_range:
         iso = d.isoformat()
         if d.weekday() in weekend_set:
             typ = 'weekend'
@@ -498,13 +528,17 @@ def mobile_monthly_report(request):
             'unmarked': len(student_ids) - present - absent,
         })
 
-    return Response({
+    resp = {
         'class': {'id': str(school_class.id), 'name': school_class.name},
-        'year': year,
-        'month': month,
+        'year': resp_year,
+        'month': resp_month,
         'students': [{'id': str(s['id']), 'name': s['name'], 'roll': s['roll'] or ''} for s in students],
         'days': days,
-    })
+    }
+    if d_from is not None:
+        resp['from_date'] = d_from.isoformat()
+        resp['to_date'] = d_to.isoformat()
+    return Response(resp)
 
 
 @api_view(['GET'])

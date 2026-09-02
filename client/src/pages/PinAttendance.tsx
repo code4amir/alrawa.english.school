@@ -95,6 +95,9 @@ export default function PinAttendance() {
     const [tab, setTab] = useState<'daily' | 'report' | 'holidays'>('daily');
     const [rptTab, setRptTab] = useState<'daily' | 'monthly'>('daily');
     const [rptSub, setRptSub] = useState<'classwise' | 'allclasses'>('classwise');
+    const [rptRangeMode, setRptRangeMode] = useState<'month' | 'range'>('month');
+    const [rptFrom, setRptFrom] = useState(() => todayStr());
+    const [rptTo, setRptTo] = useState(() => todayStr());
     const [dailyDate, setDailyDate] = useState(() => todayStr());
     const [dailyReport, setDailyReport] = useState<any>(null);
     const [allClassesReport, setAllClassesReport] = useState<any>(null);
@@ -381,11 +384,17 @@ export default function PinAttendance() {
   }
 
   async function loadMonthlyReport() {
-    if (!classId || !monthYear.year || !monthYear.month || !token) return;
+    if (!classId || !token) return;
     setRptLoading(true);
     setRptError('');
     try {
-      const data = await apiGet('/m/attendance/monthly-report/', token, { class_id: classId, year: String(monthYear.year), month: String(monthYear.month) });
+      let params: Record<string, string>;
+      if (rptRangeMode === 'range') {
+        params = { class_id: classId, from_date: rptFrom, to_date: rptTo };
+      } else {
+        params = { class_id: classId, year: String(monthYear.year), month: String(monthYear.month) };
+      }
+      const data = await apiGet('/m/attendance/monthly-report/', token, params);
       setMonthlyReport(data);
     } catch (e: any) {
       setRptError(e.message || 'Failed to load report');
@@ -965,6 +974,25 @@ export default function PinAttendance() {
 
             {rptTab === 'monthly' && (
               <div className="space-y-3">
+                <div className="flex bg-school-border/30 dark:bg-[#2a2a3e]/50 rounded-xl p-1">
+                  <button onClick={() => setRptRangeMode('month')}
+                    className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors ${rptRangeMode === 'month' ? 'bg-white dark:bg-[#1a1a2e] text-school-primary shadow-sm' : 'text-school-muted'}`}>
+                    Month
+                  </button>
+                  <button onClick={() => setRptRangeMode('range')}
+                    className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors ${rptRangeMode === 'range' ? 'bg-white dark:bg-[#1a1a2e] text-school-primary shadow-sm' : 'text-school-muted'}`}>
+                    Date Range
+                  </button>
+                </div>
+                {rptRangeMode === 'range' ? (
+                  <div className="flex gap-2">
+                    <input type="date" value={rptFrom} onChange={e => setRptFrom(e.target.value)} className="flex-1 px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none bg-white dark:bg-[#1a1a2e]" />
+                    <input type="date" value={rptTo} onChange={e => setRptTo(e.target.value)} className="flex-1 px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none bg-white dark:bg-[#1a1a2e]" />
+                    <button onClick={loadMonthlyReport} disabled={rptLoading || !rptFrom || !rptTo || rptFrom > rptTo} className="px-4 py-2 bg-school-accent text-white rounded-xl text-sm font-bold min-w-[80px] shadow-sm disabled:opacity-50">
+                      {rptLoading ? '...' : 'Load'}
+                    </button>
+                  </div>
+                ) : (
                 <div className="flex gap-2">
                   <input type="number" value={monthYear.year} onChange={e => setMonthYear(p => ({...p, year: parseInt(e.target.value)}))} className="w-20 px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none bg-white dark:bg-[#1a1a2e]" />
                   <select value={monthYear.month} onChange={e => setMonthYear(p => ({...p, month: parseInt(e.target.value)}))} className="flex-1 px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none bg-white dark:bg-[#1a1a2e]">
@@ -974,19 +1002,22 @@ export default function PinAttendance() {
                     {rptLoading ? '...' : 'Load'}
                   </button>
                 </div>
+                )}
                 {rptError && <div className="text-red-500 text-sm">{rptError}</div>}
                 {monthlyReport && (
                   <div className="bg-white dark:bg-[#1a1a2e] rounded-2xl border border-school-border overflow-hidden shadow-sm">
                     <div className="p-3 border-b flex items-center justify-between">
-                      <span className="text-xs font-bold text-school-primary">{monthName(monthlyReport.month)} {monthlyReport.year}</span>
+                      <span className="text-xs font-bold text-school-primary">{monthlyReport.from_date ? `${monthlyReport.from_date} → ${monthlyReport.to_date}` : `${monthName(monthlyReport.month)} ${monthlyReport.year}`}</span>
                       <button onClick={async () => {
                                               const jsPDF = (await import('jspdf')).default;
                                               const { autoTable } = await import('jspdf-autotable');
-                                              const doc = new jsPDF(); doc.text(`Monthly Report - ${monthName(monthlyReport.month)} ${monthlyReport.year}`, 14, 15);
+                                              const hdr = monthlyReport.from_date ? `Attendance ${monthlyReport.from_date} to ${monthlyReport.to_date}` : `Monthly Report - ${monthName(monthlyReport.month)} ${monthlyReport.year}`;
+                                              const doc = new jsPDF(); doc.text(hdr, 14, 15);
                                               const head = [['Date', 'Present', 'Absent', 'Type']];
-                                              const body = monthlyReport.days.map((d: any) => [d.date.slice(-2), d.present, d.absent, d.type]);
+                                              const body = monthlyReport.days.map((d: any) => [monthlyReport.from_date ? d.date : d.date.slice(-2), d.present, d.absent, d.type]);
                                               autoTable(doc, { head, body, startY: 20 });
-                                              doc.save(`monthly_report_${monthlyReport.year}_${monthlyReport.month}.pdf`);
+                                              const fname = monthlyReport.from_date ? `attendance_${monthlyReport.from_date}_to_${monthlyReport.to_date}.pdf` : `monthly_report_${monthlyReport.year}_${monthlyReport.month}.pdf`;
+                                              doc.save(fname);
                                             }} className="px-2 py-1 text-[10px] font-bold bg-school-accent text-white rounded-md shadow-sm">PDF</button>
                     </div>
                     <div className="overflow-x-auto p-2">
@@ -995,7 +1026,7 @@ export default function PinAttendance() {
                         <tbody>
                           {monthlyReport.days.map((d: any) => (
                             <tr key={d.date} className={`border-b last:border-0 border-school-border/30 ${d.type === 'weekend' || d.type === 'holiday' ? 'bg-school-paper dark:bg-[#2a2a3e] opacity-70' : ''}`}>
-                              <td className="py-1.5 text-left font-medium">{d.date.slice(-2)}</td>
+                              <td className="py-1.5 text-left font-medium">{monthlyReport.from_date ? d.date : d.date.slice(-2)}</td>
                               <td className="py-1.5 text-green-600 font-bold">{d.present || '-'}</td>
                               <td className="py-1.5 text-red-600 font-bold">{d.absent || '-'}</td>
                               <td className="py-1.5 text-[10px] text-school-muted uppercase tracking-wider">{d.type}</td>

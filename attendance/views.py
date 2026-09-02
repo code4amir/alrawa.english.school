@@ -554,29 +554,66 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         class_id = request.query_params.get('class_id')
         year = request.query_params.get('year')
         month = request.query_params.get('month')
+        from_date = request.query_params.get('from_date')
+        to_date = request.query_params.get('to_date')
 
-        if not class_id or not year or not month:
+        # New range mode: from_date/to_date. Legacy month mode: year/month.
+        if from_date and to_date:
+            try:
+                d_from = date.fromisoformat(from_date)
+                d_to = date.fromisoformat(to_date)
+            except ValueError:
+                return Response({'error': 'Invalid from_date or to_date'}, status=400)
+            if d_from > d_to:
+                return Response({'error': 'from_date must be <= to_date'}, status=400)
+        elif year and month:
+            d_from = d_to = None
+        else:
             return Response(
-                {'error': 'class_id, year, and month query params are required'},
+                {'error': 'class_id plus either (from_date & to_date) or (year & month) are required'},
                 status=400,
             )
 
-        try:
-            year = int(year)
-            month = int(month)
-        except (ValueError, TypeError):
-            return Response({'error': 'Invalid year or month'}, status=400)
+        if not class_id:
+            return Response({'error': 'class_id is required'}, status=400)
 
         try:
             school_class = SchoolClass.objects.get(id=class_id)
         except SchoolClass.DoesNotExist:
             return Response({'error': 'Class not found'}, status=404)
 
-        import calendar as _cal
-        from datetime import date as _date
-        _, days_in_month = _cal.monthrange(year, month)
-        weekend_set = _get_weekend_set()
-        holiday_set = _get_holiday_dates(year=year, month=month)
+        if d_from is not None:
+            # Range mode: walk calendar days from..to (inclusive), holidays via date span
+            day_list = []
+            cur = d_from
+            while cur <= d_to:
+                day_list.append(cur)
+                cur += timedelta(days=1)
+            weekend_set = _get_weekend_set()
+            holiday_set = _get_holiday_dates(year=None, month=None)
+            holiday_set = {h for h in holiday_set if d_from <= h <= d_to}
+            resp_year, resp_month = d_from.year, d_from.month
+            records = AttendanceRecord.objects.filter(
+                school_class=school_class,
+                date__gte=d_from,
+                date__lte=d_to,
+            ).values('student_id', 'date', 'status')
+            days_in_range = day_list
+        else:
+            import calendar as _cal
+            _, days_in_month = _cal.monthrange(int(year), int(month))
+            weekend_set = _get_weekend_set()
+            holiday_set = _get_holiday_dates(year=int(year), month=int(month))
+            resp_year, resp_month = int(year), int(month)
+            records = AttendanceRecord.objects.filter(
+                school_class=school_class,
+                date__year=int(year),
+                date__month=int(month),
+            ).values('student_id', 'date', 'status')
+            days_in_range = [
+                date(int(year), int(month), day)
+                for day in range(1, days_in_month + 1)
+            ]
 
         students = list(
             Student.objects.filter(
@@ -586,12 +623,6 @@ class AttendanceViewSet(viewsets.GenericViewSet):
             .order_by('roll', 'name')
             .values('id', 'name', 'roll')
         )
-
-        records = AttendanceRecord.objects.filter(
-            school_class=school_class,
-            date__year=year,
-            date__month=month,
-        ).values('student_id', 'date', 'status')
 
         records_map: dict[str, dict[str, str]] = {}
         for r in records:
@@ -603,8 +634,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
 
         days = []
         student_ids = [str(s['id']) for s in students]
-        for day in range(1, days_in_month + 1):
-            d = _date(year, month, day)
+        for d in days_in_range:
             iso = d.isoformat()
             if d.weekday() in weekend_set:
                 typ = 'weekend'
@@ -631,13 +661,17 @@ class AttendanceViewSet(viewsets.GenericViewSet):
                 'unmarked': len(student_ids) - present - absent,
             })
 
-        return Response({
+        resp: dict = {
             'class': {'id': str(school_class.id), 'name': school_class.name},
-            'year': year,
-            'month': month,
+            'year': resp_year,
+            'month': resp_month,
             'students': [{'id': str(s['id']), 'name': s['name'], 'roll': s['roll'] or ''} for s in students],
             'days': days,
-        })
+        }
+        if d_from is not None:
+            resp['from_date'] = d_from.isoformat()
+            resp['to_date'] = d_to.isoformat()
+        return Response(resp)
 
 
 class HolidayViewSet(viewsets.ModelViewSet):
