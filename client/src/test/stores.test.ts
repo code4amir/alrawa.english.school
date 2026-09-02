@@ -50,13 +50,15 @@ describe('useAuthStore', () => {
     expect(useAuthStore.getState().loading).toBe(false);
   });
 
-  it('fetchSession skips server call when user already set', async () => {
+  it('fetchSession revalidates even when user already set (other-device logout fix)', async () => {
     useAuthStore.setState({ user: { id: 'u1', name: 'Bob', email: 'b@b.com', role: 'viewer', image: null }, loading: false });
     const getSpy = vi.spyOn(api, 'get');
 
     await useAuthStore.getState().fetchSession();
 
-    expect(getSpy).not.toHaveBeenCalled();
+    // always revalidates: commit 3319439 removed the skip guard so an account
+    // logged in on another device gets logged out here too
+    expect(getSpy).toHaveBeenCalledWith('/auth/get-session/');
     expect(useAuthStore.getState().loading).toBe(false);
   });
 

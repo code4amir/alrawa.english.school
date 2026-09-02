@@ -45,8 +45,9 @@ export async function downloadReportCardPDF(student: any, clsName: string, subje
     try { const r = await fetch(student.photoUrl, { credentials: 'omit' }); const blob = await r.blob(); photoDataUri = await new Promise<string>(res => { const reader = new FileReader(); reader.onload = () => res(reader.result as string); reader.readAsDataURL(blob); }); } catch { console.warn('Photo fetch failed for', student.id); }
   }
 
-  const W = 210, M = 12, CW = W - M * 2;
-  const NAVY = [26, 26, 46] as const, GREEN = [45, 106, 79] as const, RED = [200, 75, 49] as const, WHITE = [255, 255, 255] as const, MUTED = [130, 124, 114] as const, ROW1 = [255, 253, 247] as const, ROW2 = [244, 239, 230] as const;
+  const W = 210, M = 15, CW = W - M * 2;
+  // Brand palette (mirrors client/src/index.css tokens — same as online report card)
+  const NAVY = [26, 26, 46] as const, RED = [200, 75, 49] as const, WHITE = [255, 255, 255] as const, MUTED = [140, 140, 140] as const, BORDER = [212, 207, 196] as const, PAPER = [245, 240, 232] as const, ROW2 = [249, 250, 251] as const, NAVY2 = [38, 38, 60] as const;
   const isFinal = term === 'final';
   const label = isFinal ? 'Annual Result' : TERM_NAMES[term];
   const clsStudents = (await import('../store')).useSchoolStore.getState().students.filter((s: any) => s.class === clsName);
@@ -54,35 +55,38 @@ export async function downloadReportCardPDF(student: any, clsName: string, subje
   const rank = ranks[student.id] || '—';
   const res = allResults.find((r: any) => r.studentId === student.id && r.term === (isFinal ? '3' : term));
 
-  let y = 10;
+  let y = 14;
 
-  // HEADER with logo
+  // HEADER — centered like the online card: logo, serif name, red badge text, hairline
   try {
-    doc.addImage(SCHOOL_LOGO, SCHOOL_LOGO.match(/data:image\/([a-zA-Z0-9]+);/)?.[1]?.toUpperCase() || 'PNG', M, y, 22, 22);
+    doc.addImage(SCHOOL_LOGO, 'JPEG', W / 2 - 7, y, 14, 14);
   } catch { console.warn('Logo addImage failed'); }
-  doc.text('AL RAWA English School', M + 26, y + 10);
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...MUTED);
-  doc.text('ESTD: 2022  ·  Read in the name of your Lord', M + 26, y + 16);
-  const badge = isFinal ? 'ANNUAL REPORT CARD — ANNUAL RESULT' : `TERM REPORT CARD — ${label.toUpperCase()}`;
-  const bw = doc.getTextWidth(badge) + 14;
-  doc.setFillColor(...RED); doc.roundedRect(M + 26, y + 19, bw, 6.5, 3.25, 3.25, 'F');
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(...WHITE);
-  doc.text(badge, M + 26 + bw / 2, y + 23.5, { align: 'center' });
-  y += 30;
+  doc.setFont('times', 'bold'); doc.setFontSize(15); doc.setTextColor(...NAVY);
+  doc.text('AL RAWA English School', W / 2, y + 20, { align: 'center' });
+  doc.setFont('times', 'normal'); doc.setFontSize(8); doc.setTextColor(...MUTED);
+  doc.text('ESTD: 2022  ·  Read in the name of your Lord', W / 2, y + 25, { align: 'center' });
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...RED);
+  doc.text(isFinal ? 'ANNUAL REPORT CARD' : `TERM REPORT CARD — ${label.toUpperCase()}`, W / 2, y + 31, { align: 'center' });
+  doc.setDrawColor(...BORDER); doc.setLineWidth(0.3);
+  doc.line(M, y + 35, W - M, y + 35);
+  y += 41;
 
-  // STUDENT INFO
-  if (photoDataUri) { try { doc.addImage(photoDataUri, photoDataUri.match(/data:image\/([a-zA-Z0-9]+);/)?.[1]?.toUpperCase() || 'JPEG', W - M - 26, y, 26, 30); } catch { console.warn('Photo addImage failed'); } }
+  // STUDENT INFO — photo left, rows right (mirrors online card)
+  if (photoDataUri) { try { doc.addImage(photoDataUri, 'JPEG', M, y, 20, 24); } catch { console.warn('Photo addImage failed'); } }
+  const infoX = M + (photoDataUri ? 26 : 0);
   doc.setFontSize(9.5);
   const infoRows: [string, string][] = [['Student Name', student.name], ['Class', clsName]];
-  if (student.roll) infoRows.push(['Roll No.', student.roll]);
+  if (student.roll) infoRows.push(['Roll', String(student.roll)]);
   if (student.fatherName) infoRows.push(["Father's Name", student.fatherName]);
   if (student.motherName) infoRows.push(["Mother's Name", student.motherName]);
   infoRows.forEach(([k, v]) => {
-    doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED); doc.text(k, M, y + 5.5);
-    doc.setFont('helvetica', 'bold'); doc.setTextColor(...NAVY); doc.text(v, M + 36, y + 5.5);
-    y += 7;
+    doc.setFont('helvetica', 'normal'); doc.setTextColor(...MUTED);
+    doc.text(k + ':', infoX, y + 3);
+    doc.setFont('helvetica', 'bold'); doc.setTextColor(...NAVY);
+    doc.text(String(v), infoX + 32, y + 3);
+    y += 6;
   });
-  y = Math.max(y, 72);
+  y = Math.max(y + 4, y);
 
   // Divider
   doc.setDrawColor(215, 210, 200); doc.setLineWidth(0.3); doc.line(M, y, W - M, y); y += 6;
@@ -92,14 +96,15 @@ export async function downloadReportCardPDF(student: any, clsName: string, subje
   doc.text(isFinal ? 'ANNUAL ACADEMIC RESULT' : `${label.toUpperCase()} — ACADEMIC RESULT`, M, y); y += 5;
 
   if (!isFinal) {
-    // Single term table: Subject (Full Marks) | Marks Obtained | Grade | GPA
-    const C = { s: { x: M, w: 78 }, mo: { x: M + 78, w: 52 }, gr: { x: M + 130, w: 30 }, gp: { x: M + 160, w: 26 } };
-    const TW = CW, HH = 8, RH = 9;
+    // Term table: Subject | Full | Marks | Grade | GPA (mirrors online card)
+    const C = { s: { x: M, w: 72 }, fl: { x: M + 72, w: 20 }, mo: { x: M + 92, w: 26 }, gr: { x: M + 118, w: 24 }, gp: { x: M + 142, w: 26 } };
+    const TW = CW, HH = 8, RH = 8;
 
     doc.setFillColor(...NAVY); doc.rect(M, y, TW, HH, 'F');
     doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...WHITE);
-    doc.text('Subject (Full Marks)', C.s.x + 4, y + HH / 2 + 1);
-    doc.text('Marks Obtained', C.mo.x + C.mo.w / 2, y + HH / 2 + 1, { align: 'center' });
+    doc.text('Subject', C.s.x + 4, y + HH / 2 + 1);
+    doc.text('Full', C.fl.x + C.fl.w / 2, y + HH / 2 + 1, { align: 'center' });
+    doc.text('Marks', C.mo.x + C.mo.w / 2, y + HH / 2 + 1, { align: 'center' });
     doc.text('Grade', C.gr.x + C.gr.w / 2, y + HH / 2 + 1, { align: 'center' });
     doc.text('GPA', C.gp.x + C.gp.w / 2, y + HH / 2 + 1, { align: 'center' });
     y += HH;
@@ -115,23 +120,21 @@ export async function downloadReportCardPDF(student: any, clsName: string, subje
       const g = obt !== null ? gradeFromMarks(obt, subj.fullMarks) : null;
       if (g) { gpas.push(g.gpa); if (g.grade === 'F') hasF = true; totObt += obt!; totFull += subj.fullMarks; }
 
-      doc.setFillColor(...((ri % 2 === 0 ? ROW1 : ROW2) as [number, number, number])); doc.rect(M, y, TW, RH, 'F');
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...NAVY);
+      // gray zebra on odd rows (bg-gray-50 like the online card); white on even
+      if (ri % 2) { doc.setFillColor(...ROW2); doc.rect(M, y, TW, RH, 'F'); }
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...NAVY);
       let nm = subj.name;
       while (doc.getTextWidth(nm) > C.s.w - 6 && nm.length > 2) nm = nm.slice(0, -1);
-      doc.text(nm, C.s.x + 4, y + 4);
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(...MUTED);
-      doc.text(`(${subj.fullMarks} marks)`, C.s.x + 4, y + 7.8);
+      doc.text(nm, C.s.x + 4, y + RH / 2 + 1);
 
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(...NAVY);
-      if (obt !== null) doc.text(String(obt), C.mo.x + C.mo.w / 2, y + 6, { align: 'center' });
-      else { doc.setTextColor(...MUTED); doc.text('—', C.mo.x + C.mo.w / 2, y + 6, { align: 'center' }); doc.setTextColor(...NAVY); }
+      doc.text(String(subj.fullMarks), C.fl.x + C.fl.w / 2, y + RH / 2 + 1, { align: 'center' });
+      if (obt !== null) doc.text(String(obt), C.mo.x + C.mo.w / 2, y + RH / 2 + 1, { align: 'center' });
+      else { doc.setTextColor(...MUTED); doc.text('—', C.mo.x + C.mo.w / 2, y + RH / 2 + 1, { align: 'center' }); doc.setTextColor(...NAVY); }
 
-      if (g) _pdfGradeChip(doc, C.gr.x + C.gr.w / 2, y + RH / 2, g.grade);
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(...NAVY);
-      if (g) doc.text(g.gpa.toFixed(2), C.gp.x + C.gp.w / 2, y + 6, { align: 'center' });
+      if (g) _pdfGradeChip(doc, C.gr.x + C.gr.w / 2, y + RH / 2 + 0.5, g.grade);
+      if (g) doc.text(g.gpa.toFixed(2), C.gp.x + C.gp.w / 2, y + RH / 2 + 1, { align: 'center' });
 
-      doc.setDrawColor(215, 210, 200); doc.setLineWidth(0.15); doc.line(M, y + RH, M + TW, y + RH); y += RH;
+      doc.setDrawColor(...BORDER); doc.setLineWidth(0.15); doc.line(M, y + RH, M + TW, y + RH); y += RH;
     });
 
     if (gpas.length) {
@@ -143,21 +146,22 @@ export async function downloadReportCardPDF(student: any, clsName: string, subje
     }
     y += 6;
 
-    // Result summary bar (navy)
+    // Result chips — three cream boxes (mirrors online card's bg-school-paper chips)
     if (gpas.length) {
       if (y > 248) { doc.addPage(); y = 14; }
       const tGPA = gpas.reduce((a, b) => a + b, 0) / gpas.length;
       const tGr = hasF ? 'F' : gpaToGrade(tGPA);
-      const BH = 22;
-      doc.setFillColor(...NAVY); doc.rect(M, y, CW, BH, 'F');
-      const sw = CW / 3;
-      [[`${label.toUpperCase()} GPA`, tGPA.toFixed(2)], ['GRADE', tGr], ['CLASS RANK', String(rank)]].forEach(([lbl, val], i) => {
-        const cx = M + i * sw + sw / 2;
-        if (i > 0) { doc.setDrawColor(255, 255, 255); doc.setLineWidth(0.3); doc.line(M + i * sw, y + 4, M + i * sw, y + BH - 4); }
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(160, 155, 145);
-        doc.text(lbl, cx, y + 7, { align: 'center' });
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(18); doc.setTextColor(...WHITE);
-        doc.text(val, cx, y + 18, { align: 'center' });
+      const BH = 18, GAPC = 5;
+      const cw = (CW - GAPC * 2) / 3;
+      const chips: [string, string][] = [[`${label.toUpperCase()} GPA`, tGPA.toFixed(2)], ['GRADE', tGr], ['CLASS RANK', String(rank)]];
+      chips.forEach(([lbl, val], i) => {
+        const x = M + i * (cw + GAPC);
+        doc.setFillColor(...PAPER);
+        doc.roundedRect(x, y, cw, BH, 3, 3, 'F');
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...MUTED);
+        doc.text(lbl, x + cw / 2, y + 6, { align: 'center' });
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(...NAVY);
+        doc.text(val, x + cw / 2, y + 14, { align: 'center' });
       });
       y += BH + 8;
     }
@@ -170,7 +174,7 @@ export async function downloadReportCardPDF(student: any, clsName: string, subje
     doc.setFillColor(...NAVY);
     doc.rect(C.s.x, y, C.s.w, H1 + H2, 'F');
     doc.rect(C.t1.x, y, C.t1.w + C.t2.w + C.t3.w, H1, 'F');
-    doc.setFillColor(...GREEN);
+    doc.setFillColor(...NAVY2);
     doc.rect(C.avg.x, y, C.avg.w + C.gr.w + C.gp.w, H1, 'F');
     doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...WHITE);
     doc.text('Subject', C.s.x + C.s.w / 2, y + H1 / 2 + 0.5, { align: 'center' });
@@ -182,9 +186,9 @@ export async function downloadReportCardPDF(student: any, clsName: string, subje
     y += H1;
 
     // Header row 2
-    doc.setFillColor(38, 38, 60);
+    doc.setFillColor(...NAVY2);
     [C.t1, C.t2, C.t3, C.avg].forEach(col => doc.rect(col.x, y, col.w, H2, 'F'));
-    doc.setFillColor(36, 84, 62);
+    doc.setFillColor(31, 31, 54);
     [C.gr, C.gp].forEach(col => doc.rect(col.x, y, col.w, H2, 'F'));
     doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(...WHITE);
     ([['1st Term', C.t1], ['2nd Term', C.t2], ['Final Exam', C.t3], ['Average', C.avg], ['Grade', C.gr], ['GPA', C.gp]] as const).forEach(([lbl, col]) => {
@@ -206,13 +210,12 @@ export async function downloadReportCardPDF(student: any, clsName: string, subje
       const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
       const gAvg = avg !== null ? gradeFromMarks(avg, subj.fullMarks) : null;
 
-      doc.setFillColor(...((ri % 2 === 0 ? ROW1 : ROW2) as [number, number, number])); doc.rect(M, y, TW, RH, 'F');
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...NAVY);
+      // gray zebra on odd rows (mirrors online card)
+      if (ri % 2) { doc.setFillColor(...ROW2); doc.rect(M, y, TW, RH, 'F'); }
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...NAVY);
       let nm = subj.name;
       while (doc.getTextWidth(nm) > C.s.w - 5 && nm.length > 2) nm = nm.slice(0, -1);
-      doc.text(nm, C.s.x + 3, y + 3.8);
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(...MUTED);
-      doc.text(`(${subj.fullMarks})`, C.s.x + 3, y + 7.2);
+      doc.text(nm, C.s.x + 3, y + RH / 2 + 1);
 
       doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...NAVY);
       ([[m1, C.t1], [m2, C.t2], [m3, C.t3]] as const).forEach(([m, col]) => {
@@ -223,24 +226,25 @@ export async function downloadReportCardPDF(student: any, clsName: string, subje
       if (gAvg) _pdfGradeChip(doc, C.gr.x + C.gr.w / 2, y + RH / 2, gAvg.grade);
       doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...NAVY);
       if (gAvg) doc.text(gAvg.gpa.toFixed(2), C.gp.x + C.gp.w / 2, y + 5.5, { align: 'center' });
-      doc.setDrawColor(215, 210, 200); doc.setLineWidth(0.15); doc.line(M, y + RH, M + TW, y + RH); y += RH;
+      doc.setDrawColor(...BORDER); doc.setLineWidth(0.15); doc.line(M, y + RH, M + TW, y + RH); y += RH;
     });
     y += 6;
 
-    // Annual result bar
+    // Annual result chips — three cream boxes (mirrors online card)
     const { finalGPA } = calcYearSummary(student.id, subjects, allResults);
     const finalGrade = finalGPA !== null ? gpaToGrade(finalGPA) : '—';
     if (y > 248) { doc.addPage(); y = 14; }
-    const BH = 22;
-    doc.setFillColor(...NAVY); doc.rect(M, y, CW, BH, 'F');
-    const sw = CW / 3;
-    [['ANNUAL GPA', finalGPA !== null ? finalGPA.toFixed(2) : '—'], ['FINAL GRADE', finalGrade], ['YEAR RANK', String(rank)]].forEach(([lbl, val], i) => {
-      const cx = M + i * sw + sw / 2;
-      if (i > 0) { doc.setDrawColor(255, 255, 255); doc.setLineWidth(0.3); doc.line(M + i * sw, y + 4, M + i * sw, y + BH - 4); }
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(160, 155, 145);
-      doc.text(lbl, cx, y + 7, { align: 'center' });
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(...WHITE);
-      doc.text(val, cx, y + 18, { align: 'center' });
+    const BH = 18, GAPC = 5;
+    const cw = (CW - GAPC * 2) / 3;
+    const chips: [string, string][] = [['ANNUAL GPA', finalGPA !== null ? finalGPA.toFixed(2) : '—'], ['FINAL GRADE', finalGrade], ['YEAR RANK', String(rank)]];
+    chips.forEach(([lbl, val], i) => {
+      const x = M + i * (cw + GAPC);
+      doc.setFillColor(...PAPER);
+      doc.roundedRect(x, y, cw, BH, 3, 3, 'F');
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...MUTED);
+      doc.text(lbl, x + cw / 2, y + 6, { align: 'center' });
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(...NAVY);
+      doc.text(val, x + cw / 2, y + 14, { align: 'center' });
     });
     y += BH + 8;
   }
@@ -279,7 +283,7 @@ export async function downloadReportCardPDF(student: any, clsName: string, subje
       const att = allResults.find((x: any) => x.studentId === student.id && x.term === t)?.attendance;
       const vals = [TERM_NAMES[t], att?.days || '—', att?.present || '—', calcAttendPct(att)];
       ax = attX;
-      doc.setFillColor(...((ri % 2 === 0 ? ROW1 : ROW2) as [number, number, number])); aC.forEach(w => { doc.rect(ax, y, w, AH, 'F'); ax += w; });
+      if (ri % 2) { doc.setFillColor(...ROW2); } else { doc.setFillColor(...WHITE); } aC.forEach(w => { doc.rect(ax, y, w, AH, 'F'); ax += w; });
       ax = attX;
       vals.forEach((v, i) => {
         doc.setTextColor(26, 26, 46);
@@ -291,27 +295,28 @@ export async function downloadReportCardPDF(student: any, clsName: string, subje
   }
   const attEndY = y;
 
-  // Comment box
+  // Comment box (rounded, paper-tinted — mirrors online card)
   const boxH = Math.max(attEndY - attStartY, 20);
   const comment = res?.comment || '';
-  doc.setFillColor(250, 248, 243); doc.setDrawColor(210, 205, 195); doc.setLineWidth(0.3);
+  doc.setFillColor(...PAPER); doc.setDrawColor(...BORDER); doc.setLineWidth(0.3);
   doc.roundedRect(cmtX, attStartY, COLW, boxH, 2, 2, 'FD');
   const cmtLines = doc.splitTextToSize(comment || 'No comment added.', COLW - 8);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
   doc.setTextColor(!comment ? MUTED[0] : NAVY[0], !comment ? MUTED[1] : NAVY[1], !comment ? MUTED[2] : NAVY[2]);
   doc.text(cmtLines, cmtX + 4, attStartY + 5);
 
-  y = attEndY + 8;
-
-  // SIGNATURES — near page bottom
-  const sigY = Math.max(y, 270);
+  // SIGNATURES — anchored at fixed bottom, never overlapping content.
+  // Content max is ~248 (table overflow guard) + chips/comment ≈ 278 worst-case;
+  // sig block occupies 271–281 so even the tallest card (Class Five annual, 10
+  // subjects) leaves ≥10mm clearance. If content somehow passes 268, shrink gap.
+  const sigY = Math.max(Math.min(y + 12, 268), 252);
   const sigW = (CW - 20) / 3;
-  doc.setDrawColor(100, 100, 100); doc.setLineWidth(0.5);
+  doc.setDrawColor(...MUTED); doc.setLineWidth(0.4);
   ['CLASS TEACHER', 'CO-ORDINATOR', 'PRINCIPAL'].forEach((lbl, i) => {
     const sx = M + i * (sigW + 10);
     doc.line(sx, sigY, sx + sigW, sigY);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...MUTED);
-    doc.text(lbl, sx + sigW / 2, sigY + 5.5, { align: 'center' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...MUTED);
+    doc.text(lbl, sx + sigW / 2, sigY + 5, { align: 'center' });
   });
 
   if (!sharedDoc) doc.save(`${student.name.replace(/\s+/g, '_')}_${isFinal ? 'Annual' : label.replace(/ /g, '_')}_Report.pdf`);

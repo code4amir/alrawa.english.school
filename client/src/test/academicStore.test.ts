@@ -208,13 +208,15 @@ describe('useSchoolStore — academic', () => {
       expect(result).toEqual(marks);
     });
 
-    it('saveStudentResult posts and invalidates cache', async () => {
+    it('saveStudentResult posts merged payload (existing row fields preserved)', async () => {
       useSchoolStore.setState({ studentResultsCache: { 'stu1-2025': { data: [], ts: Date.now() } } });
+      vi.spyOn(api, 'get').mockResolvedValue({ data: { results: [{ id: 'r1', studentId: 'stu1', term: '1', marks: { Science: 75 }, attendance: null, comment: null }] } });
       vi.spyOn(api, 'post').mockResolvedValue({ data: {} });
 
       await useSchoolStore.getState().saveStudentResult('stu1', '1', { Math: 90 });
 
-      expect(api.post).toHaveBeenCalledWith('/students/stu1/results/', { term: '1', marks: { Math: 90 }, session: undefined });
+      // partial save must MERGE onto the existing row (backend PATCH replaces marks JSON)
+      expect(api.post).toHaveBeenCalledWith('/students/stu1/results/', { term: '1', marks: { Science: 75, Math: 90 }, attendance: null, comment: null, session: undefined });
       expect(useSchoolStore.getState().studentResultsCache['stu1-2025']).toBeUndefined();
     });
   });
