@@ -508,7 +508,7 @@ export default function AttendanceSection() {
                           return (
                             <div key={s.id} className="flex items-center gap-2 py-1.5">
                               <div className={'w-2 h-2 rounded-full ' + (s.status === 'present' ? 'bg-green-500' : s.status === 'absent' ? 'bg-red-500' : 'bg-gray-400')} />
-                              <span className="text-school-muted text-xs w-8">{s.roll || '---'}</span>
+                              <span className="text-school-muted text-xs min-w-[2.5rem] shrink-0">{s.roll || '---'}</span>
                               <span className="font-medium text-school-primary dark:text-[#e0e0e8]">{s.name}</span>
                               <span className={'ml-auto text-xs font-semibold ' + (s.status === 'present' ? 'text-green-600' : s.status === 'absent' ? 'text-red-600' : 'text-school-muted')}>
                                 {s.status.charAt(0).toUpperCase() + s.status.slice(1)}
