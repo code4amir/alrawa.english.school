@@ -1011,27 +1011,59 @@ export default function PinAttendance() {
                       <button onClick={async () => {
                                               const jsPDF = (await import('jspdf')).default;
                                               const { autoTable } = await import('jspdf-autotable');
-                                              const hdr = monthlyReport.from_date ? `Attendance ${monthlyReport.from_date} to ${monthlyReport.to_date}` : `Monthly Report - ${monthName(monthlyReport.month)} ${monthlyReport.year}`;
-                                              const doc = new jsPDF(); doc.text(hdr, 14, 15);
-                                              const head = [['Date', 'Present', 'Absent', 'Type']];
-                                              const body = monthlyReport.days.map((d: any) => [monthlyReport.from_date ? d.date : d.date.slice(-2), d.present, d.absent, d.type]);
-                                              autoTable(doc, { head, body, startY: 20 });
-                                              const fname = monthlyReport.from_date ? `attendance_${monthlyReport.from_date}_to_${monthlyReport.to_date}.pdf` : `monthly_report_${monthlyReport.year}_${monthlyReport.month}.pdf`;
+                                              const isR = Boolean(monthlyReport.from_date && monthlyReport.to_date);
+                                              const hdr = isR ? `Attendance Register ${monthlyReport.from_date} to ${monthlyReport.to_date}` : `Attendance Register - ${monthName(monthlyReport.month)} ${monthlyReport.year}`;
+                                              const doc = new jsPDF({ orientation: 'landscape' });
+                                              const days = monthlyReport.days || [];
+                                              const head = [['Name', ...days.map((d: any) => String(Number(d.date.slice(8, 10)))), 'P']];
+                                              const body = (monthlyReport.students || []).map((s: any) => {
+                                                const row = (monthlyReport.student_days || {})[s.id] || {};
+                                                let pc = 0;
+                                                days.forEach((d: any) => { if (row[d.date] === 'present') pc++; });
+                                                const cells = days.map((d: any) => {
+                                                  const st = row[d.date];
+                                                  const off = d.type === 'weekend' || d.type === 'holiday';
+                                                  return st === 'present' ? 'P' : st === 'absent' ? 'A' : st === 'late' ? 'L' : st === 'excused' ? 'E' : (off ? '' : '');
+                                                });
+                                                return [s.name, ...cells, String(pc)];
+                                              });
+                                              doc.text(hdr, 14, 15);
+                                              autoTable(doc, { head, body, startY: 20, styles: { fontSize: 7, cellPadding: 1.2 }, columnStyles: { 0: { cellWidth: 52, halign: 'left' } } });
+                                              const fname = isR ? `attendance_register_${monthlyReport.from_date}_to_${monthlyReport.to_date}.pdf` : `attendance_register_${monthlyReport.year}_${monthlyReport.month}.pdf`;
                                               doc.save(fname);
                                             }} className="px-2 py-1 text-[10px] font-bold bg-school-accent text-white rounded-md shadow-sm">PDF</button>
                     </div>
                     <div className="overflow-x-auto p-2">
-                      <table className="w-full text-xs text-center">
-                        <thead><tr className="border-b"><th className="pb-1 text-left text-school-muted">Date</th><th className="pb-1 text-green-600">P</th><th className="pb-1 text-red-600">A</th><th className="pb-1 text-school-muted">Type</th></tr></thead>
+                      <table className="text-xs" style={{ minWidth: 110 + (monthlyReport.days?.length || 0) * 22 + 48 }}>
+                        <thead>
+                          <tr className="border-b">
+                            <th className="pb-1 pr-2 text-left text-school-muted sticky left-0 bg-white dark:bg-[#1a1a2e]">Name</th>
+                            {(monthlyReport.days || []).map((d: any) => {
+                              const off = d.type === 'weekend' || d.type === 'holiday';
+                              return <th key={d.date} className={'pb-1 px-0.5 text-center ' + (off ? 'text-school-muted/50' : 'text-school-primary')}>{Number(d.date.slice(8,10))}</th>;
+                            })}
+                            <th className="pb-1 px-1 text-center text-green-600">P</th>
+                          </tr>
+                        </thead>
                         <tbody>
-                          {monthlyReport.days.map((d: any) => (
-                            <tr key={d.date} className={`border-b last:border-0 border-school-border/30 ${d.type === 'weekend' || d.type === 'holiday' ? 'bg-school-paper dark:bg-[#2a2a3e] opacity-70' : ''}`}>
-                              <td className="py-1.5 text-left font-medium">{monthlyReport.from_date ? d.date : d.date.slice(-2)}</td>
-                              <td className="py-1.5 text-green-600 font-bold">{d.present || '-'}</td>
-                              <td className="py-1.5 text-red-600 font-bold">{d.absent || '-'}</td>
-                              <td className="py-1.5 text-[10px] text-school-muted uppercase tracking-wider">{d.type}</td>
-                            </tr>
-                          ))}
+                          {(monthlyReport.students || []).map((s: any) => {
+                            const row = (monthlyReport.student_days || {})[s.id] || {};
+                            let pc = 0;
+                            (monthlyReport.days || []).forEach((d: any) => { if (row[d.date] === 'present') pc++; });
+                            return (
+                              <tr key={s.id} className="border-b last:border-0 border-school-border/50">
+                                <td className="py-1 pr-2 text-left font-medium sticky left-0 bg-white dark:bg-[#1a1a2e] truncate max-w-[110px]" title={s.name}>{s.name}</td>
+                                {(monthlyReport.days || []).map((d: any) => {
+                                  const st = row[d.date];
+                                  const off = d.type === 'weekend' || d.type === 'holiday';
+                                  const cell = st === 'present' ? 'P' : st === 'absent' ? 'A' : st === 'late' ? 'L' : st === 'excused' ? 'E' : (off ? '·' : '');
+                                  const cls = st === 'present' ? 'text-green-600 font-bold' : st === 'absent' ? 'text-red-600 font-bold' : st === 'late' ? 'text-amber-600 font-bold' : st === 'excused' ? 'text-blue-600 font-bold' : 'text-school-muted/40';
+                                  return <td key={d.date} className={'py-1 px-0.5 text-center ' + cls}>{cell}</td>;
+                                })}
+                                <td className="py-1 px-1 text-center font-bold text-green-600 bg-school-paper/50 dark:bg-[#2a2a3e]/30">{pc}</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>

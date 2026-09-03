@@ -634,6 +634,9 @@ class AttendanceViewSet(viewsets.GenericViewSet):
 
         days = []
         student_ids = [str(s['id']) for s in students]
+        # per-student day status map for register-style (matrix) reports:
+        # {student_id: {date: 'present'|'absent'|...}}
+        student_days = {}
         for d in days_in_range:
             iso = d.isoformat()
             if d.weekday() in weekend_set:
@@ -647,6 +650,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
             absent = 0
             for sid in student_ids:
                 st = records_map.get(sid, {}).get(iso, typ)
+                student_days.setdefault(sid, {})[iso] = st if st in ('present', 'absent', 'late', 'excused') else None
                 if st == 'present':
                     present += 1
                 elif st == 'absent':
@@ -667,6 +671,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
             'month': resp_month,
             'students': [{'id': str(s['id']), 'name': s['name'], 'roll': s['roll'] or ''} for s in students],
             'days': days,
+            'student_days': student_days,
         }
         if d_from is not None:
             resp['from_date'] = d_from.isoformat()

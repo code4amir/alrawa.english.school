@@ -34,6 +34,7 @@ interface MonthlyReportData {
   to_date?: string;
   students: StudentInfo[];
   days: { date: string; weekday: number; type: string; present: number; absent: number; unmarked: number }[];
+  student_days?: Record<string, Record<string, string | null>>;
 }
 
 function todayStr() {
@@ -130,53 +131,73 @@ async function downloadAllClassesPDF(data: AllClassesDailyData) {
 
 async function downloadMonthlyPDF(data: MonthlyReportData) {
   const JsPDF = await getJsPDF();
-  const doc = new JsPDF({ format: 'a4', unit: 'mm' });
-  const M = 12, W = 210, CW = W - M * 2;
-  const NAVY = [26, 26, 46] as const, MUTED = [130, 124, 114] as const;
+  const doc = new JsPDF({ format: 'a4', unit: 'mm', orientation: 'landscape' });
+  const M = 10, W = 297;
+  const NAVY = [26, 26, 46] as const, MUTED = [130, 124, 114] as const, WHITE = [255, 255, 255] as const;
   const isRange = Boolean(data.from_date && data.to_date);
-  let y = 20;
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(...NAVY);
-  doc.text(isRange ? 'Attendance Report (Date Range)' : 'Monthly Attendance Report', M, y); y += 8;
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...MUTED);
+  let y = 12;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(...NAVY);
+  doc.text(isRange ? 'Attendance Register (Date Range)' : 'Monthly Attendance Register', M, y); y += 6;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...MUTED);
   doc.text(isRange
     ? data.class.name + ' --- ' + data.from_date + ' to ' + data.to_date
-    : data.class.name + ' --- ' + monthName(data.month) + ' ' + data.year, M, y); y += 10;
+    : data.class.name + ' --- ' + monthName(data.month) + ' ' + data.year, M, y); y += 7;
 
-  const HH = 7, RH = 6;
+  // Register matrix: Name | one col per day | Total P
+  const NAME_W = 52, TOT_W = 14, CW = W - M * 2;
+  const dayW = Math.max(6, (CW - NAME_W - TOT_W) / Math.max(data.days.length, 1));
+  const HH = 7, RH = 6.5;
+
   doc.setFillColor(...NAVY); doc.rect(M, y, CW, HH, 'F');
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(255, 255, 255);
-  const cols = [CW * 0.25, CW * 0.15, CW * 0.15, CW * 0.15, CW * 0.15, CW * 0.15];
-  doc.text('Date', M + 1, y + 4.5);
-  doc.text('Day', M + cols[0] + 1, y + 4.5);
-  doc.text('Present', M + cols[0] * 2 + 1, y + 4.5);
-  doc.text('Absent', M + cols[0] * 3 + 1, y + 4.5);
-  doc.text('Unmarked', M + cols[0] * 4 + 1, y + 4.5);
-  doc.text('Type', M + cols[0] * 5 + 1, y + 4.5);
-  y += HH;
-  const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  let totalPre = 0, totalAbs = 0;
-  data.days.forEach(function(d, ri) {
-    if (d.type === 'weekend' || d.type === 'holiday') return;
-    if (y > 275) { doc.addPage(); y = 14; }
-    doc.setFillColor(ri % 2 === 0 ? 255 : 244, ri % 2 === 0 ? 253 : 239, ri % 2 === 0 ? 247 : 230);
-    doc.rect(M, y, CW, RH, 'F');
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...NAVY);
-    doc.text(d.date, M + 1, y + 4);
-    doc.text(DAYS[d.weekday] || '', M + cols[0] + 1, y + 4);
-    doc.text(String(d.present), M + cols[0] * 2 + 1, y + 4);
-    doc.text(String(d.absent), M + cols[0] * 3 + 1, y + 4);
-    doc.text(String(d.unmarked), M + cols[0] * 4 + 1, y + 4);
-    doc.text(d.type, M + cols[0] * 5 + 1, y + 4);
-    y += RH;
-    totalPre += d.present; totalAbs += d.absent;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(...WHITE);
+  doc.text('Name', M + 2, y + 4.5);
+  data.days.forEach(function (d, i) {
+    const cx = M + NAME_W + i * dayW + dayW / 2;
+    const off = d.type === 'weekend' || d.type === 'holiday';
+    doc.setTextColor(off ? 180 : 255, off ? 180 : 255, off ? 190 : 255);
+    doc.text(String(Number(d.date.slice(8, 10))), cx, y + 4.5, { align: 'center' });
   });
-  y += 4;
-  const netDays = data.days.filter(function(d) { return d.type !== 'weekend' && d.type !== 'holiday'; }).length;
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...NAVY);
-  doc.text('Total Present: ' + totalPre + '  |  Total Absent: ' + totalAbs + '  |  Net Days: ' + netDays, M, y);
+  doc.setTextColor(255, 255, 255);
+  doc.text('P', M + NAME_W + data.days.length * dayW + TOT_W / 2, y + 4.5, { align: 'center' });
+  y += HH;
+
+  data.students.forEach(function (s, ri) {
+    if (y > 195) { doc.addPage(); y = 12; }
+    const row = (data.student_days || {})[s.id] || {};
+    let presentCount = 0;
+    data.days.forEach(function (d) { if (row[d.date] === 'present') presentCount++; });
+    if (ri % 2) { doc.setFillColor(249, 250, 251); doc.rect(M, y, CW, RH, 'F'); }
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...NAVY);
+    let nm = (s.roll ? s.roll + '. ' : '') + s.name;
+    while (doc.getTextWidth(nm) > NAME_W - 4 && nm.length > 3) nm = nm.slice(0, -1);
+    doc.text(nm, M + 2, y + 4.5);
+    data.days.forEach(function (d, i) {
+      const st = row[d.date];
+      const off = d.type === 'weekend' || d.type === 'holiday';
+      const cx = M + NAME_W + i * dayW + dayW / 2;
+      if (st === 'present') { doc.setTextColor(22, 163, 74); doc.text('P', cx, y + 4.5, { align: 'center' }); }
+      else if (st === 'absent') { doc.setTextColor(220, 38, 38); doc.text('A', cx, y + 4.5, { align: 'center' }); }
+      else if (st === 'late') { doc.setTextColor(217, 119, 6); doc.text('L', cx, y + 4.5, { align: 'center' }); }
+      else if (st === 'excused') { doc.setTextColor(37, 99, 235); doc.text('E', cx, y + 4.5, { align: 'center' }); }
+      else if (off) { doc.setTextColor(200, 200, 205); doc.text('·', cx, y + 4.5, { align: 'center' }); }
+      doc.setTextColor(...NAVY);
+    });
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(22, 163, 74);
+    doc.text(String(presentCount), M + NAME_W + data.days.length * dayW + TOT_W / 2, y + 4.5, { align: 'center' });
+    doc.setTextColor(...NAVY);
+    doc.setFont('helvetica', 'normal');
+    doc.setDrawColor(215, 210, 200); doc.setLineWidth(0.1);
+    doc.line(M, y + RH, M + CW, y + RH);
+    y += RH;
+  });
+
+  const netDays = data.days.filter(function (d) { return d.type !== 'weekend' && d.type !== 'holiday'; }).length;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...NAVY);
+  doc.text('Net School Days: ' + netDays + '   P = Present, A = Absent, L = Late, E = Excused', M, y + 5);
   const fname = isRange
-    ? 'Attendance_' + data.class.name + '_' + data.from_date + '_to_' + data.to_date + '.pdf'
-    : 'Monthly_Attendance_' + data.class.name + '_' + monthName(data.month) + '_' + data.year + '.pdf';
+    ? 'Attendance_Register_' + data.class.name + '_' + data.from_date + '_to_' + data.to_date + '.pdf'
+    : 'Attendance_Register_' + data.class.name + '_' + monthName(data.month) + '_' + data.year + '.pdf';
   doc.save(fname);
 }
 
@@ -635,75 +656,62 @@ export default function AttendanceSection() {
                     );
                   })()}
 
-                  {monthlyData.from_date ? (
-                    /* Range mode: day-by-day table */
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr className="bg-school-paper dark:bg-[#2a2a3e]">
-                            <th className="text-left px-2 py-1.5 font-bold text-school-muted">Date</th>
-                            <th className="text-left px-2 py-1.5 font-bold text-school-muted">Day</th>
-                            <th className="text-center px-2 py-1.5 font-bold text-green-600">Present</th>
-                            <th className="text-center px-2 py-1.5 font-bold text-red-600">Absent</th>
-                            <th className="text-center px-2 py-1.5 font-bold text-school-muted">Unmarked</th>
-                            <th className="text-center px-2 py-1.5 font-bold text-school-muted">Type</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {monthlyData.days.map(function (d, i) {
-                            var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                  {/* Register matrix: students as rows, dates as columns, total-present last */}
+                  <div className="overflow-x-auto rounded-xl border border-school-border dark:border-[#2a2a3e]">
+                    <table className="w-full text-xs" style={{ minWidth: 120 + monthlyData.days.length * 26 + 56 }}>
+                      <thead>
+                        <tr className="bg-school-paper dark:bg-[#2a2a3e]">
+                          <th className="text-left px-2 py-1.5 font-bold text-school-muted sticky left-0 bg-school-paper dark:bg-[#2a2a3e] z-10" style={{ minWidth: 120 }}>Name</th>
+                          {monthlyData.days.map(function (d) {
                             var off = d.type === 'weekend' || d.type === 'holiday';
                             return (
-                              <tr key={d.date} className={'border-t border-school-border/30 dark:border-[#2a2a3e] ' + (off ? 'bg-school-paper/50 dark:bg-[#2a2a3e]/30 opacity-70' : i % 2 ? 'bg-gray-50 dark:bg-transparent' : '')}>
-                                <td className="px-2 py-1.5 font-semibold text-school-primary dark:text-[#e0e0e8]">{d.date}</td>
-                                <td className="px-2 py-1.5 text-school-muted">{DAYS[d.weekday]}</td>
-                                <td className="px-2 py-1.5 text-center font-semibold text-green-600">{off ? '-' : d.present}</td>
-                                <td className="px-2 py-1.5 text-center font-semibold text-red-600">{off ? '-' : d.absent}</td>
-                                <td className="px-2 py-1.5 text-center text-school-muted">{off ? '-' : d.unmarked}</td>
-                                <td className="px-2 py-1.5 text-center text-[10px] uppercase tracking-wider text-school-muted">{d.type}</td>
-                              </tr>
+                              <th key={d.date} title={d.date + (off ? ' (' + d.type + ')' : '')}
+                                className={'text-center px-0.5 py-1.5 font-bold ' + (off ? 'text-school-muted/50' : 'text-school-primary dark:text-[#e0e0e8]')}
+                                style={{ minWidth: 26 }}>
+                                {Number(d.date.slice(8, 10))}
+                                {d.type === 'holiday' ? <span className="block text-[7px] text-amber-600 leading-none">H</span> : null}
+                              </th>
                             );
                           })}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    /* Month mode: calendar grid */
-                    <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold uppercase text-school-muted tracking-wider">
-                      {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(function (d) { return <div key={d} className="py-1">{d}</div>; })}
-                    </div>
-                  )}
-
-                  {!monthlyData.from_date && (
-                    <div className="grid grid-cols-7 gap-1">
-                      {monthlyData.days.map(function (day, i) {
-                        var dt = new Date(day.date + 'T00:00:00');
-                        var firstDow = new Date(monthlyData.year, monthlyData.month - 1, 1).getDay();
-                        var isWeekend = day.type === 'weekend';
-                        var isHoliday = day.type === 'holiday';
-                        var bgColor = isWeekend ? 'bg-school-border/20 dark:bg-[#2a2a3e]/30'
-                          : isHoliday ? 'bg-amber-50 dark:bg-amber-500/10'
-                          : 'bg-white dark:bg-[#1a1a2e]';
-                        return (
-                          <div key={day.date}
-                            className={'min-h-[44px] rounded-lg flex flex-col items-center justify-center text-xs border border-school-border/30 dark:border-[#2a2a3e] ' + bgColor}
-                            style={i === 0 ? { gridColumnStart: firstDow + 1 } : undefined}
-                            title={day.date + ': ' + day.present + ' present, ' + day.absent + ' absent'}>
-                            <span className={'font-semibold text-[11px] ' + (isWeekend ? 'text-school-muted/50' : isHoliday ? 'text-amber-600 dark:text-amber-400' : 'text-school-primary dark:text-[#e0e0e8]')}>
-                              {dt.getDate()}
-                            </span>
-                            {!isWeekend && !isHoliday && (
-                              <div className="flex gap-0.5 mt-0.5">
-                                {day.present > 0 && <span className="text-[8px] text-green-600 font-bold">{day.present}</span>}
-                                {day.absent > 0 && <span className="text-[8px] text-red-600 font-bold">{day.absent}</span>}
-                              </div>
-                            )}
-                            {isHoliday && <span className="text-[7px] text-amber-600 dark:text-amber-400 leading-none">H</span>}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                          <th className="text-center px-1.5 py-1.5 font-bold text-green-600" style={{ minWidth: 56 }}>Total P</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {monthlyData.students.map(function (s, si) {
+                          var row = (monthlyData.student_days || {})[s.id] || {};
+                          var presentCount = 0;
+                          monthlyData.days.forEach(function (d) {
+                            var st = row[d.date];
+                            if (st === 'present') presentCount++;
+                          });
+                          return (
+                            <tr key={s.id} className={'border-t border-school-border/30 dark:border-[#2a2a3e] ' + (si % 2 ? 'bg-gray-50 dark:bg-transparent' : '')}>
+                              <td className="px-2 py-1.5 font-semibold text-school-primary dark:text-[#e0e0e8] sticky left-0 bg-white dark:bg-[#1a1a2e] z-10 truncate max-w-[120px]" title={s.name}>
+                                {s.roll ? <span className="text-school-muted font-normal mr-1">{s.roll}.</span> : null}{s.name}
+                              </td>
+                              {monthlyData.days.map(function (d) {
+                                var st = row[d.date];
+                                var off = d.type === 'weekend' || d.type === 'holiday';
+                                var cell = st === 'present' ? 'P' : st === 'absent' ? 'A' : st === 'late' ? 'L' : st === 'excused' ? 'E' : '';
+                                var cls = st === 'present' ? 'text-green-600 font-bold'
+                                  : st === 'absent' ? 'text-red-600 font-bold'
+                                  : st === 'late' ? 'text-amber-600 font-bold'
+                                  : st === 'excused' ? 'text-blue-600 font-bold'
+                                  : 'text-school-muted/40';
+                                return (
+                                  <td key={d.date} title={s.name + ' — ' + d.date + (off ? ' (' + d.type + ')' : st ? ': ' + st : ': unmarked')}
+                                    className={'text-center py-1.5 ' + cls + (off ? ' bg-school-paper/50 dark:bg-[#2a2a3e]/30' : '')}>
+                                    {cell || (off ? '·' : '')}
+                                  </td>
+                                );
+                              })}
+                              <td className="text-center py-1.5 font-bold text-green-600 bg-school-paper/50 dark:bg-[#2a2a3e]/30">{presentCount}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
 
                   <div className="flex flex-wrap gap-3 text-[10px] text-school-muted pt-2 border-t border-school-border/30 dark:border-[#2a2a3e]">
                     {[

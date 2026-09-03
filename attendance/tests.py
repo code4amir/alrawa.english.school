@@ -98,6 +98,18 @@ class AttendanceTests(TestCase):
         self.assertEqual(by_date[d1.isoformat()]['present'], 1)
         self.assertEqual(by_date[d1.isoformat()]['absent'], 1)
         self.assertEqual(by_date[d2.isoformat()]['present'], 2)
+        # register matrix: per-student day statuses
+        sd = data['student_days']
+        self.assertIn(str(self.s1.id), sd)
+        self.assertIn(str(self.s2.id), sd)
+        self.assertEqual(sd[str(self.s1.id)][d1.isoformat()], 'present')
+        self.assertEqual(sd[str(self.s2.id)][d1.isoformat()], 'absent')
+        self.assertEqual(sd[str(self.s1.id)][d2.isoformat()], 'present')
+        self.assertEqual(sd[str(self.s2.id)][d2.isoformat()], 'present')
+        # weekend day cell is None
+        weekend = [d for d in data['days'] if d['type'] == 'weekend']
+        if weekend:
+            self.assertIsNone(sd[str(self.s1.id)][weekend[0]['date']])
 
     def test_monthly_report_range_validation(self):
         # missing class_id -> 400
