@@ -23,8 +23,6 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const STATUS_COLORS: Record<string, string> = {
   present: 'bg-green-100 text-green-700 border-green-200',
   absent: 'bg-red-100 text-red-700 border-red-200',
-  late: 'bg-yellow-100 text-yellow-700 border-yellow-200',
-  excused: 'bg-blue-100 text-blue-700 border-blue-200',
 };
 
 export default function ParentAttendance() {
@@ -62,7 +60,6 @@ export default function ParentAttendance() {
   const summary = {
     present: days.filter((d) => d.status === 'present').length,
     absent: days.filter((d) => d.status === 'absent').length,
-    late: days.filter((d) => d.status === 'late').length,
   };
 
   if (!studentId) {
@@ -120,7 +117,6 @@ export default function ParentAttendance() {
             <div className="flex gap-4 mt-4 pt-3 border-t border-school-border text-xs">
               <span className="text-green-600">Present: {summary.present}</span>
               <span className="text-red-600">Absent: {summary.absent}</span>
-              {summary.late > 0 && <span className="text-yellow-600">Late: {summary.late}</span>}
             </div>
           </>
         )}

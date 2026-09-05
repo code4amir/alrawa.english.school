@@ -354,7 +354,7 @@ export interface AttendanceRecord {
   date: string;
   term: string;
   session: string;
-  status: 'present' | 'absent' | 'late' | 'excused';
+  status: 'present' | 'absent';
   marked_by: string | null;
   createdAt: string;
   updatedAt: string;
@@ -364,7 +364,7 @@ export interface AttendanceCalendarDay {
   date: string;
   weekday: number;
   type: 'weekend' | 'holiday' | 'de_facto_holiday' | 'marked' | 'unmarked';
-  status?: 'present' | 'absent' | 'late' | 'excused';
+  status?: 'present' | 'absent';
   holiday_name?: string | null;
 }
 
@@ -378,8 +378,6 @@ export interface AttendanceMonthResponse {
 export interface AttendanceSummary {
   present: number;
   absent: number;
-  late: number;
-  excused: number;
   total_school_days: number;
   holidays: number;
   weekends: number;
@@ -390,9 +388,9 @@ export interface ClassAttendanceReport {
   class: { id: string; name: string };
   students: { id: string; name: string; roll: string }[];
   dates: string[];
-  grid: Record<string, Record<string, 'present' | 'absent' | 'late' | 'excused'>>;
-  summary: Record<string, { present: number; absent: number; late: number; excused: number; total: number; pct: number }>;
-  date_summary: Record<string, { present: number; absent: number; late: number; excused: number }>;
+  grid: Record<string, Record<string, 'present' | 'absent'>>;
+  summary: Record<string, { present: number; absent: number; total: number; pct: number }>;
+  date_summary: Record<string, { present: number; absent: number }>;
 }
 
 export interface Holiday {

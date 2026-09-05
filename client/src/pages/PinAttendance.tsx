@@ -151,6 +151,7 @@ export default function PinAttendance() {
     if (queue.length === 0) return;
     const t = localStorage.getItem(LS_TOKEN_KEY);
     if (!t) return;
+    const before = queue.length;
     for (let i = queue.length - 1; i >= 0; i--) {
       const item = queue[i];
       try {
@@ -161,6 +162,8 @@ export default function PinAttendance() {
       } catch { /* keep for retry */ }
     }
     saveQueue(queue);
+    const synced = before - queue.length;
+    if (synced > 0) safeToast(`Synced ${synced} queued record${synced > 1 ? 's' : ''}`, 'success');
     setRefreshKey((k) => k + 1);
   }, []);
 
@@ -345,7 +348,7 @@ export default function PinAttendance() {
     Object.entries(records).forEach(([sid, status]) => {
       if (status !== 'unmarked') markedRecords[sid] = status;
     });
-    if (Object.keys(markedRecords).length === 0) return;
+    if (Object.keys(markedRecords).length === 0) { safeToast('Mark at least one student', 'error'); return; }
     setSaving(true);
     const payload = { school_class: classId, date, term, session, records: markedRecords };
 
@@ -354,16 +357,20 @@ export default function PinAttendance() {
         const queue = loadQueue();
         queue.unshift({ ...payload, timestamp: Date.now() });
         saveQueue(queue);
+        setRefreshKey((k) => k + 1);
+        safeToast('Saved offline — will sync when online', 'info');
         return;
       }
 
       await apiPost('/m/attendance/batch/', token, payload);
       setRefreshKey((k) => k + 1);
+      safeToast('Attendance saved', 'success');
     } catch {
       safeToast('Server unavailable — queued for retry', 'info');
       const queue = loadQueue();
       queue.unshift({ ...payload, timestamp: Date.now() });
       saveQueue(queue);
+      setRefreshKey((k) => k + 1);
     } finally {
       setSaving(false);
     }
@@ -1023,7 +1030,7 @@ export default function PinAttendance() {
                                                 const cells = days.map((d: any) => {
                                                   const st = row[d.date];
                                                   const off = d.type === 'weekend' || d.type === 'holiday';
-                                                  return st === 'present' ? 'P' : st === 'absent' ? 'A' : st === 'late' ? 'L' : st === 'excused' ? 'E' : (off ? '' : '');
+                                                  return st === 'present' ? 'P' : st === 'absent' ? 'A' : (off ? '' : '');
                                                 });
                                                 return [s.name, ...cells, String(pc)];
                                               });
@@ -1056,8 +1063,8 @@ export default function PinAttendance() {
                                 {(monthlyReport.days || []).map((d: any) => {
                                   const st = row[d.date];
                                   const off = d.type === 'weekend' || d.type === 'holiday';
-                                  const cell = st === 'present' ? 'P' : st === 'absent' ? 'A' : st === 'late' ? 'L' : st === 'excused' ? 'E' : (off ? '·' : '');
-                                  const cls = st === 'present' ? 'text-green-600 font-bold' : st === 'absent' ? 'text-red-600 font-bold' : st === 'late' ? 'text-amber-600 font-bold' : st === 'excused' ? 'text-blue-600 font-bold' : 'text-school-muted/40';
+                                  const cell = st === 'present' ? 'P' : st === 'absent' ? 'A' : (off ? '·' : '');
+                                  const cls = st === 'present' ? 'text-green-600 font-bold' : st === 'absent' ? 'text-red-600 font-bold' : 'text-school-muted/40';
                                   return <td key={d.date} className={'py-1 px-0.5 text-center ' + cls}>{cell}</td>;
                                 })}
                                 <td className="py-1 px-1 text-center font-bold text-green-600 bg-school-paper/50 dark:bg-[#2a2a3e]/30">{pc}</td>

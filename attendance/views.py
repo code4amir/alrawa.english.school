@@ -197,7 +197,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         status_counts = base_qs.values('status').annotate(
             count=models.Count('id'),
         )
-        counts = {'present': 0, 'absent': 0, 'late': 0, 'excused': 0}
+        counts = {'present': 0, 'absent': 0}
         for row in status_counts:
             counts[row['status']] = row['count']
 
@@ -243,8 +243,6 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         result = {
             'present': counts['present'],
             'absent': counts['absent'],
-            'late': counts['late'],
-            'excused': counts['excused'],
             'total_school_days': total_days,
             'holidays': holiday_count + de_facto_holidays,
             'weekends': weekend_count,
@@ -418,22 +416,22 @@ class AttendanceViewSet(viewsets.GenericViewSet):
 
             grid.setdefault(sid, {})[d] = st
 
-            ss = student_summary.setdefault(sid, {'present': 0, 'absent': 0, 'late': 0, 'excused': 0})
+            ss = student_summary.setdefault(sid, {'present': 0, 'absent': 0})
             if st in ss:
                 ss[st] += 1
 
-            ds = date_summary.setdefault(d, {'present': 0, 'absent': 0, 'late': 0, 'excused': 0})
+            ds = date_summary.setdefault(d, {'present': 0, 'absent': 0})
             if st in ds:
                 ds[st] += 1
 
         for sid in student_ids:
             grid.setdefault(sid, {})
-            student_summary.setdefault(sid, {'present': 0, 'absent': 0, 'late': 0, 'excused': 0})
+            student_summary.setdefault(sid, {'present': 0, 'absent': 0})
 
         full_summary: dict[str, dict[str, object]] = {}
         for sid in student_ids:
             ss = student_summary[sid]
-            total = ss['present'] + ss['absent'] + ss['late'] + ss['excused']
+            total = ss['present'] + ss['absent']
             pct = round(ss['present'] / total * 100, 1) if total > 0 else 0.0
             full_summary[sid] = {**ss, 'total': total, 'pct': pct}
 
@@ -528,11 +526,13 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         summaries = []
 
         for klass in SchoolClass.objects.all().order_by('order', 'name'):
-            total = Student.objects.filter(
-                school_class=klass,
-                deleted_at__isnull=True,
-            ).count()
-            qs = AttendanceRecord.objects.filter(school_class=klass, date=date_param)
+            roster_ids = Student.objects.filter(
+                school_class=klass, deleted_at__isnull=True,
+            ).values_list('id', flat=True)
+            total = len(roster_ids)
+            qs = AttendanceRecord.objects.filter(
+                school_class=klass, date=date_param, student_id__in=roster_ids,
+            )
             present = qs.filter(status='present').count()
             absent = qs.filter(status='absent').count()
 
@@ -650,7 +650,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
             absent = 0
             for sid in student_ids:
                 st = records_map.get(sid, {}).get(iso, typ)
-                student_days.setdefault(sid, {})[iso] = st if st in ('present', 'absent', 'late', 'excused') else None
+                student_days.setdefault(sid, {})[iso] = st if st in ('present', 'absent') else None
                 if st == 'present':
                     present += 1
                 elif st == 'absent':

@@ -25,8 +25,6 @@ class AttendanceRecord(models.Model):
     STATUS_CHOICES = [
         ('present', 'Present'),
         ('absent', 'Absent'),
-        ('late', 'Late'),
-        ('excused', 'Excused'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

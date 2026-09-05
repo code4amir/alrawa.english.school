@@ -56,8 +56,6 @@ class BatchAttendanceSerializer(serializers.Serializer):
 class AttendanceSummarySerializer(serializers.Serializer):
     present = serializers.IntegerField()
     absent = serializers.IntegerField()
-    late = serializers.IntegerField()
-    excused = serializers.IntegerField()
     total_school_days = serializers.IntegerField()
     holidays = serializers.IntegerField()
     weekends = serializers.IntegerField()

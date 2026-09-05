@@ -135,6 +135,30 @@ class AttendanceTests(TestCase):
         })
         self.assertEqual(res.status_code, 400)
 
+    def test_all_classes_daily_ignores_moved_students(self):
+        # Regression: rows stamped with a class must not count once the
+        # student has moved to another class (roster-scoped counts).
+        day = self._today()
+        AttendanceRecord.objects.create(
+            student=self.s1, school_class=self.klass, date=day,
+            term='1', session='2026', status='present',
+        )
+        AttendanceRecord.objects.create(
+            student=self.s2, school_class=self.klass, date=day,
+            term='1', session='2026', status='absent',
+        )
+        other = SchoolClass.objects.create(name='Other Class', order=99)
+        self.s2.school_class = other
+        self.s2.save(update_fields=['school_class'])
+
+        res = self.client.get('/api/attendance/all-classes-daily/', {'date': day.isoformat()})
+        self.assertEqual(res.status_code, 200, msg=res.content[:500])
+        row = next(c for c in res.data['classes'] if c['class']['id'] == str(self.klass.id))
+        self.assertEqual(row['total_students'], 1)
+        self.assertEqual(row['present'], 1)
+        self.assertEqual(row['absent'], 0)
+        self.assertEqual(row['unmarked'], 0)
+
     def test_batch_mixed_statuses(self):
         today = self._today()
         res = self.client.post('/api/attendance/batch/', {

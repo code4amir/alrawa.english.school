@@ -177,8 +177,6 @@ async function downloadMonthlyPDF(data: MonthlyReportData) {
       const cx = M + NAME_W + i * dayW + dayW / 2;
       if (st === 'present') { doc.setTextColor(22, 163, 74); doc.text('P', cx, y + 4.5, { align: 'center' }); }
       else if (st === 'absent') { doc.setTextColor(220, 38, 38); doc.text('A', cx, y + 4.5, { align: 'center' }); }
-      else if (st === 'late') { doc.setTextColor(217, 119, 6); doc.text('L', cx, y + 4.5, { align: 'center' }); }
-      else if (st === 'excused') { doc.setTextColor(37, 99, 235); doc.text('E', cx, y + 4.5, { align: 'center' }); }
       else if (off) { doc.setTextColor(200, 200, 205); doc.text('·', cx, y + 4.5, { align: 'center' }); }
       doc.setTextColor(...NAVY);
     });
@@ -194,7 +192,7 @@ async function downloadMonthlyPDF(data: MonthlyReportData) {
 
   const netDays = data.days.filter(function (d) { return d.type !== 'weekend' && d.type !== 'holiday'; }).length;
   doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...NAVY);
-  doc.text('Net School Days: ' + netDays + '   P = Present, A = Absent, L = Late, E = Excused', M, y + 5);
+  doc.text('Net School Days: ' + netDays + '   P = Present, A = Absent', M, y + 5);
   const fname = isRange
     ? 'Attendance_Register_' + data.class.name + '_' + data.from_date + '_to_' + data.to_date + '.pdf'
     : 'Attendance_Register_' + data.class.name + '_' + monthName(data.month) + '_' + data.year + '.pdf';
@@ -692,11 +690,9 @@ export default function AttendanceSection() {
                               {monthlyData.days.map(function (d) {
                                 var st = row[d.date];
                                 var off = d.type === 'weekend' || d.type === 'holiday';
-                                var cell = st === 'present' ? 'P' : st === 'absent' ? 'A' : st === 'late' ? 'L' : st === 'excused' ? 'E' : '';
+                                var cell = st === 'present' ? 'P' : st === 'absent' ? 'A' : '';
                                 var cls = st === 'present' ? 'text-green-600 font-bold'
                                   : st === 'absent' ? 'text-red-600 font-bold'
-                                  : st === 'late' ? 'text-amber-600 font-bold'
-                                  : st === 'excused' ? 'text-blue-600 font-bold'
                                   : 'text-school-muted/40';
                                 return (
                                   <td key={d.date} title={s.name + ' — ' + d.date + (off ? ' (' + d.type + ')' : st ? ': ' + st : ': unmarked')}

@@ -249,6 +249,10 @@ def mobile_batch_attendance(request):
     if not isinstance(records, dict) or len(records) == 0:
         return Response({'error': 'records must be a non-empty object'}, status=400)
 
+    bad_statuses = [sid for sid, st in records.items() if st not in ('present', 'absent')]
+    if bad_statuses:
+        return Response({'error': 'records must only contain present/absent statuses'}, status=400)
+
     try:
         school_class = SchoolClass.objects.get(id=class_id)
     except SchoolClass.DoesNotExist:
@@ -516,7 +520,7 @@ def mobile_monthly_report(request):
         absent = 0
         for sid in student_ids:
             st = records_map.get(sid, {}).get(iso, typ)
-            student_days.setdefault(sid, {})[iso] = st if st in ('present', 'absent', 'late', 'excused') else None
+            student_days.setdefault(sid, {})[iso] = st if st in ('present', 'absent') else None
             if st == 'present':
                 present += 1
             elif st == 'absent':
@@ -559,10 +563,13 @@ def mobile_all_classes_daily(request):
 
     summaries = []
     for klass in SchoolClass.objects.all().order_by('order', 'name'):
-        total = Student.objects.filter(
+        roster_ids = Student.objects.filter(
             school_class=klass, deleted_at__isnull=True,
-        ).count()
-        qs = AttendanceRecord.objects.filter(school_class=klass, date=date_param)
+        ).values_list('id', flat=True)
+        total = len(roster_ids)
+        qs = AttendanceRecord.objects.filter(
+            school_class=klass, date=date_param, student_id__in=roster_ids,
+        )
         present = qs.filter(status='present').count()
         absent = qs.filter(status='absent').count()
         summaries.append({

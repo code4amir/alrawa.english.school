@@ -6,7 +6,7 @@ from accounts.permissions import is_admin_or_superuser
 
 @ai_function(
     name="attendance_summary",
-    description="Get attendance summary (present/absent/late/excused counts) for a class within a date range.",
+    description="Get attendance summary (present/absent counts) for a class within a date range.",
     permissions=["students:read"],
     parameters={
         "type": "object",
@@ -26,7 +26,7 @@ from accounts.permissions import is_admin_or_superuser
         },
         "required": ["class_name"],
     },
-    result_columns=["Date", "Present", "Absent", "Late", "Excused", "Total"],
+    result_columns=["Date", "Present", "Absent", "Total"],
 )
 def attendance_summary_handler(user, class_name="", date_from=None, date_to=None):
     from core.models import SchoolClass
@@ -55,18 +55,16 @@ def attendance_summary_handler(user, class_name="", date_from=None, date_to=None
         .annotate(
             present=models.Count('id', filter=models.Q(status='present')),
             absent=models.Count('id', filter=models.Q(status='absent')),
-            late=models.Count('id', filter=models.Q(status='late')),
-            excused=models.Count('id', filter=models.Q(status='excused')),
             total=models.Count('id'),
         )
         .order_by('date')
     )
-    data = [{"Date": str(r["date"]), "Present": r["present"], "Absent": r["absent"], "Late": r["late"], "Excused": r["excused"], "Total": r["total"]} for r in recs]
+    data = [{"Date": str(r["date"]), "Present": r["present"], "Absent": r["absent"], "Total": r["total"]} for r in recs]
     return {
         "type": "table",
         "explanation": f"Attendance summary for {class_name} ({d_from} to {d_to})",
         "data": data,
-        "columns": ["Date", "Present", "Absent", "Late", "Excused", "Total"],
+        "columns": ["Date", "Present", "Absent", "Total"],
     }
 
 
