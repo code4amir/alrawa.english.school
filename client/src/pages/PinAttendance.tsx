@@ -71,6 +71,14 @@ function safeToast(msg: string, type?: 'success' | 'error' | 'info' | '') {
   try { toast(msg, type); } catch { /* toast component not mounted */ }
 }
 
+function isValidationError(msg: string) {
+  // 4xx / business-rule rejections must surface, never queue: the server
+  // will reject them identically on every retry (weekend, holiday, bad
+  // status, unassigned class, ...). Only network/server failures queue.
+  return /failed: 4\d\d/i.test(msg)
+    || /weekend|holiday|records must|not assigned|required|invalid|expired|unauthorized|forbidden/i.test(msg);
+}
+
 export default function PinAttendance() {
   const [screen, setScreen] = useState<'teachers' | 'pin' | 'classes' | 'attendance'>('teachers');
   const [teachers, setTeachers] = useState<Teacher[]>([]);
@@ -152,6 +160,7 @@ export default function PinAttendance() {
     const t = localStorage.getItem(LS_TOKEN_KEY);
     if (!t) return;
     const before = queue.length;
+    let dropped = 0;
     for (let i = queue.length - 1; i >= 0; i--) {
       const item = queue[i];
       try {
@@ -159,11 +168,16 @@ export default function PinAttendance() {
           school_class: item.school_class, date: item.date, term: item.term, session: item.session, records: item.records,
         });
         queue.splice(i, 1);
-      } catch { /* keep for retry */ }
+      } catch (e: any) {
+        // Validation rejections never succeed on retry — drop with notice.
+        if (isValidationError(e?.message || '')) { queue.splice(i, 1); dropped++; }
+        /* else keep for retry */
+      }
     }
     saveQueue(queue);
-    const synced = before - queue.length;
+    const synced = before - queue.length - dropped;
     if (synced > 0) safeToast(`Synced ${synced} queued record${synced > 1 ? 's' : ''}`, 'success');
+    if (dropped > 0) safeToast(`Removed ${dropped} invalid queued record${dropped > 1 ? 's' : ''} (rejected by server)`, 'error');
     setRefreshKey((k) => k + 1);
   }, []);
 
@@ -365,7 +379,14 @@ export default function PinAttendance() {
       await apiPost('/m/attendance/batch/', token, payload);
       setRefreshKey((k) => k + 1);
       safeToast('Attendance saved', 'success');
-    } catch {
+    } catch (e: any) {
+      const msg = e?.message || 'Failed to save attendance';
+      if (isValidationError(msg)) {
+        // Business-rule rejection (weekend, holiday, ...): surface it and
+        // keep local marks visible so the teacher can fix and retry.
+        safeToast(msg, 'error');
+        return;
+      }
       safeToast('Server unavailable — queued for retry', 'info');
       const queue = loadQueue();
       queue.unshift({ ...payload, timestamp: Date.now() });
