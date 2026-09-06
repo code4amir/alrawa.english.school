@@ -248,9 +248,9 @@ export default function StudentSection() {
     <div className={`bg-white p-4 rounded-2xl border card-shadow text-center ${s.hasGraduated ? 'border-amber-300 bg-amber-50/30' : 'border-school-border'}`}>
       <div className="flex flex-col items-center gap-2">
         {s.photoUrl ? (
-          <img src={s.photoUrl} alt="" className="w-14 h-14 rounded-full object-cover border-2 border-school-border shadow-sm" />
+          <img src={s.photoUrl} alt="" loading="lazy" decoding="async" className="w-14 h-14 rounded-full object-cover border-2 border-school-border shadow-sm" />
         ) : s.hasPhoto ? (
-          <img src={`${API_URL}/students/${s.id}/photo/`} alt="" className="w-14 h-14 rounded-full object-cover border-2 border-school-border shadow-sm" />
+          <img src={`${API_URL}/students/${s.id}/photo/`} alt="" loading="lazy" decoding="async" className="w-14 h-14 rounded-full object-cover border-2 border-school-border shadow-sm" />
         ) : (
           <div className="w-14 h-14 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-white flex items-center justify-center shadow-sm"><User size={24} className="text-white" /></div>
         )}

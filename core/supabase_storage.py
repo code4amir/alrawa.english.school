@@ -76,8 +76,10 @@ def delete_photo(path):
 def upload_photo(path, photo_bytes):
     # Use PUT (not POST) so re-uploading to the same path OVERWRITES the existing
     # object instead of failing with a "already exists" error. x-upsert guards
-    # against create-vs-update ambiguity; cache-control: no-cache prevents the
-    # CDN from serving a stale image after an update.
+    # against create-vs-update ambiguity.
+    # immutable: every re-upload mints a FRESH signed URL token (see
+    # _bust_signed_url), so the browser-visible URL always changes — browsers
+    # may cache each URL forever and can never go stale.
     url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{path}"
     ok = _req(
         "PUT",
@@ -85,7 +87,7 @@ def upload_photo(path, photo_bytes):
         data=photo_bytes,
         content_type="image/jpeg",
         raw=True,
-        extra_headers={"cache-control": "no-cache", "x-upsert": "true"},
+        extra_headers={"cache-control": "public, max-age=31536000, immutable", "x-upsert": "true"},
     ) is not None
     if ok:
         _bust_signed_url(path)

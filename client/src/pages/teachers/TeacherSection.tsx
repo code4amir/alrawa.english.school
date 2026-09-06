@@ -160,9 +160,9 @@ export default function TeacherSection() {
     <div className="bg-white p-4 rounded-2xl border border-school-border card-shadow text-center">
       <div className="flex flex-col items-center gap-2">
         {t.photoUrl ? (
-          <img src={t.photoUrl} alt="" className="w-14 h-14 rounded-full object-cover border-2 border-school-border shadow-sm" />
+          <img src={t.photoUrl} alt="" loading="lazy" decoding="async" className="w-14 h-14 rounded-full object-cover border-2 border-school-border shadow-sm" />
         ) : t.hasPhoto ? (
-          <img src={`${API_URL}/teachers/${t.id}/photo/`} alt="" className="w-14 h-14 rounded-full object-cover border-2 border-school-border shadow-sm" />
+          <img src={`${API_URL}/teachers/${t.id}/photo/`} alt="" loading="lazy" decoding="async" className="w-14 h-14 rounded-full object-cover border-2 border-school-border shadow-sm" />
         ) : (
           <div className="w-14 h-14 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-700 text-white flex items-center justify-center shadow-sm"><GraduationCap size={24} className="text-white" /></div>
         )}

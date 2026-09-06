@@ -20,9 +20,17 @@ class PhotoUrlMixin:
 
     def get_photoUrl(self, obj):
         if obj.photo_path:
+            # Fast redirect URL (NO proxy param): the photo endpoint answers
+            # with a tiny 302 to a signed Supabase URL, so image bytes stream
+            # straight from storage and Django never touches them. The 302
+            # itself stays no-store (this URL is deterministic per object),
+            # while the signed target rotates on every re-upload — browsers
+            # cache each target immutably and can never go stale. A 30-student
+            # list costs 30 tiny parallel redirects instead of 30 full-body
+            # Django downloads.
             from django.core import signing
             token = signing.dumps({'id': str(obj.id)}, salt='photo-access')
-            path = f"/api/{self.photo_url_prefix}/{obj.id}/photo/?token={token}&proxy=1"
+            path = f"/api/{self.photo_url_prefix}/{obj.id}/photo/?token={token}"
             request = self.context.get('request')
             if request:
                 return request.build_absolute_uri(path)
@@ -108,7 +116,9 @@ class PhotoHandleMixin:
                 # no-store: the photoUrl token is deterministic per object, so
                 # without this the browser serves its cached (stale) image
                 # forever after a photo is re-uploaded.
-                if request.query_params.get('proxy') or authenticated:
+                # Default is a cheap 302 (Django never touches image bytes);
+                # full-body proxy only for explicit ?proxy=1 legacy callers.
+                if request.query_params.get('proxy'):
                     import urllib.request
                     from django.http import HttpResponse
                     try:

@@ -149,6 +149,29 @@ class StudentTests(TestCase):
         res = self.client.get(f'/api/students/{s.id}/')
         self.assertIn('hasPhoto', res.data)
 
+    def test_photo_url_is_redirect_not_proxy(self):
+        from unittest.mock import patch
+        s = Student.objects.create(
+            name='S1', student_id='S000001', school_class=self.klass,
+            photo_path='students/s1.jpg')
+        with patch('core.mixins.get_signed_url', return_value='https://cdn.test/signed.jpg'):
+            res = self.client.get(f'/api/students/{s.id}/')
+            self.assertEqual(res.status_code, 200)
+            self.assertIn('/photo/?token=', res.data['photoUrl'])
+            self.assertNotIn('proxy=1', res.data['photoUrl'])
+
+    def test_photo_endpoint_redirects_to_storage(self):
+        from unittest.mock import patch
+        s = Student.objects.create(
+            name='S1', student_id='S000001', school_class=self.klass,
+            photo_path='students/s1.jpg')
+        with patch('core.mixins.get_signed_url', return_value='https://cdn.test/signed.jpg'):
+            detail = self.client.get(f'/api/students/{s.id}/').data
+            token_url = detail['photoUrl']
+            res = self.client.get(token_url)
+            self.assertEqual(res.status_code, 302)
+            self.assertEqual(res['Location'], 'https://cdn.test/signed.jpg')
+
     def test_create_student_missing_name(self):
         res = self.client.post('/api/students/', {'class': self.klass.id})
         self.assertEqual(res.status_code, 400)

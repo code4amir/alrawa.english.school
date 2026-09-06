@@ -6,6 +6,17 @@
 // stale cached bundle.
 const CACHE = 'alrawa-__BUILD_STAMP__';
 const PARENT_CACHE = 'parent-cache-v1';
+// Reference data: global (same for every role), changes rarely. Served
+// stale-while-revalidate so sections open instantly on repeat visits.
+// NEVER add per-user data here (students, attendance, results, finance
+// transactions/balances) — it would leak across accounts on shared devices.
+const REF_CACHE = 'alrawa-ref-v1';
+const REF_PATHS = [
+  '/api/classes/', '/api/subjects', '/api/academic-years/',
+  '/api/service-types/', '/api/settings/', '/api/finance/fee-schedules/',
+  '/api/books/', '/api/categories/',
+];
+const isRefRequest = (url) => REF_PATHS.some((p) => url.includes(p));
 const PRECACHE_URLS = ['manifest.json'];
 
 self.addEventListener('install', (e) => {
@@ -18,13 +29,37 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     Promise.all([
-      caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE && k !== PARENT_CACHE).map((k) => caches.delete(k)))),
+      caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE && k !== PARENT_CACHE && k !== REF_CACHE).map((k) => caches.delete(k)))),
       self.clients.claim(),
     ])
   );
 });
 
 self.addEventListener('fetch', (e) => {
+  if (e.request.method === 'GET' && isRefRequest(e.request.url)) {
+    e.respondWith((async () => {
+      const cache = await caches.open(REF_CACHE);
+      const cached = await cache.match(e.request);
+      const update = (response) => {
+        if (response && response.status === 200) {
+          cache.put(e.request, response.clone()).catch(() => {});
+        }
+        return response;
+      };
+      if (cached) {
+        // Fast networks get fresh data (also right after an admin edit);
+        // slow networks fall back to cache after 300ms while the network
+        // copy updates the cache in the background. Offline serves cache.
+        const network = fetch(e.request).then(update).catch(() => null);
+        const fallback = new Promise((resolve) => setTimeout(() => resolve(cached), 300));
+        return Promise.race([network.then((res) => res || cached), fallback]);
+      }
+      const fresh = await fetch(e.request).catch(() => null);
+      if (fresh) update(fresh);
+      return fresh || new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } });
+    })());
+    return;
+  }
   if (e.request.method !== 'GET' || e.request.url.includes('/api/')) {
     if (e.request.method === 'GET' && e.request.url.includes('/api/parents/')) {
       e.respondWith(
