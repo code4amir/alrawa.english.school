@@ -23,6 +23,29 @@ interface AuthState {
 
 let refreshing: Promise<boolean> | null = null;
 
+// POST /auth/refresh/ using the HttpOnly refresh cookie. The backend
+// (CustomTokenRefreshView) reads the token from the COOKIE only — the JSON
+// body is ignored — so this MUST send credentials. A previous version used a
+// bare axios.post without withCredentials: the cookie was never sent
+// cross-origin, every refresh 401'd, and users were kicked to /login ~15 min
+// after login (as soon as the access token expired).
+export async function refreshSession(): Promise<boolean> {
+  try {
+    const rt = getRefreshToken();
+    const payload = rt ? { refresh: rt } : {};
+    const res = await axios.post(
+      `${api.defaults.baseURL}/auth/refresh/`,
+      payload,
+      { withCredentials: true },
+    );
+    const { access, refresh: newRefresh, csrfToken } = res.data;
+    setTokens(access, newRefresh || rt, csrfToken || getCsrfToken());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const useAuthStore = create<AuthState>((set, get) => {
   api.interceptors.response.use(
     (response) => response,
@@ -32,23 +55,9 @@ export const useAuthStore = create<AuthState>((set, get) => {
         config._retry = true;
 
         if (!refreshing) {
-          refreshing = (async () => {
-            try {
-              const rt = getRefreshToken();
-              const payload = rt ? { refresh: rt } : {};
-              const res = await axios.post(
-                `${api.defaults.baseURL}/auth/refresh/`,
-                payload,
-              );
-              const { access, refresh: newRefresh, csrfToken } = res.data;
-              setTokens(access, newRefresh || rt, csrfToken || getCsrfToken());
-              return true;
-            } catch {
-              return false;
-            } finally {
-              refreshing = null;
-            }
-          })();
+          refreshing = refreshSession().finally(() => {
+            refreshing = null;
+          });
         }
 
         const ok = await refreshing;

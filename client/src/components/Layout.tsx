@@ -1,5 +1,5 @@
-import { useRef, useCallback, useEffect, useState } from 'react';
-import type { ReactNode, TouchEvent } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuthStore, useUIStore, useDarkMode, useSchoolStore } from '../store';
@@ -63,9 +63,6 @@ const Layout = ({ children }: LayoutProps) => {
   const lastFetchedLabel = lastFetched
     ? new Date(lastFetched).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     : null;
-  const touchStartX = useRef(0);
-  const touchStartY = useRef(0);
-
   const handleBack = useCallback(() => {
     swipeBack();
     // If swipeBack went to null mode, clear URL param
@@ -75,20 +72,6 @@ const Layout = ({ children }: LayoutProps) => {
     }
   }, [swipeBack, setSearchParams]);
 
-  const handleTouchStart = useCallback((e: TouchEvent) => {
-    touchStartX.current = e.touches[0].clientX;
-    touchStartY.current = e.touches[0].clientY;
-  }, []);
-
-  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
-    const dx = e.changedTouches[0].clientX - touchStartX.current;
-    const dy = e.changedTouches[0].clientY - touchStartY.current;
-    if (Math.abs(dy) > Math.abs(dx)) return;
-    if (dx > 80 && activeMode) {
-      handleBack();
-    }
-  }, [activeMode, handleBack]);
-
   return (
     <div className="min-h-screen bg-school-paper flex flex-col selection:bg-school-accent selection:text-white">
       {/* Header */}
@@ -97,10 +80,10 @@ const Layout = ({ children }: LayoutProps) => {
                 {activeMode && (
             <button
               onClick={handleBack}
-              className="p-1 hover:bg-white/10 rounded-full transition-colors"
+              className="p-2.5 -ml-2 hover:bg-white/10 rounded-full transition-colors"
               aria-label="Go back"
             >
-              <ChevronLeft size={24} />
+              <ChevronLeft size={26} />
             </button>
           )}
           <button onClick={() => { setMode(null); navigate('/'); }} className="flex items-center gap-3 text-left">
@@ -221,7 +204,7 @@ const Layout = ({ children }: LayoutProps) => {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-x-hidden relative" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+      <main className="flex-1 overflow-x-hidden relative">
         <AnimatePresence mode="wait">
           <motion.div
             key={activeMode || location.pathname}
@@ -248,6 +231,18 @@ const Layout = ({ children }: LayoutProps) => {
           </div>
         </div>
       </footer>
+
+      {/* Mobile one-step-back button — thumb-reachable replacement for the
+          removed swipe gesture. Same one-step behavior as the header back. */}
+      {activeMode && (
+        <button
+          onClick={handleBack}
+          aria-label="Go back"
+          className="sm:hidden fixed bottom-24 right-4 z-50 w-12 h-12 rounded-full bg-school-primary text-white shadow-xl flex items-center justify-center active:scale-95 transition-transform"
+        >
+          <ChevronLeft size={26} />
+        </button>
+      )}
 
       {/* Bottom Navigation (mobile only) */}
       <BottomNav />

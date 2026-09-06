@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useAuthStore, useDarkMode, useUIStore, useUserManagementStore, api } from '../store';
 import { setTokens, getAccessToken, getRefreshToken } from '../stores/api';
+import { refreshSession } from '../stores/auth';
 
 const mockSupabase = {
   auth: {
@@ -82,6 +83,52 @@ describe('useAuthStore', () => {
     expect(getAccessToken()).toBeNull();
     expect(getRefreshToken()).toBeNull();
     expect(useAuthStore.getState().user).toBeNull();
+  });
+
+  it('refreshSession sends cookies so the backend sees the refresh token', async () => {
+    // Regression: the backend reads the refresh token from the HttpOnly
+    // cookie ONLY. A refresh POST without withCredentials never sends it
+    // cross-origin, every refresh 401s, and the user is kicked to /login
+    // ~15 min after login when the access token expires.
+    const axiosMod = (await import('axios')).default;
+    const postSpy = vi.spyOn(axiosMod, 'post').mockResolvedValue({
+      data: { access: 'new-access', refresh: 'new-refresh', csrfToken: 'c' },
+    });
+    try {
+      setTokens('old-access', 'mem-refresh');
+
+      const ok = await refreshSession();
+
+      expect(ok).toBe(true);
+      expect(postSpy).toHaveBeenCalledWith(
+        expect.stringContaining('/auth/refresh/'),
+        { refresh: 'mem-refresh' },
+        { withCredentials: true },
+      );
+      expect(getAccessToken()).toBe('new-access');
+      expect(getRefreshToken()).toBe('new-refresh');
+    } finally {
+      postSpy.mockRestore();
+    }
+  });
+
+  it('refreshSession returns false when the server rejects the refresh', async () => {
+    const axiosMod = (await import('axios')).default;
+    const postSpy = vi.spyOn(axiosMod, 'post').mockRejectedValue({ response: { status: 401 } });
+    try {
+      setTokens('old-access', 'mem-refresh');
+
+      const ok = await refreshSession();
+
+      expect(ok).toBe(false);
+      expect(postSpy).toHaveBeenCalledWith(
+        expect.stringContaining('/auth/refresh/'),
+        { refresh: 'mem-refresh' },
+        { withCredentials: true },
+      );
+    } finally {
+      postSpy.mockRestore();
+    }
   });
 });
 
