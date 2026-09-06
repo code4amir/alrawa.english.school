@@ -13,6 +13,7 @@ import DeleteConfirmModal from '../../components/DeleteConfirmModal';
 import PromoteModal from '../../components/PromoteModal';
 import ShareLinkModal from '../../components/ShareLinkModal';
 import { API_URL } from '../../lib/config';
+import { canManageClassStudents } from '../../lib/permissions';
 import { useNativeCamera } from '../../hooks/useNativeCamera';
 
 let _jsPDF: any = null;
@@ -24,8 +25,12 @@ async function loadJsPDF() {
 export default function StudentSection() {
   const { classes, students, fetchClasses, fetchStudents, academicYears, fetchAcademicYears, loading } = useSchoolStore();
   const role = useAuthStore((s) => s.user?.role);
+  const teacherClasses = useAuthStore((s) => s.user?.teacherClasses);
   const isAdmin = role === 'admin';
-  const canEditStudents = role === 'admin' || role === 'teacher';
+  const canEditStudents = role === 'admin' || role === 'teacher' || role === 'monitor';
+  // Teachers act only on their assigned classes (backend enforces the same
+  // via can_manage_students); admin/monitor cover every class.
+  const canManageStudent = (s: any) => canManageClassStudents(role, teacherClasses, s.class);
   const canShareLink = role === 'admin' || role === 'monitor' || role === 'teacher';
 
   const [activeClass, setActiveClass] = useState<string | null>(null);
@@ -138,7 +143,7 @@ export default function StudentSection() {
       // which left newly-added students invisible until a reload.
       fetchStudents(undefined, true);
     } catch (e: any) {
-      toast(e.response?.data?.error || e.message || 'Error', 'error');
+      toast(e.response?.data?.error || e.response?.data?.detail || e.message || 'Error', 'error');
     } finally {
       setSubmitting(false);
     }
@@ -164,7 +169,7 @@ export default function StudentSection() {
           fetchStudents(undefined, true);
         } catch { toast('Could not undo', 'error'); }
       }});
-    } catch (e: any) { toast(e.response?.data?.error || e.message || 'Error', 'error'); }
+    } catch (e: any) { toast(e.response?.data?.error || e.response?.data?.detail || e.message || 'Error', 'error'); }
     setDeleteId(null);
     setDeleteLoading(false);
     fetchStudents(undefined, true);
@@ -203,7 +208,7 @@ export default function StudentSection() {
             <label className="text-xs font-bold text-school-muted mb-1 block">Class</label>
             <select value={form.className} onChange={(e) => setForm({ ...form, className: e.target.value })} className={inputCls}>
               <option value="">Select class</option>
-              {sorted.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
+              {(role === 'teacher' ? (teacherClasses || []) : sorted).map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
             </select>
           </div>
           <div>
@@ -271,7 +276,7 @@ export default function StudentSection() {
             ))}
           </div>
         )}
-        {canEditStudents && (
+        {canManageStudent(s) && (
         <div className="flex gap-2 mt-3 pt-3 border-t border-school-border">
           <button onClick={() => handleEdit(s)} className="flex-1 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-xs font-medium hover:bg-blue-100 flex items-center justify-center gap-1"><Pencil size={14} /> Edit</button>
           {s.hasGraduated ? (
@@ -472,7 +477,7 @@ export default function StudentSection() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {/* Add New Card */}
-            {canEditStudents && (showAddNew ? (
+            {canEditStudents && canManageClassStudents(role, teacherClasses, activeClass || '') && (showAddNew ? (
               renderEditCard(true)
             ) : (
               <button onClick={() => { setShowAddNew(true); setForm({ ...form, className: activeClass }); }}

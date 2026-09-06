@@ -126,21 +126,42 @@ export default function PinAttendance() {
 
   const loadingStudentsRef = useRef(false);
 
+  function clearPinSession() {
+    localStorage.removeItem(LS_TOKEN_KEY);
+    localStorage.removeItem(LS_TEACHER_KEY);
+    localStorage.removeItem('pin_role');
+    localStorage.removeItem('pin_classes');
+  }
+
   useEffect(() => {
     const savedToken = localStorage.getItem(LS_TOKEN_KEY);
         const savedTeacher = localStorage.getItem(LS_TEACHER_KEY);
         const savedClasses = localStorage.getItem('pin_classes');
         if (savedToken && savedTeacher) {
-          setToken(savedToken);
-          setSelectedTeacher(JSON.parse(savedTeacher));
-          try { setTeacherRole(localStorage.getItem('pin_role')); } catch { /* ignore */ }
-          if (savedClasses) {
-        try {
-          setClasses(JSON.parse(savedClasses));
-        } catch { /* ignore */ }
-      }
-      setScreen('classes');
-    }
+          const restore = () => {
+            setToken(savedToken);
+            setSelectedTeacher(JSON.parse(savedTeacher));
+            try { setTeacherRole(localStorage.getItem('pin_role')); } catch { /* ignore */ }
+            if (savedClasses) {
+              try {
+                setClasses(JSON.parse(savedClasses));
+              } catch { /* ignore */ }
+            }
+            setScreen('classes');
+          };
+          // PIN tokens expire after 24h. A dead token must not resurrect a
+          // stale class list (e.g. a previous admin's on a shared device),
+          // so revalidate before restoring. Offline → keep cache (can't check).
+          if (!navigator.onLine) { restore(); return; }
+          apiGet('/m/holidays/', savedToken).then(restore, (e: any) => {
+            if (/: 40[13]\b/.test(e?.message || '')) {
+              clearPinSession();
+              setScreen('teachers');
+            } else {
+              restore();
+            }
+          });
+        }
   }, []);
 
   useEffect(() => {
@@ -250,10 +271,7 @@ export default function PinAttendance() {
   }
 
   function logout() {
-      localStorage.removeItem(LS_TOKEN_KEY);
-      localStorage.removeItem(LS_TEACHER_KEY);
-      localStorage.removeItem('pin_role');
-      localStorage.removeItem('pin_classes');
+      clearPinSession();
       setToken('');
       setTeacherRole(null);
       setSelectedTeacher(null);

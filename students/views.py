@@ -65,6 +65,16 @@ class StudentViewSet(PhotoHandleMixin, viewsets.ModelViewSet):
         obj = serializer.save()
         log_audit('create', 'student', entity_id=obj.pk, request=self.request)
 
+    def perform_update(self, serializer):
+        if not is_admin_or_superuser(self.request.user):
+            old_class_id = serializer.instance.school_class_id if serializer.instance else None
+            new_class = serializer.validated_data.get('school_class')
+            for class_id in {old_class_id, getattr(new_class, 'id', None)} - {None}:
+                if not can_manage_students(self.request.user, class_id):
+                    raise PermissionDenied('You are not the class teacher of this class.')
+        obj = serializer.save()
+        log_audit('update', 'student', entity_id=obj.pk, request=self.request)
+
     def perform_destroy(self, instance):
         if instance.school_class_id and not is_admin_or_superuser(self.request.user):
             if not can_manage_students(self.request.user, instance.school_class_id):
@@ -108,6 +118,10 @@ class StudentViewSet(PhotoHandleMixin, viewsets.ModelViewSet):
                 class_name = row.get('class', '').strip()
                 if class_name:
                     school_class = SchoolClass.objects.filter(name__iexact=class_name).first()
+                if (school_class and not is_admin_or_superuser(request.user)
+                        and not can_manage_students(request.user, school_class.id)):
+                    errors.append({'row': i + 1, 'error': 'You are not the class teacher of this class.'})
+                    continue
                 serializer = StudentSerializer(data={
                     'name': row.get('name', '').strip(),
                     'roll': row.get('roll', '').strip(),

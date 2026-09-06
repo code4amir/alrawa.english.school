@@ -11,7 +11,19 @@ interface ToastState {
 
 let toastFn: ((msg: string, type?: 'success' | 'error' | 'info' | '', action?: { label: string; onClick: () => void }) => void) | null = null;
 
+// Last toast, kept outside React so a message fired just before a screen
+// transition survives the Toast unmount/remount (e.g. the PIN sync-drain
+// notice shown while login-restore flips teachers → classes screen).
+interface PendingToast {
+  message: string;
+  type: 'success' | 'error' | 'info' | '';
+  action?: { label: string; onClick: () => void };
+  at: number;
+}
+let pending: PendingToast | null = null;
+
 export const toast = (msg: string, type: 'success' | 'error' | 'info' | '' = '', action?: { label: string; onClick: () => void }) => {
+  pending = { message: msg, type, action, at: Date.now() };
   toastFn?.(msg, type, action);
 };
 
@@ -40,16 +52,23 @@ export function getErrorMessage(e: unknown): string {
 const Toast: React.FC = () => {
   const [state, setState] = useState<ToastState>({ message: '', type: '', visible: false });
 
-  const hide = useCallback(() => setState((s) => ({ ...s, visible: false })), []);
+  const hide = useCallback(() => { pending = null; setState((s) => ({ ...s, visible: false })); }, []);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
-    toastFn = (message, type = '', action) => {
+    const show = (message: string, type: 'success' | 'error' | 'info' | '' = '', action?: { label: string; onClick: () => void }) => {
       setState({ message, type, visible: true, action });
       clearTimeout(timer);
       const duration = type === 'error' ? 6000 : (action ? 7000 : 3000);
-      timer = setTimeout(hide, duration);
+      timer = setTimeout(() => { pending = null; hide(); }, duration);
     };
+    toastFn = (message, type = '', action) => {
+      pending = { message, type, action, at: Date.now() };
+      show(message, type, action);
+    };
+    if (pending && Date.now() - pending.at < 4000) {
+      show(pending.message, pending.type, pending.action);
+    }
     return () => { clearTimeout(timer); toastFn = null; };
   }, [hide]);
 

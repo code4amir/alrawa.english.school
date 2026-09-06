@@ -8,7 +8,7 @@ from .serializers import (
     AssignSubjectSerializer, RemoveSubjectSerializer,
 )
 from django.contrib.auth.hashers import make_password
-from accounts.permissions import require_permission, require_photo_access
+from accounts.permissions import require_permission, require_photo_access, IsAdminOrSuperuser
 from core.mixins import PhotoHandleMixin
 from core.audit import log_audit
 from core.models import SchoolClass, Subject
@@ -24,6 +24,12 @@ class TeacherViewSet(PhotoHandleMixin, viewsets.ModelViewSet):
             return [require_photo_access('teachers:read')()]
         if self.action in ['list', 'retrieve']:
             return [require_permission('teachers:read')()]
+        # Authority control stays admin-only: monitors hold teachers:write
+        # (record CRUD) but must not set PINs or change assignments.
+        if self.action in ['set_pin', 'remove_class_teacher', 'remove_subject']:
+            return [IsAdminOrSuperuser()]
+        if self.action in ['class_teacher', 'subject_assignment'] and self.request.method != 'GET':
+            return [IsAdminOrSuperuser()]
         return [require_permission('teachers:write')()]
 
     def get_queryset(self):

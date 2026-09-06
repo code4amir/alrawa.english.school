@@ -31,8 +31,8 @@ ROLE_PERMISSIONS = {
     # user management, or audit access.
     'monitor': [
         'students:read', 'students:write',
-        'teachers:read',
-        'staff:read',
+        'teachers:read', 'teachers:write',
+        'staff:read', 'staff:write',
         'books:read', 'books:write',
         'classes:read',
         'subjects:read', 'subjects:write', 'subjects:admin',
@@ -96,6 +96,19 @@ def require_permission(permission):
 
 def is_admin_or_superuser(user):
     return user.is_superuser or getattr(user, 'role', None) == 'admin'
+
+
+class IsAdminOrSuperuser(BasePermission):
+    """Admin role or superuser only — for authority control (PINs, assignments).
+
+    Distinct from 'teachers:write', which monitors also hold: a monitor can
+    manage teacher/staff records but must not set attendance PINs or change
+    class/subject assignments.
+    """
+
+    def has_permission(self, request, view):
+        u = request.user
+        return bool(u and u.is_authenticated and is_admin_or_superuser(u))
 
 
 def is_academic_admin(user):

@@ -327,6 +327,13 @@ class AuthGetSessionView(APIView):
                 auth_result = SupabaseJWTAuthentication().authenticate(request)
             if auth_result:
                 user, _ = auth_result
+                teacher_profile = getattr(user, 'teacher_profile', None)
+                teacher_classes = []
+                if teacher_profile is not None:
+                    teacher_classes = [
+                        {'id': str(ct.school_class_id), 'name': ct.school_class.name}
+                        for ct in teacher_profile.class_teacher_of.select_related('school_class').all()
+                    ]
                 return JsonResponse({'user': {
                     'id': str(user.id),
                     'name': user.name,
@@ -335,7 +342,8 @@ class AuthGetSessionView(APIView):
                     'image': user.image,
                     'emailVerified': user.email_verified,
                     'mustChangePassword': user.must_change_password,
-                    'hasTeacherProfile': getattr(user, 'teacher_profile', None) is not None,
+                    'hasTeacherProfile': teacher_profile is not None,
+                    'teacherClasses': teacher_classes,
                 }, 'csrfToken': get_token(request)})
         except (AuthenticationFailed, Exception):
             pass

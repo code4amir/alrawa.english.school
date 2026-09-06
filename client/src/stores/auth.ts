@@ -11,6 +11,7 @@ interface User {
   emailVerified?: boolean;
   mustChangePassword?: boolean;
   hasTeacherProfile?: boolean;
+  teacherClasses?: { id: string; name: string }[];
 }
 
 interface AuthState {

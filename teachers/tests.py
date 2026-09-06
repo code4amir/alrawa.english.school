@@ -73,3 +73,38 @@ class TeacherTests(TestCase):
     def test_create_teacher_missing_name(self):
         res = self.client.post('/api/teachers/', {'designation': 'Math'})
         self.assertEqual(res.status_code, 400)
+
+
+class MonitorTeacherAccessTests(TestCase):
+    """Monitors manage teacher records but cannot touch PINs or assignments."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.monitor = User.objects.create_user(
+            email='monitor@test.com', name='Monitor', password='testpass123', role='monitor')
+        refresh = RefreshToken.for_user(self.monitor)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
+        self.teacher = Teacher.objects.create(name='T1', designation='Assistant')
+
+    def test_monitor_can_create_teacher(self):
+        res = self.client.post('/api/teachers/', {'name': 'New T', 'designation': 'Assistant'})
+        self.assertEqual(res.status_code, 201)
+
+    def test_monitor_can_update_teacher(self):
+        res = self.client.put(f'/api/teachers/{self.teacher.id}/', {'name': 'T1x', 'designation': 'Assistant'})
+        self.assertEqual(res.status_code, 200)
+
+    def test_monitor_can_delete_teacher(self):
+        res = self.client.delete(f'/api/teachers/{self.teacher.id}/')
+        self.assertEqual(res.status_code, 204)
+
+    def test_monitor_cannot_set_pin(self):
+        res = self.client.post(f'/api/teachers/{self.teacher.id}/set_pin/', {'pin': '123456'})
+        self.assertEqual(res.status_code, 403)
+
+    def test_monitor_cannot_assign_class_teacher(self):
+        from core.models import SchoolClass
+        klass = SchoolClass.objects.create(name='Play', order=1)
+        res = self.client.post(
+            f'/api/teachers/{self.teacher.id}/class_teacher/', {'classId': str(klass.id)})
+        self.assertEqual(res.status_code, 403)

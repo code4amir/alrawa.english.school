@@ -157,3 +157,55 @@ class StudentTests(TestCase):
         res = self.client.post('/api/students/', {'name': 'John'})
         # school_class is nullable on the model, so create succeeds
         self.assertEqual(res.status_code, 201)
+
+
+class StudentClassTeacherScopeTests(TestCase):
+    """Class teachers manage students of their own class only (add/remove/edit)."""
+
+    def setUp(self):
+        from teachers.models import Teacher, ClassTeacher
+        self.client = APIClient()
+        self.play = SchoolClass.objects.create(name='Play', order=1)
+        self.kg = SchoolClass.objects.create(name='KG', order=2)
+        self.teacher_user = User.objects.create_user(
+            email='classteacher@test.com', name='Class Teacher', password='testpass123', role='teacher')
+        teacher = Teacher.objects.create(
+            user=self.teacher_user, designation='Assistant Teacher', name='Class Teacher')
+        ClassTeacher.objects.create(teacher=teacher, school_class=self.play, is_primary=True)
+        refresh = RefreshToken.for_user(self.teacher_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
+        self.play_student = Student.objects.create(name='P1', student_id='S000101', school_class=self.play)
+        self.kg_student = Student.objects.create(name='K1', student_id='S000102', school_class=self.kg)
+
+    def test_class_teacher_can_update_own_class_student(self):
+        res = self.client.put(
+            f'/api/students/{self.play_student.id}/',
+            {'name': 'P1 Updated', 'class': str(self.play.id)})
+        self.assertEqual(res.status_code, 200)
+
+    def test_class_teacher_cannot_update_other_class_student(self):
+        res = self.client.put(f'/api/students/{self.kg_student.id}/', {'name': 'Hacked'})
+        self.assertEqual(res.status_code, 403)
+
+    def test_class_teacher_cannot_move_student_to_other_class(self):
+        res = self.client.put(
+            f'/api/students/{self.play_student.id}/',
+            {'name': 'P1', 'class': str(self.kg.id)})
+        self.assertEqual(res.status_code, 403)
+
+    def test_class_teacher_can_delete_own_class_student(self):
+        res = self.client.delete(f'/api/students/{self.play_student.id}/')
+        self.assertEqual(res.status_code, 204)
+
+    def test_class_teacher_cannot_delete_other_class_student(self):
+        res = self.client.delete(f'/api/students/{self.kg_student.id}/')
+        self.assertEqual(res.status_code, 403)
+
+    def test_import_skips_other_class_rows(self):
+        res = self.client.post('/api/students/import/', {'students': [
+            {'name': 'New Play Kid', 'class': 'Play'},
+            {'name': 'Sneaky KG Kid', 'class': 'KG'},
+        ]}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['created'], 1)
+        self.assertEqual(len(res.data['errors']), 1)

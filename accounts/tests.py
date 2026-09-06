@@ -125,3 +125,16 @@ class AccountTests(TestCase):
         self.assertIn('createdAt', staff)
         self.assertTrue(staff['createdAt'])
         self.assertNotIn('date_joined', staff)
+    def test_get_session_includes_teacher_classes(self):
+        from teachers.models import Teacher, ClassTeacher
+        from core.models import SchoolClass
+        user = User.objects.create_user(
+            email='classteacher@test.com', name='CT', password='testpass123', role='teacher')
+        teacher = Teacher.objects.create(user=user, designation='Assistant', name='CT')
+        klass = SchoolClass.objects.create(name='Play', order=1)
+        ClassTeacher.objects.create(teacher=teacher, school_class=klass, is_primary=True)
+        self._auth(user)
+        res = self.client.get('/api/auth/get-session/')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(
+            res.json()['user']['teacherClasses'], [{'id': str(klass.id), 'name': 'Play'}])

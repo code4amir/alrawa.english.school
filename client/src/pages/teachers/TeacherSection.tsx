@@ -21,6 +21,9 @@ export default function TeacherSection() {
   const { teachers, fetchTeachers, loading, classes, fetchClasses } = useSchoolStore();
   const role = useAuthStore((s) => s.user?.role);
   const isAdmin = role === 'admin';
+  // Monitor manages teacher records (add/edit/delete/import); Assign + PIN
+  // stay admin-only (backend enforces the same via IsAdminOrSuperuser).
+  const canManage = isAdmin || role === 'monitor';
 
   const [showCamera, setShowCamera] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -188,11 +191,11 @@ export default function TeacherSection() {
           )}
         </div>
       )}
-      {isAdmin && (
+      {canManage && (
         <div className="flex gap-2 mt-3 pt-3 border-t border-school-border">
           <button onClick={() => handleEdit(t)} className="flex-1 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-xs font-medium hover:bg-blue-100 flex items-center justify-center gap-1"><Pencil size={14} /> Edit</button>
-          <button onClick={() => setAssignmentTeacherId(t.id)} className="flex-1 py-1.5 bg-purple-50 text-purple-600 rounded-lg text-xs font-medium hover:bg-purple-100 flex items-center justify-center gap-1"><BookOpen size={14} /> Assign</button>
-          <button onClick={() => { setPinTeacherId(t.id); setPinValue(''); }} className="flex-1 py-1.5 bg-amber-50 text-amber-600 rounded-lg text-xs font-medium hover:bg-amber-100 flex items-center justify-center gap-1"><Lock size={14} /> PIN</button>
+          {isAdmin && <button onClick={() => setAssignmentTeacherId(t.id)} className="flex-1 py-1.5 bg-purple-50 text-purple-600 rounded-lg text-xs font-medium hover:bg-purple-100 flex items-center justify-center gap-1"><BookOpen size={14} /> Assign</button>}
+          {isAdmin && <button onClick={() => { setPinTeacherId(t.id); setPinValue(''); }} className="flex-1 py-1.5 bg-amber-50 text-amber-600 rounded-lg text-xs font-medium hover:bg-amber-100 flex items-center justify-center gap-1"><Lock size={14} /> PIN</button>}
           <button onClick={() => setDeleteId(t.id)} className="flex-1 py-1.5 bg-red-50 text-red-500 rounded-lg text-xs font-medium hover:bg-red-100 flex items-center justify-center gap-1" aria-label="Delete"><Trash2 size={14} /></button>
         </div>
       )}
@@ -280,7 +283,7 @@ export default function TeacherSection() {
           >
             <Download size={12} /> PDF
           </button>
-          {isAdmin && <button onClick={() => setShowImport(true)} className="flex items-center gap-1 px-3 py-1.5 border border-school-border rounded-lg text-xs hover:bg-school-paper">
+          {canManage && <button onClick={() => setShowImport(true)} className="flex items-center gap-1 px-3 py-1.5 border border-school-border rounded-lg text-xs hover:bg-school-paper">
             <Upload size={12} /> Import
           </button>}
           <button onClick={() => fetchTeachers(undefined, true)} className="flex items-center gap-1 px-3 py-1.5 border border-school-border rounded-lg text-xs hover:bg-school-paper">
@@ -316,7 +319,7 @@ export default function TeacherSection() {
       <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name or designation..." className="w-full px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none focus:border-school-accent" />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {isAdmin && (showAddNew ? renderEditCard(true) : (
+        {canManage && (showAddNew ? renderEditCard(true) : (
           <button onClick={() => setShowAddNew(true)} className="border-2 border-dashed border-violet-300 bg-violet-50/30 p-4 rounded-2xl flex flex-col items-center justify-center min-h-[160px] hover:border-violet-400 hover:bg-violet-50/60 transition-all">
             <div className="text-3xl text-violet-400 mb-2">+</div>
             <div className="text-sm font-bold text-violet-600">Add New Teacher</div>

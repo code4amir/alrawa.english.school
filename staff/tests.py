@@ -73,3 +73,23 @@ class StaffTests(TestCase):
     def test_create_staff_missing_name(self):
         res = self.client.post('/api/staff/', {'role': 'Clerk'})
         self.assertEqual(res.status_code, 400)
+
+
+class MonitorStaffAccessTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.monitor = User.objects.create_user(
+            email='monitor@test.com', name='Monitor', password='testpass123', role='monitor')
+        refresh = RefreshToken.for_user(self.monitor)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
+
+    def test_monitor_can_create_staff(self):
+        res = self.client.post('/api/staff/', {'name': 'Guard 1', 'role': 'Guard'})
+        self.assertEqual(res.status_code, 201)
+
+    def test_monitor_can_update_and_delete_staff(self):
+        s = Staff.objects.create(name='S1', role='Clerk')
+        res = self.client.put(f'/api/staff/{s.id}/', {'name': 'S1x', 'role': 'Clerk'})
+        self.assertEqual(res.status_code, 200)
+        res = self.client.delete(f'/api/staff/{s.id}/')
+        self.assertEqual(res.status_code, 204)
