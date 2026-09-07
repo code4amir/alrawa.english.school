@@ -79,6 +79,17 @@ const App: React.FC = () => {
     fetchSession();
   }, [fetchSession]);
 
+  // Launched offline (or dropped mid-load) lands on /login with a session
+  // that may still be valid — revalidate when connectivity returns instead
+  // of stranding the user at the login screen.
+  useEffect(() => {
+    const onOnline = () => {
+      if (!useAuthStore.getState().user) fetchSession();
+    };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [fetchSession]);
+
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
   const showInstallBanner = !!installPrompt && !isStandalone;
 

@@ -64,6 +64,18 @@ class AccountTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertIn('access_token', res.cookies)
 
+    def test_refresh_token_body_fallback_without_cookie(self):
+        # Browsers that drop cross-site cookies (Safari ITP, 3P-blocking):
+        # the SPA persists its refresh token and sends it in the body.
+        refresh = RefreshToken.for_user(self.admin)
+        res = self.client.post('/api/auth/refresh/', {'refresh': str(refresh)}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertIn('access', res.data)
+
+    def test_refresh_token_missing_everywhere(self):
+        res = self.client.post('/api/auth/refresh/', {}, format='json')
+        self.assertEqual(res.status_code, 401)
+
     def test_list_users(self):
         self._auth()
         res = self.client.get('/api/users/')

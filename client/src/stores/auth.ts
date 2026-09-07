@@ -24,12 +24,15 @@ interface AuthState {
 
 let refreshing: Promise<boolean> | null = null;
 
-// POST /auth/refresh/ using the HttpOnly refresh cookie. The backend
-// (CustomTokenRefreshView) reads the token from the COOKIE only — the JSON
-// body is ignored — so this MUST send credentials. A previous version used a
-// bare axios.post without withCredentials: the cookie was never sent
-// cross-origin, every refresh 401'd, and users were kicked to /login ~15 min
-// after login (as soon as the access token expired).
+// POST /auth/refresh/ using the HttpOnly refresh cookie (plus the persisted
+// in-memory/body token as fallback — see api.ts). Returns true on success.
+// Check getLastRefreshStatus() on failure: 401/403 means the session is
+// truly dead; anything else (network drop, 5xx, throttle) must NOT log out.
+let lastRefreshStatus: number | null = null;
+export function getLastRefreshStatus(): number | null {
+  return lastRefreshStatus;
+}
+
 export async function refreshSession(): Promise<boolean> {
   try {
     const rt = getRefreshToken();
@@ -41,8 +44,10 @@ export async function refreshSession(): Promise<boolean> {
     );
     const { access, refresh: newRefresh, csrfToken } = res.data;
     setTokens(access, newRefresh || rt, csrfToken || getCsrfToken());
+    lastRefreshStatus = 200;
     return true;
-  } catch {
+  } catch (e: any) {
+    lastRefreshStatus = e?.response?.status ?? 0;
     return false;
   }
 }
@@ -65,8 +70,19 @@ export const useAuthStore = create<AuthState>((set, get) => {
         if (ok) {
           return api(config);
         }
-        clearTokens();
-        set({ user: null });
+        // One retry: a parallel tab may have just rotated the shared cookie;
+        // the second attempt then reads the fresh token from the cookie jar.
+        await new Promise((r) => setTimeout(r, 800));
+        if (await refreshSession()) {
+          return api(config);
+        }
+        // Log out ONLY when the server explicitly rejected the refresh
+        // (401/403 = dead session). Transport failures (offline, 5xx,
+        // throttle) keep the session — the tokens may be perfectly fine.
+        if (getLastRefreshStatus() === 401 || getLastRefreshStatus() === 403) {
+          clearTokens();
+          set({ user: null });
+        }
       }
       return Promise.reject(error);
     }

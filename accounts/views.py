@@ -95,7 +95,12 @@ class CustomTokenRefreshView(APIView):
     throttle_classes = [RefreshRateThrottle]
 
     def post(self, request):
+        # Cookie first (HttpOnly, authoritative); JSON body as fallback for
+        # browsers that drop cross-site cookies (Safari ITP, 3P-blocking).
+        # The SPA persists its refresh token locally and always sends it.
         refresh_token = request.COOKIES.get(settings.SIMPLE_JWT['REFRESH_COOKIE'])
+        if not refresh_token and isinstance(request.data, dict):
+            refresh_token = request.data.get('refresh')
         if not refresh_token:
             return Response({'detail': 'Refresh token not found'}, status=status.HTTP_401_UNAUTHORIZED)
         try:

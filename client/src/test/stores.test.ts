@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useAuthStore, useDarkMode, useUIStore, useUserManagementStore, api } from '../store';
 import { setTokens, getAccessToken, getRefreshToken } from '../stores/api';
-import { refreshSession } from '../stores/auth';
+import { refreshSession, getLastRefreshStatus } from '../stores/auth';
 
 const mockSupabase = {
   auth: {
@@ -121,6 +121,7 @@ describe('useAuthStore', () => {
       const ok = await refreshSession();
 
       expect(ok).toBe(false);
+      expect(getLastRefreshStatus()).toBe(401);
       expect(postSpy).toHaveBeenCalledWith(
         expect.stringContaining('/auth/refresh/'),
         { refresh: 'mem-refresh' },
@@ -129,6 +130,32 @@ describe('useAuthStore', () => {
     } finally {
       postSpy.mockRestore();
     }
+  });
+
+  it('refreshSession records transport failure distinctly from rejection', async () => {
+    const axiosMod = (await import('axios')).default;
+    const postSpy = vi.spyOn(axiosMod, 'post').mockRejectedValue(new Error('network down'));
+    try {
+      setTokens('old-access', 'mem-refresh');
+
+      const ok = await refreshSession();
+
+      expect(ok).toBe(false);
+      expect(getLastRefreshStatus()).toBe(0);
+    } finally {
+      postSpy.mockRestore();
+    }
+  });
+
+  it('null refresh alone preserves the session (PIN swap)', async () => {
+    void (await import('axios'));
+    setTokens('web-access', 'web-refresh');
+    // PIN screen swaps the access token with no refresh of its own.
+    setTokens('pin-jwt', null);
+
+    expect(getAccessToken()).toBe('pin-jwt');
+    expect(getRefreshToken()).toBe('web-refresh');
+    expect(localStorage.getItem('refresh_token')).toBe('web-refresh');
   });
 });
 

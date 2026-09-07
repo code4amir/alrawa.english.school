@@ -5,9 +5,25 @@ let accessToken: string | null = null;
 let refreshToken: string | null = null;
 let csrfToken: string | null = null;
 
+const LS_REFRESH_KEY = 'refresh_token';
+
+try {
+  // Survive reloads: the SPA re-sends this in the refresh body when the
+  // HttpOnly cookie is unavailable (ITP / third-party-cookie blocking).
+  refreshToken = localStorage.getItem(LS_REFRESH_KEY);
+} catch { refreshToken = null; }
+
 export function setTokens(access: string | null, refresh: string | null, csrf?: string | null) {
   accessToken = access;
-  refreshToken = refresh;
+  if (refresh) {
+    refreshToken = refresh;
+    try { localStorage.setItem(LS_REFRESH_KEY, refresh); } catch { /* ignore */ }
+  } else if (access === null) {
+    // Full clear only when both are nulled alongside clearTokens();
+    // a null refresh ALONE (e.g. PIN screen swapping the access token)
+    // must not wipe the persisted web session.
+    refreshToken = null;
+  }
   if (csrf !== undefined) csrfToken = csrf;
 }
 
@@ -27,6 +43,7 @@ export function clearTokens() {
   accessToken = null;
   refreshToken = null;
   csrfToken = null;
+  try { localStorage.removeItem(LS_REFRESH_KEY); } catch { /* ignore */ }
 }
 
 export const api = axios.create({
