@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useSchoolStore, useAuthStore } from '../../store';
 import ClassSelect from '../../components/ClassSelect';
 import { gradeFromMarks, gradeChip } from '../../lib/grading';
+import { mergeSavedAttendance, mergeSavedComments, mergeSavedMarks } from '../../lib/resultsMerge';
 import { Save } from 'lucide-react';
 import { TERM_NAMES } from '../../lib/config';
 
@@ -103,7 +104,7 @@ export default function EnterBySubject() {
       try {
         const v = bulkMarks[s.id];
         const marksData: Record<string, number> = {};
-        const existing = allResults.find((x: any) => x.studentId === s.id && x.term === bulkTerm);
+        const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
         if (existing?.marks) Object.entries(existing.marks).forEach(([k, val]) => { marksData[k] = +(val as number); });
         if (v !== '' && v !== undefined && !isNaN(+v)) marksData[canonicalSubject] = Math.min(+v, selectedSubj.fullMarks);
         else delete marksData[canonicalSubject];
@@ -116,7 +117,11 @@ export default function EnterBySubject() {
       }
     }
     setHasUnsavedChanges(false);
-    loadResults(cls.id);
+    // Merge saved values into local state FIRST: the refetch below can resolve
+    // with a stale pre-save snapshot (deduped onto an in-flight request), which
+    // used to blank the inputs until a full refresh. Server data reconciles after.
+    setAllResults((prev: any[]) => mergeSavedMarks(prev, clsStudents.map((s: any) => s.id), bulkTerm, canonicalSubject, bulkMarks, selectedSubj.fullMarks));
+    await loadResults(cls.id);
     setSaveStatus(failures > 0 ? 'error' : 'saved');
     statusTimer.current = setTimeout(() => setSaveStatus(''), 2500);
   };
@@ -128,7 +133,7 @@ export default function EnterBySubject() {
     for (const s of clsStudents) {
       try {
         const att = bulkAtt[s.id] || { days: '', present: '' };
-        const existing = allResults.find((x: any) => x.studentId === s.id && x.term === bulkTerm);
+        const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
         const days = parseInt(att.days) || 0;
         const present = parseInt(att.present) || 0;
         const attendanceData = days > 0 ? { days, present } : undefined;
@@ -139,7 +144,8 @@ export default function EnterBySubject() {
       }
     }
     setHasUnsavedChanges(false);
-    loadResults(cls.id);
+    setAllResults((prev: any[]) => mergeSavedAttendance(prev, clsStudents.map((s: any) => s.id), bulkTerm, bulkAtt));
+    await loadResults(cls.id);
     setSaveStatus(failures > 0 ? 'error' : 'saved');
     statusTimer.current = setTimeout(() => setSaveStatus(''), 2500);
   };
@@ -150,7 +156,7 @@ export default function EnterBySubject() {
     let failures = 0;
     for (const s of clsStudents) {
       try {
-        const existing = allResults.find((x: any) => x.studentId === s.id && x.term === bulkTerm);
+        const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
         await saveStudentResult(s.id, bulkTerm, existing?.marks || {}, existing?.attendance || undefined, bulkComment[s.id] || '', sessionFilter, existing);
       } catch (e: any) {
         failures++;
@@ -158,7 +164,8 @@ export default function EnterBySubject() {
       }
     }
     setHasUnsavedChanges(false);
-    loadResults(cls.id);
+    setAllResults((prev: any[]) => mergeSavedComments(prev, clsStudents.map((s: any) => s.id), bulkTerm, bulkComment));
+    await loadResults(cls.id);
     setSaveStatus(failures > 0 ? 'error' : 'saved');
     statusTimer.current = setTimeout(() => setSaveStatus(''), 2500);
   };
