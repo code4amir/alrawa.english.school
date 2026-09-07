@@ -368,13 +368,18 @@ class FinanceTests(TestCase):
         self.assertIn('AL_RAWA_BANK', res.data)
 
     def test_balances_includes_opening_balance(self):
+        from django.utils import timezone
+        from finance.views.base import _fiscal_year_from_date
+        # Opening balances apply to the CURRENT fiscal year (time-bomb guard:
+        # never hardcode a year — the suite must pass whatever month it runs).
+        current_fy = _fiscal_year_from_date(timezone.now().date())
         Transaction.objects.create(
             transaction_date='2026-06-01', transaction_type='INCOME',
             amount=1000, description='Test', student=self.student,
             destination_account=self.bank_ar, fiscal_year=2026
         )
         OpeningBalance.objects.create(
-            account=self.bank_ar, fiscal_year=2026, amount=50000,
+            account=self.bank_ar, fiscal_year=current_fy, amount=50000,
             updated_by='test'
         )
         res = self.client.get('/api/finance/balances/')

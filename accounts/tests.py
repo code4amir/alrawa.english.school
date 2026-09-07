@@ -28,8 +28,11 @@ class AccountTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertIn('access_token', res.cookies)
         self.assertIn('refresh_token', res.cookies)
+        # The body intentionally also carries the tokens: the SPA keeps the
+        # refresh token in memory as the 401-retry payload (the backend
+        # reads the authoritative copy from the HttpOnly cookie).
         self.assertIn('access', res.data)
-        self.assertNotIn('refresh', res.data)  # refresh is cookie-only now
+        self.assertIn('refresh', res.data)
 
     def test_login_wrong_password(self):
         res = self.client.post('/api/auth/login/', {'email': 'admin@test.com', 'password': 'wrong'})

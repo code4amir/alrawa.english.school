@@ -479,7 +479,14 @@ class MobileDailyReportTests(TestCase):
         self.assertEqual(res.status_code, 200, msg=res.content[:500])
         self.assertEqual(res.data['from'], self.other_day.isoformat())
         self.assertEqual(res.data['to'], self.at_day.isoformat())
-        self.assertEqual(res.data['days'], [self.other_day.isoformat(), self.at_day.isoformat()])
+        # Range mode walks every calendar day inclusive (weekends render as
+        # `·` in the matrix) — not just the endpoints.
+        expected_days = []
+        cur = self.other_day
+        while cur <= self.at_day:
+            expected_days.append(cur.isoformat())
+            cur += timedelta(days=1)
+        self.assertEqual(res.data['days'], expected_days)
         self.assertEqual(res.data['total_students'], 2)
         for s in res.data['students']:
             self.assertEqual(s['days'], {})
