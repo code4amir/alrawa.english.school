@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useSchoolStore, useAuthStore } from '../../store';
 import ClassSelect from '../../components/ClassSelect';
 import { gradeFromMarks, gradeChip } from '../../lib/grading';
-import { mergeSavedAttendance, mergeSavedComments, mergeSavedMarks } from '../../lib/resultsMerge';
+import { mergeSavedAttendance, mergeSavedComments, mergeSavedMarks, rebuildBulkValues } from '../../lib/resultsMerge';
 import { Save } from 'lucide-react';
 import { TERM_NAMES } from '../../lib/config';
 
@@ -65,32 +65,33 @@ export default function EnterBySubject() {
   const isAttendance = bulkSubject === '__attendance__';
   const isComment = bulkSubject === '__comment__';
 
+  // Basis for input rebuilds: full rebuild only on class/subject/term switch.
+  // Late-arriving data on the same basis must NOT wipe unsaved typing (it did
+  // before — typed numbers were replaced by blanks, and saving then wrote
+  // those blanks to the server). Saves clear this to force one fresh rebuild.
+  const buildBasis = useRef('');
   useEffect(() => {
-    if (!bulkSubject || !cls || allResults.length === 0) return;
-    
+    if (!bulkSubject || !cls) return;
+
+    const basis = `${cls.id}|${bulkSubject}|${bulkTerm}`;
+    const reset = basis !== buildBasis.current;
+    buildBasis.current = basis;
     const canonicalSubject = SUBJECT_KEY_MAP[bulkSubject] || bulkSubject;
-    
+    const ids = clsStudents.map((s: any) => String(s.id));
+    const rowOf = (sid: string) => allResults.find((x: any) => String(x.studentId) === String(sid) && String(x.term) === String(bulkTerm));
+
     if (isAttendance) {
-      const atts: Record<string, { days: string; present: string }> = {};
-      clsStudents.forEach((s: any) => { 
-        const r = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
-        atts[s.id] = { days: String(r?.attendance?.days || ''), present: String(r?.attendance?.present || '') }; 
-      });
-      setBulkAtt(atts);
+      setBulkAtt((prev) => rebuildBulkValues(prev, reset, ids, (sid) => {
+        const r = rowOf(sid);
+        return { days: String(r?.attendance?.days || ''), present: String(r?.attendance?.present || '') };
+      }));
     } else if (isComment) {
-      const cmts: Record<string, string> = {};
-      clsStudents.forEach((s: any) => { 
-        const r = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm)); 
-        cmts[s.id] = r?.comment || ''; 
-      });
-      setBulkComment(cmts);
+      setBulkComment((prev) => rebuildBulkValues(prev, reset, ids, (sid) => rowOf(sid)?.comment || ''));
     } else {
-      const m: Record<string, string> = {};
-      clsStudents.forEach((s: any) => { 
-        const r = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm)); 
-        m[s.id] = r?.marks?.[canonicalSubject] !== undefined ? String(r.marks[canonicalSubject]) : ''; 
-      });
-      setBulkMarks(m);
+      setBulkMarks((prev) => rebuildBulkValues(prev, reset, ids, (sid) => {
+        const r = rowOf(sid);
+        return r?.marks?.[canonicalSubject] !== undefined ? String(r.marks[canonicalSubject]) : '';
+      }));
     }
   }, [bulkSubject, bulkTerm, allResults, clsStudents]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -121,6 +122,7 @@ export default function EnterBySubject() {
     // with a stale pre-save snapshot (deduped onto an in-flight request), which
     // used to blank the inputs until a full refresh. Server data reconciles after.
     setAllResults((prev: any[]) => mergeSavedMarks(prev, clsStudents.map((s: any) => s.id), bulkTerm, canonicalSubject, bulkMarks, selectedSubj.fullMarks));
+    buildBasis.current = ''; // force one fresh rebuild (e.g. clamped values)
     await loadResults(cls.id);
     setSaveStatus(failures > 0 ? 'error' : 'saved');
     statusTimer.current = setTimeout(() => setSaveStatus(''), 2500);
@@ -145,6 +147,7 @@ export default function EnterBySubject() {
     }
     setHasUnsavedChanges(false);
     setAllResults((prev: any[]) => mergeSavedAttendance(prev, clsStudents.map((s: any) => s.id), bulkTerm, bulkAtt));
+    buildBasis.current = '';
     await loadResults(cls.id);
     setSaveStatus(failures > 0 ? 'error' : 'saved');
     statusTimer.current = setTimeout(() => setSaveStatus(''), 2500);
@@ -165,6 +168,7 @@ export default function EnterBySubject() {
     }
     setHasUnsavedChanges(false);
     setAllResults((prev: any[]) => mergeSavedComments(prev, clsStudents.map((s: any) => s.id), bulkTerm, bulkComment));
+    buildBasis.current = '';
     await loadResults(cls.id);
     setSaveStatus(failures > 0 ? 'error' : 'saved');
     statusTimer.current = setTimeout(() => setSaveStatus(''), 2500);

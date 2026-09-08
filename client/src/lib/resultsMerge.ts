@@ -79,3 +79,28 @@ export function mergeSavedComments(
   }
   return next;
 }
+
+/**
+ * Rebuild input state from server rows WITHOUT destroying unsaved typing.
+ * The old code rebuilt unconditionally whenever its inputs changed — a slow
+ * initial load resolving after the user started typing (or any refetch) blew
+ * away typed values; saving then wrote those blanks to the server, wiping
+ * real marks. Now: full rebuild only when the basis (class/subject/term)
+ * changes; otherwise keep dirty entries and fill in just the missing ones.
+ */
+export function rebuildBulkValues<T>(
+  prev: Record<string, T>,
+  reset: boolean,
+  studentIds: string[],
+  getValue: (sid: string) => T,
+): Record<string, T> {
+  const m: Record<string, T> = reset ? {} : { ...prev };
+  for (const sid of studentIds) {
+    if (!reset && sid in m) continue;
+    m[sid] = getValue(sid);
+  }
+  for (const id of Object.keys(m)) {
+    if (!studentIds.includes(id)) delete m[id];
+  }
+  return m;
+}

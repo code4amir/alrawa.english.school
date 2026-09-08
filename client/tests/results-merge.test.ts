@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeSavedAttendance, mergeSavedComments, mergeSavedMarks } from '../src/lib/resultsMerge';
+import { mergeSavedAttendance, mergeSavedComments, mergeSavedMarks, rebuildBulkValues } from '../src/lib/resultsMerge';
 
 describe('mergeSavedMarks', () => {
   it('updates the subject while preserving sibling subjects', () => {
@@ -43,5 +43,27 @@ describe('mergeSavedComments', () => {
     const rows = [{ studentId: 's1', term: '1' }];
     const out = mergeSavedComments(rows, ['s1'], '1', { s1: 'Good' });
     expect(out[0].comment).toBe('Good');
+  });
+});
+
+describe('rebuildBulkValues', () => {
+  const ids = ['s1', 's2'];
+  const get = (sid: string) => `server-${sid}`;
+
+  it('does a full rebuild when the basis changes (subject/term/class switch)', () => {
+    const out = rebuildBulkValues({ s1: 'typed-85', s2: 'typed-90' }, true, ids, get);
+    expect(out).toEqual({ s1: 'server-s1', s2: 'server-s2' });
+  });
+
+  it('preserves unsaved typing when late data arrives on the same basis', () => {
+    // Slow initial load resolving AFTER the user typed: typed values survive,
+    // only students missing from state get server values.
+    const out = rebuildBulkValues({ s1: 'typed-85' }, false, ids, get);
+    expect(out).toEqual({ s1: 'typed-85', s2: 'server-s2' });
+  });
+
+  it('drops students no longer in the class', () => {
+    const out = rebuildBulkValues({ s1: 'a', gone: 'b' }, false, ids, get);
+    expect(out).toEqual({ s1: 'a', s2: 'server-s2' });
   });
 });
