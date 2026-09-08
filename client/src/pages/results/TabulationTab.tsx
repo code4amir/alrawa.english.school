@@ -8,10 +8,11 @@ import { TERM_NAMES } from '../../lib/config';
 
 export default function TabulationTab() {
 
-  const { students, fetchStudents, subjects, fetchSubjects, academicYears, fetchAcademicYears, classResults, fetchClassResults } = useSchoolStore();
+  const { fetchStudents, fetchSubjects, academicYears, fetchAcademicYears, classResults, fetchClassResults } = useSchoolStore();
   const [cls, setCls] = useState<any>(null);
   const [allResults, setAllResults] = useState<any[]>([]);
   const [sessionFilter, setSessionFilter] = useState('');
+  const [downloading, setDownloading] = useState<string | null>(null);
 
   const loadResults = async (clsId: string) => {
     const key = `${clsId}-${sessionFilter}`;
@@ -34,7 +35,37 @@ export default function TabulationTab() {
   useEffect(() => { if (cls) loadResults(cls.id); }, [sessionFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSelectClass = (c: any) => { setCls(c); fetchSubjects(c.id); fetchStudents({ className: c.name }, true); loadResults(c.id); };
-  const clsStudents = cls ? students.filter((s: any) => s.class === cls.name).sort((a: any, b: any) => (+a.roll || 999) - (+b.roll || 999) || a.name.localeCompare(b.name)) : [];
+
+  // The download buttons used to build the PDF from whatever happened to be
+  // in state — clicking right after selecting a class produced a sheet with
+  // missing students/subjects/marks while the three fetches were still in
+  // flight. Now the click awaits all three (dedupedFetch joins an in-flight
+  // load instead of refetching) and builds from the fresh store snapshot.
+  const handleDownload = async (term: string) => {
+    if (!cls || downloading) return;
+    setDownloading(term);
+    try {
+      let session = sessionFilter;
+      if (!session) {
+        await fetchAcademicYears();
+        const ys = useSchoolStore.getState().academicYears;
+        session = ys.find((y: any) => y.isActive)?.name || ys[0]?.name || '';
+        if (session) setSessionFilter(session);
+      }
+      await Promise.all([
+        fetchSubjects(cls.id),
+        fetchStudents({ className: cls.name }, true),
+        ...(session ? [fetchClassResults(cls.id, session)] : []),
+      ]);
+      const st = useSchoolStore.getState();
+      const results = (session && st.classResults[`${cls.id}-${session}`]) || allResults;
+      setAllResults(results);
+      const list = st.students.filter((s: any) => s.class === cls.name).sort((a: any, b: any) => (+a.roll || 999) - (+b.roll || 999) || a.name.localeCompare(b.name));
+      tabulationPDF({ clsName: cls.name, subjects: st.subjects, clsStudents: list, allResults: results, term });
+    } finally {
+      setDownloading(null);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -58,9 +89,9 @@ export default function TabulationTab() {
           <p className="text-sm text-school-muted">Download a marks grid for {cls.name}. "Final Combined" only available after Term 3 is entered.</p>
           <div className="flex gap-3 flex-wrap">
             {['1', '2', '3'].map(t => (
-              <button key={t} onClick={() => tabulationPDF({ clsName: cls.name, subjects, clsStudents, allResults, term: t })} className="px-4 py-2 border border-school-border rounded-xl text-sm font-bold hover:border-school-accent transition-all flex items-center gap-1.5"><Download size={14} /> {TERM_NAMES[t]}</button>
+              <button key={t} disabled={downloading !== null} onClick={() => handleDownload(t)} className="px-4 py-2 border border-school-border rounded-xl text-sm font-bold hover:border-school-accent transition-all flex items-center gap-1.5 disabled:opacity-50"><Download size={14} /> {downloading === t ? 'Preparing…' : TERM_NAMES[t]}</button>
             ))}
-            <button onClick={() => tabulationPDF({ clsName: cls.name, subjects, clsStudents, allResults, term: 'final' })} className="px-4 py-2 bg-school-primary text-white rounded-xl text-sm font-bold hover:opacity-90 flex items-center gap-1.5"><Download size={14} /> Final Combined</button>
+            <button disabled={downloading !== null} onClick={() => handleDownload('final')} className="px-4 py-2 bg-school-primary text-white rounded-xl text-sm font-bold hover:opacity-90 flex items-center gap-1.5 disabled:opacity-50"><Download size={14} /> {downloading === 'final' ? 'Preparing…' : 'Final Combined'}</button>
           </div>
         </div>
       )}
