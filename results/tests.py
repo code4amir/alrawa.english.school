@@ -107,3 +107,40 @@ class ResultSubjectPermissionTests(TestCase):
             f'/api/results/{self.result.id}/',
             {'marks': {'Bangla': 85, 'Math': 70}}, format='json')
         self.assertEqual(res.status_code, 403)
+
+
+class ResultConcurrentMergeTests(TestCase):
+    """Two teachers saving different subjects from the same stale page-load
+    baseline must not wipe each other (PATCH replaces marks JSON)."""
+
+    def setUp(self):
+        self.client = APIClient()
+        _auth(self.client)
+        self.klass = SchoolClass.objects.create(name='Class 5', order=1)
+        self.student = Student.objects.create(
+            name='Stu', student_id='S000001', school_class=self.klass, session='2026')
+        self.result = Result.objects.create(
+            student=self.student, term='1', session='2026',
+            marks={'Math': 80})
+
+    def test_concurrent_subject_saves_merge(self):
+        # Teacher A (English) and B (Bangla) both loaded {Math: 80}.
+        res = self.client.patch(
+            f'/api/results/{self.result.id}/',
+            {'marks': {'Math': 80, 'English': 85}}, format='json')
+        self.assertEqual(res.status_code, 200)
+        res = self.client.patch(
+            f'/api/results/{self.result.id}/',
+            {'marks': {'Math': 80, 'Bangla': 90}}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.result.refresh_from_db()
+        self.assertEqual(
+            self.result.marks, {'Math': 80, 'English': 85, 'Bangla': 90})
+
+    def test_null_deletes_subject(self):
+        res = self.client.patch(
+            f'/api/results/{self.result.id}/',
+            {'marks': {'Math': None}}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.result.refresh_from_db()
+        self.assertEqual(self.result.marks, {})

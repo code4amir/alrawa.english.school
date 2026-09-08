@@ -66,7 +66,7 @@ interface SchoolState {
   updateSubject: (id: string, data: Partial<Subject>) => Promise<void>;
   deleteSubject: (id: string) => Promise<void>;
 
-  saveStudentResult: (studentId: string, term: string, marks: Record<string, number>, attendance?: { days: number; present: number }, comment?: string, session?: string, existingRow?: any) => Promise<void>;
+  saveStudentResult: (studentId: string, term: string, marks: Record<string, number | null>, attendance?: { days: number; present: number }, comment?: string, session?: string, existingRow?: any) => Promise<void>;
   studentResultsCache: Record<string, { data: Result[]; ts: number }>;
   getStudentResults: (studentId: string, session?: string) => Promise<Result[]>;
 
@@ -419,12 +419,13 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
     finally { set((s) => ({ loading: { ...s.loading, expenseCategories: false } })); }
   },
 
-  saveStudentResult: async (studentId: string, term: string, marks: Record<string, number>, attendance?: { days: number; present: number }, comment?: string, session?: string, existingRow?: any) => {
-    // The backend PATCH *replaces* the entire `marks` JSON (DRF JSONField, no
-    // merge). A partial payload — e.g. Enter-by-Subject saving just one subject —
-    // would silently WIPE every other subject for that term. So we ALWAYS merge
-    // onto the authoritative existing row first. If the caller didn't hand us a
-    // usable row (stale/missing local cache), fetch it ourselves.
+  saveStudentResult: async (studentId: string, term: string, marks: Record<string, number | null>, attendance?: { days: number; present: number }, comment?: string, session?: string, existingRow?: any) => {
+    // The backend PATCH atomically *merges* the `marks` JSON onto the locked
+    // row (missing key = keep, explicit null = delete subject), so concurrent
+    // teachers saving different subjects can no longer wipe each other. We
+    // still merge onto the authoritative existing row first so the payload
+    // carries full context. If the caller didn't hand us a usable row
+    // (stale/missing local cache), fetch it ourselves.
     let existing: any = (existingRow && String(existingRow.term) === String(term)) ? existingRow : null;
     if (!existing) {
       try {
@@ -433,7 +434,7 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
         existing = rows.find((r: any) => String(r.term) === String(term)) || null;
       } catch { existing = null; }
     }
-    const mergedMarks: Record<string, number> = { ...(existing?.marks || {}), ...(marks || {}) };
+    const mergedMarks: Record<string, number | null> = { ...(existing?.marks || {}), ...(marks || {}) };
     const payload: any = { term, marks: mergedMarks, session };
     if (attendance !== undefined) payload.attendance = attendance;
     else if (existing?.attendance !== undefined) payload.attendance = existing.attendance;

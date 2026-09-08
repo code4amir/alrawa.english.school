@@ -54,7 +54,25 @@ class ResultViewSet(viewsets.ModelViewSet):
             finally:
                 self._perm_instance = None
 
-        self.perform_update(serializer)
+        # Atomic merge: one Result row holds EVERY subject's marks, and each
+        # teacher's payload is built from their own page-load snapshot. A
+        # plain replace here means the last teacher to save wipes subjects
+        # saved by teachers who loaded earlier ("Saved ✓" on both screens,
+        # blanks on next load). So merge incoming marks onto the locked
+        # current row: missing key = keep, explicit null = delete subject.
+        if 'marks' in serializer.validated_data:
+            with db_transaction.atomic():
+                current = Result.objects.select_for_update().get(pk=instance.pk)
+                merged = dict(current.marks or {})
+                for key, val in (serializer.validated_data['marks'] or {}).items():
+                    if val is None:
+                        merged.pop(key, None)
+                    else:
+                        merged[key] = val
+                serializer.validated_data['marks'] = merged
+                self.perform_update(serializer)
+        else:
+            self.perform_update(serializer)
         log_audit('update', 'result', entity_id=str(instance.pk), request=request)
         return Response(serializer.data)
 

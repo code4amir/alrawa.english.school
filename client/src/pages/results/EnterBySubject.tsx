@@ -107,13 +107,16 @@ export default function EnterBySubject() {
     for (const s of clsStudents) {
       try {
         const v = bulkMarks[s.id];
-        const marksData: Record<string, number> = {};
+        const marksData: Record<string, number | null> = {};
         const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
         if (existing?.marks) Object.entries(existing.marks).forEach(([k, val]) => { marksData[k] = +(val as number); });
         if (v !== '' && v !== undefined && !isNaN(+v)) marksData[canonicalSubject] = Math.min(+v, selectedSubj.fullMarks);
+        // Cleared input: explicit null deletes the subject server-side (the
+        // backend merges, so omitting would silently keep the old value).
+        else if (existing?.marks?.[canonicalSubject] !== undefined) marksData[canonicalSubject] = null;
         else delete marksData[canonicalSubject];
-        // Pass `existing` so the store merges other subjects/attendance instead
-        // of overwriting the whole marks JSON (backend PATCH replaces, no merge).
+        // Pass `existing` so the store preserves other subjects/attendance in
+        // the payload (belt-and-braces alongside the backend atomic merge).
         await saveStudentResult(s.id, bulkTerm, marksData, existing?.attendance || undefined, undefined, sessionFilter, existing);
         succeeded.push(String(s.id));
       } catch (e: any) {
