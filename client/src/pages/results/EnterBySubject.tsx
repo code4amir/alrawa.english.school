@@ -27,6 +27,7 @@ export default function EnterBySubject() {
   const [bulkComment, setBulkComment] = useState<Record<string, string>>({});
   const bulkTerm = termFilter;
   const [saveStatus, setSaveStatus] = useState<'' | 'saving' | 'saved' | 'error'>('');
+  const [saveError, setSaveError] = useState('');
   const statusTimer = useRef<any>(null);
 
   const loadResults = async (clsId: string) => {
@@ -98,9 +99,11 @@ export default function EnterBySubject() {
   const saveBulkMarks = async () => {
     if (!selectedSubj) return;
     setSaveStatus('saving');
+    setSaveError('');
     clearTimeout(statusTimer.current);
     const canonicalSubject = SUBJECT_KEY_MAP[bulkSubject] || bulkSubject;
-    let failures = 0;
+    const failed: string[] = [];
+    const succeeded: string[] = [];
     for (const s of clsStudents) {
       try {
         const v = bulkMarks[s.id];
@@ -112,26 +115,34 @@ export default function EnterBySubject() {
         // Pass `existing` so the store merges other subjects/attendance instead
         // of overwriting the whole marks JSON (backend PATCH replaces, no merge).
         await saveStudentResult(s.id, bulkTerm, marksData, existing?.attendance || undefined, undefined, sessionFilter, existing);
+        succeeded.push(String(s.id));
       } catch (e: any) {
-        failures++;
+        failed.push(s.name);
         console.error('Result save failed for', s.name, e?.response?.data || e);
       }
     }
-    setHasUnsavedChanges(false);
-    // Merge saved values into local state FIRST: the refetch below can resolve
-    // with a stale pre-save snapshot (deduped onto an in-flight request), which
-    // used to blank the inputs until a full refresh. Server data reconciles after.
-    setAllResults((prev: any[]) => mergeSavedMarks(prev, clsStudents.map((s: any) => s.id), bulkTerm, canonicalSubject, bulkMarks, selectedSubj.fullMarks));
-    buildBasis.current = ''; // force one fresh rebuild (e.g. clamped values)
+    setHasUnsavedChanges(failed.length > 0);
+    // Merge ONLY successes into local state: failed rows keep their typed
+    // values visible (preserve-dirty) instead of being blanked by the
+    // server rebuild below — and no forced reset, so typing survives.
+    setAllResults((prev: any[]) => mergeSavedMarks(prev, succeeded, bulkTerm, canonicalSubject, bulkMarks, selectedSubj.fullMarks));
+    if (failed.length === 0) buildBasis.current = ''; // force one fresh rebuild (e.g. clamped values)
     await loadResults(cls.id);
-    setSaveStatus(failures > 0 ? 'error' : 'saved');
-    statusTimer.current = setTimeout(() => setSaveStatus(''), 2500);
+    if (failed.length > 0) {
+      setSaveStatus('error');
+      setSaveError(`${failed.length} of ${clsStudents.length} failed: ${failed.slice(0, 3).join(', ')}${failed.length > 3 ? ` +${failed.length - 3} more` : ''} — fix & retry`);
+    } else {
+      setSaveStatus('saved');
+      statusTimer.current = setTimeout(() => setSaveStatus(''), 2500);
+    }
   };
 
   const saveBulkAttendance = async () => {
     setSaveStatus('saving');
+    setSaveError('');
     clearTimeout(statusTimer.current);
-    let failures = 0;
+    const failed: string[] = [];
+    const succeeded: string[] = [];
     for (const s of clsStudents) {
       try {
         const att = bulkAtt[s.id] || { days: '', present: '' };
@@ -140,38 +151,52 @@ export default function EnterBySubject() {
         const present = parseInt(att.present) || 0;
         const attendanceData = days > 0 ? { days, present } : undefined;
         await saveStudentResult(s.id, bulkTerm, existing?.marks || {}, attendanceData, undefined, sessionFilter, existing);
+        succeeded.push(String(s.id));
       } catch (e: any) {
-        failures++;
+        failed.push(s.name);
         console.error('Attendance save failed for', s.name, e?.response?.data || e);
       }
     }
-    setHasUnsavedChanges(false);
-    setAllResults((prev: any[]) => mergeSavedAttendance(prev, clsStudents.map((s: any) => s.id), bulkTerm, bulkAtt));
-    buildBasis.current = '';
+    setHasUnsavedChanges(failed.length > 0);
+    setAllResults((prev: any[]) => mergeSavedAttendance(prev, succeeded, bulkTerm, bulkAtt));
+    if (failed.length === 0) buildBasis.current = '';
     await loadResults(cls.id);
-    setSaveStatus(failures > 0 ? 'error' : 'saved');
-    statusTimer.current = setTimeout(() => setSaveStatus(''), 2500);
+    if (failed.length > 0) {
+      setSaveStatus('error');
+      setSaveError(`${failed.length} of ${clsStudents.length} failed: ${failed.slice(0, 3).join(', ')}${failed.length > 3 ? ` +${failed.length - 3} more` : ''} — fix & retry`);
+    } else {
+      setSaveStatus('saved');
+      statusTimer.current = setTimeout(() => setSaveStatus(''), 2500);
+    }
   };
 
   const saveBulkComments = async () => {
     setSaveStatus('saving');
+    setSaveError('');
     clearTimeout(statusTimer.current);
-    let failures = 0;
+    const failed: string[] = [];
+    const succeeded: string[] = [];
     for (const s of clsStudents) {
       try {
         const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
         await saveStudentResult(s.id, bulkTerm, existing?.marks || {}, existing?.attendance || undefined, bulkComment[s.id] || '', sessionFilter, existing);
+        succeeded.push(String(s.id));
       } catch (e: any) {
-        failures++;
+        failed.push(s.name);
         console.error('Comment save failed for', s.name, e?.response?.data || e);
       }
     }
-    setHasUnsavedChanges(false);
-    setAllResults((prev: any[]) => mergeSavedComments(prev, clsStudents.map((s: any) => s.id), bulkTerm, bulkComment));
-    buildBasis.current = '';
+    setHasUnsavedChanges(failed.length > 0);
+    setAllResults((prev: any[]) => mergeSavedComments(prev, succeeded, bulkTerm, bulkComment));
+    if (failed.length === 0) buildBasis.current = '';
     await loadResults(cls.id);
-    setSaveStatus(failures > 0 ? 'error' : 'saved');
-    statusTimer.current = setTimeout(() => setSaveStatus(''), 2500);
+    if (failed.length > 0) {
+      setSaveStatus('error');
+      setSaveError(`${failed.length} of ${clsStudents.length} failed: ${failed.slice(0, 3).join(', ')}${failed.length > 3 ? ` +${failed.length - 3} more` : ''} — fix & retry`);
+    } else {
+      setSaveStatus('saved');
+      statusTimer.current = setTimeout(() => setSaveStatus(''), 2500);
+    }
   };
 
   return (
@@ -261,7 +286,7 @@ export default function EnterBySubject() {
           <div className="flex items-center justify-center gap-2 min-h-[1.25rem]">
             {saveStatus === 'saving' && <span className="text-[11px] text-school-muted animate-pulse">Saving…</span>}
             {saveStatus === 'saved' && <span className="text-[11px] text-green-600 font-bold flex items-center gap-1"><Save size={12} /> Saved ✓</span>}
-            {saveStatus === 'error' && <span className="text-[11px] text-red-500 font-bold flex items-center gap-1">Saved with errors — check connection &amp; retry</span>}
+            {saveStatus === 'error' && <span className="text-[11px] text-red-500 font-bold flex items-center gap-1"><Save size={12} /> {saveError || 'Saved with errors — check connection & retry'}</span>}
           </div>
         </div>
       )}

@@ -48,7 +48,11 @@ class ResultViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         if not is_admin_or_superuser(request.user):
-            self._check_subject_permissions(serializer.validated_data, request.user)
+            self._perm_instance = instance
+            try:
+                self._check_subject_permissions(serializer.validated_data, request.user)
+            finally:
+                self._perm_instance = None
 
         self.perform_update(serializer)
         log_audit('update', 'result', entity_id=str(instance.pk), request=request)
@@ -64,6 +68,11 @@ class ResultViewSet(viewsets.ModelViewSet):
 
         student = validated_data.get('student')
         if not student:
+            # PATCH /results/<id>/ carries no student key — use the row itself.
+            _inst = getattr(self, '_perm_instance', None)
+            if _inst is not None:
+                student = _inst.student
+        if not student:
             student_id = self.kwargs.get('student_id')
             if student_id:
                 student = Student.objects.filter(id=student_id).first()
@@ -73,7 +82,16 @@ class ResultViewSet(viewsets.ModelViewSet):
 
         class_id = student.school_class_id
 
+
+        # On update, only CHANGED subjects need a teaching assignment: the
+        # payload always carries the full merged marks (PATCH replaces), and
+        # rejecting over untouched sibling subjects would block every teacher
+        # save in multi-subject rows.
+        instance = getattr(self, '_perm_instance', None)
+        old_marks = instance.marks if instance is not None else {}
         for subject_name in marks:
+            if instance is not None and old_marks.get(subject_name) == marks[subject_name]:
+                continue
             canonical_name = SUBJECT_KEY_MAP.get(subject_name, subject_name)
             subject = Subject.objects.filter(
                 name=canonical_name, school_class_id=class_id,

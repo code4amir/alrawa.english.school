@@ -72,3 +72,38 @@ class ResultTests(TestCase):
         self.assertEqual(res.status_code, 201)
         r = Result.objects.first()
         self.assertEqual(r.comment, 'Good progress')
+
+
+class ResultSubjectPermissionTests(TestCase):
+    """Non-admin saves check only CHANGED subjects (payload carries merged marks)."""
+
+    def setUp(self):
+        from core.models import Subject
+        from teachers.models import Teacher, TeacherSubject
+        self.client = APIClient()
+        self.klass = SchoolClass.objects.create(name='Play', order=1)
+        self.student = Student.objects.create(
+            name='S1', student_id='S000001', school_class=self.klass, session='2026')
+        self.math = Subject.objects.create(name='Math', full_marks=100, school_class=self.klass)
+        Subject.objects.create(name='Bangla', full_marks=100, school_class=self.klass)
+        self.user = User.objects.create_user(
+            email='subject-teacher@test.com', name='ST', password='testpass123', role='teacher')
+        teacher = Teacher.objects.create(user=self.user, designation='Assistant', name='ST')
+        TeacherSubject.objects.create(teacher=teacher, subject=self.math, school_class=self.klass)
+        refresh = RefreshToken.for_user(self.user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
+        self.result = Result.objects.create(
+            student=self.student, term='1', session='2026',
+            marks={'Bangla': 80, 'Math': 70})
+
+    def test_teacher_can_update_assigned_subject(self):
+        res = self.client.patch(
+            f'/api/results/{self.result.id}/',
+            {'marks': {'Bangla': 80, 'Math': 75}}, format='json')
+        self.assertEqual(res.status_code, 200)
+
+    def test_teacher_cannot_change_unassigned_subject(self):
+        res = self.client.patch(
+            f'/api/results/{self.result.id}/',
+            {'marks': {'Bangla': 85, 'Math': 70}}, format='json')
+        self.assertEqual(res.status_code, 403)
