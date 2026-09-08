@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { useAuthStore, useDarkMode, useUIStore, useUserManagementStore, api } from '../store';
+import { useAuthStore, useDarkMode, useUIStore, useUserManagementStore, useSchoolStore, api } from '../store';
 import { setTokens, getAccessToken, getRefreshToken } from '../stores/api';
 import { refreshSession, getLastRefreshStatus } from '../stores/auth';
 
@@ -156,6 +156,32 @@ describe('useAuthStore', () => {
     expect(getAccessToken()).toBe('pin-jwt');
     expect(getRefreshToken()).toBe('web-refresh');
     expect(localStorage.getItem('refresh_token')).toBe('web-refresh');
+  });
+});
+
+describe('classResults generation guard', () => {
+  it('discards a pre-save snapshot that resolves after a save', async () => {
+    const store = useSchoolStore.getState();
+    let resolveFetch: (v: any) => void = () => {};
+    const getSpy = vi.spyOn(api, 'get').mockImplementation(((url: string) =>
+      url.includes('/classes/')
+        ? new Promise((res) => { resolveFetch = res as (v: any) => void; })
+        : Promise.resolve({ data: [] })) as any);
+    const postSpy = vi.spyOn(api, 'post').mockResolvedValue({ data: { id: 'r1' } });
+    try {
+      const fetching = store.fetchClassResults('cls-epoch', '2026');
+      await store.saveStudentResult('s1', '1', { Math: 75 }, undefined, undefined, '2026', { term: '1', marks: {} });
+      resolveFetch({ data: { results: [{ studentId: 's1', term: '1', marks: {} }] } });
+      await fetching;
+      // Stale snapshot discarded — a later fresh fetch writes normally.
+      expect(useSchoolStore.getState().classResults['cls-epoch-2026']).toBeUndefined();
+      getSpy.mockResolvedValue({ data: { results: [{ studentId: 's1', term: '1', marks: { Math: 75 } }] } });
+      await store.fetchClassResults('cls-epoch', '2026');
+      expect(useSchoolStore.getState().classResults['cls-epoch-2026']).toHaveLength(1);
+    } finally {
+      getSpy.mockRestore();
+      postSpy.mockRestore();
+    }
   });
 });
 

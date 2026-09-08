@@ -9,6 +9,10 @@ import type {
 
 const CACHE_TTL = 60_000;
 
+// Bumped on every successful result save. fetchClassResults snapshots this
+// when it starts and discards its response if a save landed mid-flight.
+let classResultsEpoch = 0;
+
 interface SchoolState {
   classes: SchoolClass[];
   students: Student[];
@@ -392,11 +396,16 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
     const key = `classResults_${cacheKey}`;
     const now = Date.now();
     if (get().classResults[cacheKey] && now - (get()._fetchedAt[key] || 0) < CACHE_TTL) return;
+    // Generation guard: a save that lands while this fetch is in flight
+    // makes the response a pre-save snapshot — discarding it protects both
+    // the store and components that already merged the saved values locally.
+    const epoch = classResultsEpoch;
     set((s) => ({ loading: { ...s.loading, classResults: true } }));
     try {
       const params: Record<string, string> = { session };
       if (term) params.term = term;
       const res = await dedupedFetch(key, () => api.get(`/classes/${classId}/results/`, { params }));
+      if (epoch !== classResultsEpoch) return;
       set((s) => ({ classResults: { ...s.classResults, [cacheKey]: res.data.results || res.data.data || res.data }, _fetchedAt: { ...s._fetchedAt, [key]: Date.now() } }));
     } catch (e) { if (import.meta.env.DEV) console.warn("[store]", e); }
     finally { set((s) => ({ loading: { ...s.loading, classResults: false } })); }
@@ -448,6 +457,7 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
       if (!existing) throw e;
       await api.patch(`/results/${existing.id}/`, payload);
     }
+    classResultsEpoch++;
     set((s) => {
       const next = { ...s.studentResultsCache };
       for (const key of Object.keys(next)) {
