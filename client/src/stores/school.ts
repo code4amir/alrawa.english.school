@@ -66,7 +66,7 @@ interface SchoolState {
   updateSubject: (id: string, data: Partial<Subject>) => Promise<void>;
   deleteSubject: (id: string) => Promise<void>;
 
-  saveStudentResult: (studentId: string, term: string, marks: Record<string, number | null>, attendance?: { days: number; present: number }, comment?: string, session?: string, existingRow?: any) => Promise<void>;
+  saveStudentResult: (studentId: string, term: string, marks: Record<string, number | null>, attendance?: { days: number; present: number } | null, comment?: string, session?: string, existingRow?: any) => Promise<void>;
   studentResultsCache: Record<string, { data: Result[]; ts: number }>;
   getStudentResults: (studentId: string, session?: string) => Promise<Result[]>;
 
@@ -419,7 +419,7 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
     finally { set((s) => ({ loading: { ...s.loading, expenseCategories: false } })); }
   },
 
-  saveStudentResult: async (studentId: string, term: string, marks: Record<string, number | null>, attendance?: { days: number; present: number }, comment?: string, session?: string, existingRow?: any) => {
+  saveStudentResult: async (studentId: string, term: string, marks: Record<string, number | null>, attendance?: { days: number; present: number } | null, comment?: string, session?: string, existingRow?: any) => {
     // Delta protocol: send ONLY what the caller provides. The backend PATCH
     // atomically merges marks (missing key = keep, explicit null = delete),
     // so re-adding the page's stale snapshot here would overwrite a
