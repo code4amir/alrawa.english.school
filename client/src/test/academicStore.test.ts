@@ -208,15 +208,19 @@ describe('useSchoolStore — academic', () => {
       expect(result).toEqual(marks);
     });
 
-    it('saveStudentResult posts merged payload (existing row fields preserved)', async () => {
+    it('saveStudentResult posts a delta payload — no stale snapshot merge', async () => {
       useSchoolStore.setState({ studentResultsCache: { 'stu1-2025': { data: [], ts: Date.now() } } });
-      vi.spyOn(api, 'get').mockResolvedValue({ data: { results: [{ id: 'r1', studentId: 'stu1', term: '1', marks: { Science: 75 }, attendance: null, comment: null }] } });
-      vi.spyOn(api, 'post').mockResolvedValue({ data: {} });
+      const getSpy = vi.spyOn(api, 'get').mockResolvedValue({ data: { results: [{ id: 'r1', studentId: 'stu1', term: '1', marks: { Science: 75 }, attendance: null, comment: null }] } });
+      const postSpy = vi.spyOn(api, 'post').mockResolvedValue({ data: {} });
 
       await useSchoolStore.getState().saveStudentResult('stu1', '1', { Math: 90 });
 
-      // partial save must MERGE onto the existing row (backend PATCH replaces marks JSON)
-      expect(api.post).toHaveBeenCalledWith('/students/stu1/results/', { term: '1', marks: { Science: 75, Math: 90 }, attendance: null, comment: null, session: undefined });
+      // Delta protocol: ONLY the caller's subjects ship — re-merging the
+      // page's snapshot (Science: 75) would clobber a concurrent save of a
+      // different subject (backend merges server-side). No pre-GET either:
+      // the existing row is only fetched on the duplicate-key fallback.
+      expect(postSpy).toHaveBeenCalledWith('/students/stu1/results/', { term: '1', marks: { Math: 90 }, session: undefined });
+      expect(getSpy).not.toHaveBeenCalled();
       expect(useSchoolStore.getState().studentResultsCache['stu1-2025']).toBeUndefined();
     });
   });

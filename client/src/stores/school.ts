@@ -420,26 +420,16 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
   },
 
   saveStudentResult: async (studentId: string, term: string, marks: Record<string, number | null>, attendance?: { days: number; present: number }, comment?: string, session?: string, existingRow?: any) => {
-    // The backend PATCH atomically *merges* the `marks` JSON onto the locked
-    // row (missing key = keep, explicit null = delete subject), so concurrent
-    // teachers saving different subjects can no longer wipe each other. We
-    // still merge onto the authoritative existing row first so the payload
-    // carries full context. If the caller didn't hand us a usable row
-    // (stale/missing local cache), fetch it ourselves.
+    // Delta protocol: send ONLY what the caller provides. The backend PATCH
+    // atomically merges marks (missing key = keep, explicit null = delete),
+    // so re-adding the page's stale snapshot here would overwrite a
+    // colleague's concurrent save of a different subject — the exact
+    // "numbers not saved though it said Saved" bug. attendance/comment are
+    // likewise sent only when the caller explicitly provides them.
     let existing: any = (existingRow && String(existingRow.term) === String(term)) ? existingRow : null;
-    if (!existing) {
-      try {
-        const ex = await api.get(`/students/${studentId}/results/`, { params: session ? { session } : {} });
-        const rows = ex.data.results || ex.data.data || ex.data || [];
-        existing = rows.find((r: any) => String(r.term) === String(term)) || null;
-      } catch { existing = null; }
-    }
-    const mergedMarks: Record<string, number | null> = { ...(existing?.marks || {}), ...(marks || {}) };
-    const payload: any = { term, marks: mergedMarks, session };
+    const payload: any = { term, marks: marks || {}, session };
     if (attendance !== undefined) payload.attendance = attendance;
-    else if (existing?.attendance !== undefined) payload.attendance = existing.attendance;
     if (comment !== undefined) payload.comment = comment;
-    else if (existing?.comment !== undefined) payload.comment = existing.comment;
 
     // Upsert: Result has UniqueConstraint(student, term, session) and POSTing a
     // duplicate returns 400 ("must make a unique set"). Create first; on that

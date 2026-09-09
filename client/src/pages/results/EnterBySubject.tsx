@@ -107,17 +107,15 @@ export default function EnterBySubject() {
     for (const s of clsStudents) {
       try {
         const v = bulkMarks[s.id];
-        const marksData: Record<string, number | null> = {};
         const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
-        if (existing?.marks) Object.entries(existing.marks).forEach(([k, val]) => { marksData[k] = +(val as number); });
+        // Delta save: only THIS subject's value goes in the payload — the
+        // backend merges, so including sibling subjects from a possibly
+        // stale page snapshot would clobber a colleague's concurrent save.
+        const marksData: Record<string, number | null> = {};
         if (v !== '' && v !== undefined && !isNaN(+v)) marksData[canonicalSubject] = Math.min(+v, selectedSubj.fullMarks);
-        // Cleared input: explicit null deletes the subject server-side (the
-        // backend merges, so omitting would silently keep the old value).
         else if (existing?.marks?.[canonicalSubject] !== undefined) marksData[canonicalSubject] = null;
-        else delete marksData[canonicalSubject];
-        // Pass `existing` so the store preserves other subjects/attendance in
-        // the payload (belt-and-braces alongside the backend atomic merge).
-        await saveStudentResult(s.id, bulkTerm, marksData, existing?.attendance || undefined, undefined, sessionFilter, existing);
+        // (absent key = backend keeps the stored subject untouched)
+        await saveStudentResult(s.id, bulkTerm, marksData, undefined, undefined, sessionFilter, existing);
         succeeded.push(String(s.id));
       } catch (e: any) {
         failed.push(s.name);
@@ -152,8 +150,10 @@ export default function EnterBySubject() {
         const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
         const days = parseInt(att.days) || 0;
         const present = parseInt(att.present) || 0;
-        const attendanceData = days > 0 ? { days, present } : undefined;
-        await saveStudentResult(s.id, bulkTerm, existing?.marks || {}, attendanceData, undefined, sessionFilter, existing);
+        // Delta save: attendance only — marks/comment keys stay absent so the
+        // backend merge leaves colleagues' concurrent edits untouched.
+        const attendanceData = days > 0 ? { days, present } : null;
+        await saveStudentResult(s.id, bulkTerm, {}, attendanceData, undefined, sessionFilter, existing);
         succeeded.push(String(s.id));
       } catch (e: any) {
         failed.push(s.name);
@@ -182,7 +182,9 @@ export default function EnterBySubject() {
     for (const s of clsStudents) {
       try {
         const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
-        await saveStudentResult(s.id, bulkTerm, existing?.marks || {}, existing?.attendance || undefined, bulkComment[s.id] || '', sessionFilter, existing);
+        // Delta save: comment only — marks/attendance keys stay absent so the
+        // backend merge leaves colleagues' concurrent edits untouched.
+        await saveStudentResult(s.id, bulkTerm, {}, undefined, bulkComment[s.id] || '', sessionFilter, existing);
         succeeded.push(String(s.id));
       } catch (e: any) {
         failed.push(s.name);

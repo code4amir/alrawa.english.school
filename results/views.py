@@ -7,7 +7,7 @@ from django.db import transaction as db_transaction
 from .models import Result
 from students.models import Student
 from .serializers import ResultSerializer, SUBJECT_KEY_MAP
-from accounts.permissions import require_permission, can_teach_subject, is_admin_or_superuser
+from accounts.permissions import require_permission
 from core.audit import log_audit
 from core.models import SchoolSetting
 from parents.services import notify_parents_of_student
@@ -30,9 +30,12 @@ class ResultViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
 
-        if not is_admin_or_superuser(request.user):
-            self._check_subject_permissions(serializer.validated_data, request.user)
-
+        # Authorization is the results:write role gate ONLY. A finer
+        # per-subject teaching-assignment check (tried in 3f11687) 403'd the
+        # school's real teachers: TeacherSubject links are barely populated
+        # (12 school-wide), and multiple teachers entering different subjects
+        # on the same student row is the intended workflow. Server-side
+        # atomic merge in update() keeps concurrent saves safe.
         self.perform_create(serializer)
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
@@ -47,13 +50,7 @@ class ResultViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
 
-        if not is_admin_or_superuser(request.user):
-            self._perm_instance = instance
-            try:
-                self._check_subject_permissions(serializer.validated_data, request.user)
-            finally:
-                self._perm_instance = None
-
+        # Authorization is the results:write role gate only (see create()).
         # Atomic merge: one Result row holds EVERY subject's marks, and each
         # teacher's payload is built from their own page-load snapshot. A
         # plain replace here means the last teacher to save wipes subjects
@@ -75,49 +72,6 @@ class ResultViewSet(viewsets.ModelViewSet):
             self.perform_update(serializer)
         log_audit('update', 'result', entity_id=str(instance.pk), request=request)
         return Response(serializer.data)
-
-    def _check_subject_permissions(self, validated_data, user):
-        from core.models import Subject
-        from rest_framework.exceptions import PermissionDenied
-
-        marks = validated_data.get('marks', {})
-        if not marks:
-            return
-
-        student = validated_data.get('student')
-        if not student:
-            # PATCH /results/<id>/ carries no student key — use the row itself.
-            _inst = getattr(self, '_perm_instance', None)
-            if _inst is not None:
-                student = _inst.student
-        if not student:
-            student_id = self.kwargs.get('student_id')
-            if student_id:
-                student = Student.objects.filter(id=student_id).first()
-
-        if not student or not student.school_class_id:
-            return
-
-        class_id = student.school_class_id
-
-
-        # On update, only CHANGED subjects need a teaching assignment: the
-        # payload always carries the full merged marks (PATCH replaces), and
-        # rejecting over untouched sibling subjects would block every teacher
-        # save in multi-subject rows.
-        instance = getattr(self, '_perm_instance', None)
-        old_marks = instance.marks if instance is not None else {}
-        for subject_name in marks:
-            if instance is not None and old_marks.get(subject_name) == marks[subject_name]:
-                continue
-            canonical_name = SUBJECT_KEY_MAP.get(subject_name, subject_name)
-            subject = Subject.objects.filter(
-                name=canonical_name, school_class_id=class_id,
-            ).first()
-            if subject and not can_teach_subject(user, subject.id, class_id):
-                raise PermissionDenied(
-                    f'You are not assigned to teach "{canonical_name}" in this class.'
-                )
 
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
