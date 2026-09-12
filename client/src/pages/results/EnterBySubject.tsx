@@ -215,6 +215,11 @@ export default function EnterBySubject() {
       try {
         const v = bulkMarks[s.id];
         const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
+        // No-op skip: blank input + no stored value = nothing to write.
+        // (Pre-delta client POSTed these and the backend created empty
+        // shell rows — 16 landed 08-29 in one minute. Backend now 400s them.)
+        const hasValue = v !== '' && v !== undefined && !isNaN(+v);
+        if (!hasValue && existing?.marks?.[canonicalSubject] === undefined) continue;
         // Delta save: only THIS subject's value goes in the payload — the
         // backend merges, so including sibling subjects from a possibly
         // stale page snapshot would clobber a colleague's concurrent save.
@@ -283,6 +288,8 @@ export default function EnterBySubject() {
         const att = bulkAtt[s.id] || { days: '', present: '' };
         const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
         const days = parseInt(att.days) || 0;
+        // No-op skip: blank attendance + none stored = nothing to write.
+        if (days <= 0 && !existing?.attendance) continue;
         const present = parseInt(att.present) || 0;
         // Delta save: attendance only — marks/comment keys stay absent so the
         // backend merge leaves colleagues' concurrent edits untouched.
@@ -321,6 +328,8 @@ export default function EnterBySubject() {
     for (const s of clsStudents) {
       try {
         const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
+        // No-op skip: blank comment + none stored = nothing to write.
+        if (!(bulkComment[s.id] || '') && !(existing?.comment || '')) continue;
         // Delta save: comment only — marks/attendance keys stay absent so the
         // backend merge leaves colleagues' concurrent edits untouched.
         await saveStudentResult(s.id, bulkTerm, {}, undefined, bulkComment[s.id] || '', sessionFilter, existing);

@@ -352,6 +352,38 @@ class ResultMaxMarksTests(TestCase):
         self.assertEqual(res.status_code, 400)
 
 
+class ResultEmptyShellTests(TestCase):
+    """Fully-empty POSTs are rejected — no blank shell rows (Phase 0 fix)."""
+
+    def setUp(self):
+        self.client = APIClient()
+        _auth(self.client)
+        self.klass = SchoolClass.objects.create(name='Class 5', order=1)
+        self.student = Student.objects.create(
+            name='Stu', student_id='S000001', school_class=self.klass, session='2026')
+
+    def test_empty_post_rejected(self):
+        res = self.client.post(
+            f'/api/students/{self.student.id}/results/',
+            {'term': '1', 'session': '2026', 'marks': {}}, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(Result.objects.count(), 0)
+
+    def test_attendance_only_post_accepted(self):
+        res = self.client.post(
+            f'/api/students/{self.student.id}/results/',
+            {'term': '1', 'session': '2026', 'marks': {},
+             'attendance': {'days': 200, 'present': 190}}, format='json')
+        self.assertEqual(res.status_code, 201)
+
+    def test_comment_only_post_accepted(self):
+        res = self.client.post(
+            f'/api/students/{self.student.id}/results/',
+            {'term': '1', 'session': '2026', 'marks': {}, 'comment': 'Good'},
+            format='json')
+        self.assertEqual(res.status_code, 201)
+
+
 class ResultSoftDeleteTests(TestCase):
     """Results of soft-deleted students stay out of listings (Phase 0)."""
 

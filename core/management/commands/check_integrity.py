@@ -67,8 +67,12 @@ class Command(BaseCommand):
                                      'term': r.term, 'subject': subj, 'value': val,
                                      'full': full})
                 if not marks and r.created_at and r.created_at < week_ago:
-                    stale.append({'row': str(r.id), 'student': r.student.name,
-                                  'term': r.term, 'session': r.session})
+                    # Attendance/comment-only rows are legitimate entry — only
+                    # flag rows that carry nothing at all (pre-delta client
+                    # created blank shells on empty POSTs; create() now 400s).
+                    if not r.attendance and not (r.comment or ''):
+                        stale.append({'row': str(r.id), 'student': r.student.name,
+                                      'term': r.term, 'session': r.session})
 
             for kind, items, severity, text in [
                 ('over-range', over, 'warning', 'marks above full marks'),

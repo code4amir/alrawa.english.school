@@ -72,6 +72,21 @@ class ResultViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
 
+        # No empty shells: a POST carrying no marks, no attendance and no
+        # comment would create a blank row that haunts counts and the
+        # integrity board forever (16 such rows landed 08-29 in one minute
+        # from the pre-delta client). Attendance/comment-only saves pass —
+        # they carry real data under an empty marks dict.
+        marks = serializer.validated_data.get('marks') or {}
+        has_data = (
+            any(v is not None for v in marks.values())
+            or serializer.validated_data.get('attendance') is not None
+            or (serializer.validated_data.get('comment') or '') != ''
+        )
+        if not has_data:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError('Nothing to save: marks, attendance and comment are all empty.')
+
         # Authorization is the results:write role gate ONLY. A finer
         # per-subject teaching-assignment check (tried in 3f11687) 403'd the
         # school's real teachers: TeacherSubject links are barely populated
