@@ -35,6 +35,13 @@ describe('agmCharts', () => {
     expect(svg.match(/<path/g)?.length).toBe(2);
   });
 
+  it('single-head pie draws a full ring, never NaN', () => {
+    const svg = expensePieSvg([['Electricity Bill', '5500.00' as any]]);
+    expect(svg).not.toContain('NaN');
+    expect(svg.match(/<circle/g)?.length).toBe(2);
+    expect(svg).toContain('100.0%');
+  });
+
   it('fmtShort compacts large taka amounts', () => {
     expect(fmtShort(15000000)).toBe('1.5Cr');
     expect(fmtShort(250000)).toBe('2.5L');

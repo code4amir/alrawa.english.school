@@ -63,22 +63,30 @@ const PIE_COLORS = ['#1a1a2e', '#059669', '#d97706', '#2563eb', '#e11d48', '#7c3
 /** Donut chart of expense heads with legend. Returns {svg, slices} for reuse. */
 export function expensePieSvg(heads: [string, number][]): string {
   const W = 640, H = 240, cx = 120, cy = 120, r = 88, ir = 52;
-  const total = heads.reduce((s, [, v]) => s + v, 0) || 1;
+  const clean: [string, number][] = (heads || []).map(([n, v]) => [String(n ?? ''), Number(v) || 0]);
+  const total = clean.reduce((s, [, v]) => s + v, 0) || 1;
   let s = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" font-family="system-ui,sans-serif">`;
-  let angle = -Math.PI / 2;
-  const top = heads.slice(0, 12);
-  top.forEach(([, v], i) => {
-    const frac = v / total;
-    if (frac <= 0) return;
-    const a0 = angle, a1 = angle + frac * Math.PI * 2;
-    angle = a1;
-    const large = frac > 0.5 ? 1 : 0;
-    const x0 = cx + r * Math.cos(a0), y0 = cy + r * Math.sin(a0);
-    const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
-    const xi1 = cx + ir * Math.cos(a1), yi1 = cy + ir * Math.sin(a1);
-    const xi0 = cx + ir * Math.cos(a0), yi0 = cy + ir * Math.sin(a0);
-    s += `<path d="M${x0.toFixed(1)},${y0.toFixed(1)} A${r},${r} 0 ${large},1 ${x1.toFixed(1)},${y1.toFixed(1)} L${xi1.toFixed(1)},${yi1.toFixed(1)} A${ir},${ir} 0 ${large},0 ${xi0.toFixed(1)},${yi0.toFixed(1)} Z" fill="${PIE_COLORS[i % PIE_COLORS.length]}"/>`;
-  });
+  const top = clean.slice(0, 12);
+  if (top.length === 1 && top[0][1] > 0) {
+    // A single 100% slice is a degenerate arc (start == end renders
+    // nothing) — draw the full ring directly instead.
+    s += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${PIE_COLORS[0]}"/>`;
+    s += `<circle cx="${cx}" cy="${cy}" r="${ir}" fill="#ffffff"/>`;
+  } else {
+    let angle = -Math.PI / 2;
+    top.forEach(([, v], i) => {
+      const frac = v / total;
+      if (frac <= 0) return;
+      const a0 = angle, a1 = angle + frac * Math.PI * 2;
+      angle = a1;
+      const large = frac > 0.5 ? 1 : 0;
+      const x0 = cx + r * Math.cos(a0), y0 = cy + r * Math.sin(a0);
+      const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
+      const xi1 = cx + ir * Math.cos(a1), yi1 = cy + ir * Math.sin(a1);
+      const xi0 = cx + ir * Math.cos(a0), yi0 = cy + ir * Math.sin(a0);
+      s += `<path d="M${x0.toFixed(1)},${y0.toFixed(1)} A${r},${r} 0 ${large},1 ${x1.toFixed(1)},${y1.toFixed(1)} L${xi1.toFixed(1)},${yi1.toFixed(1)} A${ir},${ir} 0 ${large},0 ${xi0.toFixed(1)},${yi0.toFixed(1)} Z" fill="${PIE_COLORS[i % PIE_COLORS.length]}"/>`;
+    });
+  }
   s += `<text x="${cx}" y="${cy - 2}" font-size="13" font-weight="bold" fill="#1a1a2e" text-anchor="middle">${fmtShort(total)}</text>`;
   s += `<text x="${cx}" y="${cy + 12}" font-size="9" fill="#827c72" text-anchor="middle">total</text>`;
   // legend, 2 columns
