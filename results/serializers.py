@@ -32,6 +32,33 @@ class ResultSerializer(serializers.ModelSerializer):
                 normalized[canonical] = val
         return normalized
 
+    def validate(self, attrs):
+        # Phase 0: backend max-marks check. Previously only the frontend
+        # clamped, so any API client could store Math: 999 silently.
+        marks = attrs.get('marks')
+        if isinstance(marks, dict) and marks:
+            student = attrs.get('student') or getattr(self.instance, 'student', None)
+            class_id = getattr(student, 'school_class_id', None)
+            if class_id:
+                from core.models import Subject
+                limits = dict(Subject.objects.filter(
+                    school_class_id=class_id).values_list('name', 'full_marks'))
+                bad = {}
+                for key, val in marks.items():
+                    if val is None or isinstance(val, bool):
+                        continue
+                    try:
+                        num = float(val)
+                    except (TypeError, ValueError):
+                        bad[key] = f'not a number: {val!r}'
+                        continue
+                    full = limits.get(key)
+                    if full is not None and num > full:
+                        bad[key] = f'{val} exceeds full marks {full}'
+                if bad:
+                    raise serializers.ValidationError({'marks': bad})
+        return attrs
+
 
 class ResultLockSerializer(serializers.ModelSerializer):
     className = serializers.CharField(source='school_class.name', read_only=True)

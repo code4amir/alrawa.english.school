@@ -1334,3 +1334,49 @@ class DuesReminderTests(TestCase):
         self.assertEqual(
             NotificationLog.objects.filter(event_type='dues_reminder').count(), 1
         )
+
+
+class FinanceMoneyAuditTests(TestCase):
+    """Money-moving writes leave audit rows (Phase 0)."""
+
+    def setUp(self):
+        from core.models import AuditLog
+        self.AuditLog = AuditLog
+        self.client = APIClient()
+        _auth(self.client)
+        self.bank, _ = BankAccount.objects.get_or_create(
+            name='CASH_IN_HAND', display_name='Cash in Hand')
+
+    def test_opening_balance_create_audited(self):
+        res = self.client.post('/api/finance/opening-balances/', {
+            'account': 'CASH_IN_HAND', 'fiscal_year': 2026, 'amount': '5000.00',
+        }, format='json')
+        self.assertEqual(res.status_code, 201)
+        self.assertTrue(self.AuditLog.objects.filter(
+            action='create', entity_type='opening_balance').exists())
+
+    def test_opening_balance_delete_audited(self):
+        from .models import OpeningBalance
+        ob = OpeningBalance.objects.create(
+            account=self.bank, fiscal_year=2026, amount=100)
+        res = self.client.delete(f'/api/finance/opening-balances/{ob.id}/')
+        self.assertEqual(res.status_code, 204)
+        self.assertTrue(self.AuditLog.objects.filter(
+            action='delete', entity_type='opening_balance').exists())
+
+    def test_reconciliation_cud_audited(self):
+        res = self.client.post('/api/finance/reconciliations/', {
+            'account': str(self.bank.id), 'statement_date': '2026-09-01T00:00:00Z',
+            'closing_balance': '1000.00',
+        }, format='json')
+        self.assertEqual(res.status_code, 201)
+        rid = res.data['id']
+        res = self.client.patch(f'/api/finance/reconciliations/{rid}/', {
+            'closing_balance': '1200.00',
+        }, format='json')
+        self.assertEqual(res.status_code, 200)
+        res = self.client.delete(f'/api/finance/reconciliations/{rid}/')
+        self.assertEqual(res.status_code, 204)
+        actions = set(self.AuditLog.objects.filter(
+            entity_type='reconciliation', entity_id=str(rid)).values_list('action', flat=True))
+        self.assertEqual(actions, {'create', 'update', 'delete'})

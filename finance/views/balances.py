@@ -37,7 +37,11 @@ class OpeningBalanceViewSet(viewsets.ModelViewSet):
         fy = serializer.validated_data.get('fiscal_year')
         if fy:
             _check_period_open(fy)
-        serializer.save()
+        obj = serializer.save()
+        log_audit('create', 'opening_balance', entity_id=obj.pk, request=self.request,
+                  details={'fiscal_year': obj.fiscal_year,
+                           'account': getattr(obj.account, 'name', str(obj.account_id)),
+                           'amount': str(obj.amount)})
 
     def perform_update(self, serializer):
         instance = self.get_object()
@@ -58,6 +62,10 @@ class OpeningBalanceViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         if instance.fiscal_year:
             _check_period_open(instance.fiscal_year)
+        log_audit('delete', 'opening_balance', entity_id=instance.pk, request=self.request,
+                  details={'fiscal_year': instance.fiscal_year,
+                           'account': getattr(instance.account, 'name', str(instance.account_id)),
+                           'amount': str(instance.amount)})
         instance.delete()
 
     @action(detail=False, methods=['get'])
@@ -130,13 +138,22 @@ class ReconciliationViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         fy = _fiscal_year_from_date(serializer.validated_data.get('statement_date'))
         _check_period_open(fy)
-        serializer.save()
+        obj = serializer.save()
+        log_audit('create', 'reconciliation', entity_id=obj.pk, request=self.request,
+                  details={'account': getattr(obj.account, 'name', str(obj.account_id)),
+                           'statement_date': str(obj.statement_date)})
 
     def perform_update(self, serializer):
         instance = self.get_object()
         _check_period_open(_fiscal_year_from_date(instance.statement_date))
         serializer.save()
+        log_audit('update', 'reconciliation', entity_id=instance.pk, request=self.request,
+                  details={'account': getattr(instance.account, 'name', str(instance.account_id)),
+                           'statement_date': str(instance.statement_date)})
 
     def perform_destroy(self, instance):
         _check_period_open(_fiscal_year_from_date(instance.statement_date))
+        log_audit('delete', 'reconciliation', entity_id=instance.pk, request=self.request,
+                  details={'account': getattr(instance.account, 'name', str(instance.account_id)),
+                           'statement_date': str(instance.statement_date)})
         instance.delete()

@@ -197,6 +197,49 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER)
+SERVER_EMAIL = DEFAULT_FROM_EMAIL
+# Comma-separated admin emails for 500-error alerts (mail_admins). Empty =
+# no emails; logs below still capture everything.
+_admin_emails = [x.strip() for x in os.environ.get('DJANGO_ADMIN_EMAILS', '').split(',') if '@' in x]
+ADMINS = [(e.split('@')[0], e) for e in _admin_emails]
+
+# ── Logging (Phase 0 observability) ──
+# uWSGI captures stdout/stderr into ~/admin/logs/uwsgi/ — previously there
+# was NO logging config, so every logger.exception/warning in the codebase
+# evaporated with the idle-stopped worker. Console handler keeps them;
+# mail_admins routes 500s to ADMINS when configured.
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'brief': {'format': '[{levelname}] {name}: {message}', 'style': '{'},
+    },
+    'filters': {
+        'require_debug_false': {'()': 'django.utils.log.RequireDebugFalse'},
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'brief',
+        },
+        'mail_admins': {
+            'level': 'ERROR',
+            'filters': ['require_debug_false'],
+            'class': 'django.utils.log.AdminEmailHandler',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': os.environ.get('DJANGO_LOG_LEVEL', 'INFO'),
+    },
+    'loggers': {
+        'django.request': {
+            'handlers': ['console', 'mail_admins'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+    },
+}
 
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:5173')
 

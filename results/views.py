@@ -166,6 +166,10 @@ class ResultViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
+        # Phase 0: exclude soft-deleted/transferred students — their stale
+        # rows used to haunt class results, tabulation and ranks (same bug
+        # class as the attendance orphan counts).
+        qs = qs.filter(student__deleted_at__isnull=True)
         student_id = self.kwargs.get('student_id')
         if student_id:
             qs = qs.filter(student_id=student_id)

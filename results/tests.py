@@ -306,3 +306,76 @@ class ResultAuditHistoryTests(TestCase):
         import json as _json
         entry = self.AuditLog.objects.filter(action='create', entity_type='result').latest('created_at')
         self.assertEqual(_json.loads(entry.details)['marks'], {'Math': 60})
+
+
+class ResultMaxMarksTests(TestCase):
+    """Backend rejects marks above the subject's full marks (Phase 0)."""
+
+    def setUp(self):
+        from core.models import Subject
+        self.client = APIClient()
+        _auth(self.client)
+        self.klass = SchoolClass.objects.create(name='Class 5', order=1)
+        Subject.objects.create(name='Math', full_marks=100, school_class=self.klass)
+        self.student = Student.objects.create(
+            name='Stu', student_id='S000001', school_class=self.klass, session='2026')
+
+    def test_over_full_marks_rejected(self):
+        res = self.client.post(
+            f'/api/students/{self.student.id}/results/',
+            {'term': '1', 'session': '2026', 'marks': {'Math': 150}}, format='json')
+        self.assertEqual(res.status_code, 400)
+
+    def test_at_full_marks_accepted(self):
+        res = self.client.post(
+            f'/api/students/{self.student.id}/results/',
+            {'term': '1', 'session': '2026', 'marks': {'Math': 100}}, format='json')
+        self.assertEqual(res.status_code, 201)
+
+    def test_null_delete_and_unknown_subject_pass(self):
+        r = self.client.post(
+            f'/api/students/{self.student.id}/results/',
+            {'term': '1', 'session': '2026', 'marks': {'Math': 80}}, format='json')
+        row_id = r.data['id']
+        res = self.client.patch(
+            f'/api/results/{row_id}/',
+            {'marks': {'Math': None, 'Unlisted': 50}}, format='json')
+        self.assertEqual(res.status_code, 200)
+
+    def test_update_over_full_marks_rejected(self):
+        r = self.client.post(
+            f'/api/students/{self.student.id}/results/',
+            {'term': '1', 'session': '2026', 'marks': {'Math': 80}}, format='json')
+        res = self.client.patch(
+            f"/api/results/{r.data['id']}/",
+            {'marks': {'Math': 101}}, format='json')
+        self.assertEqual(res.status_code, 400)
+
+
+class ResultSoftDeleteTests(TestCase):
+    """Results of soft-deleted students stay out of listings (Phase 0)."""
+
+    def setUp(self):
+        from django.utils import timezone
+        self.client = APIClient()
+        _auth(self.client)
+        self.klass = SchoolClass.objects.create(name='Class 5', order=1)
+        self.student = Student.objects.create(
+            name='Stu', student_id='S000001', school_class=self.klass, session='2026')
+        self.result = Result.objects.create(
+            student=self.student, term='1', session='2026', marks={'Math': 80})
+        self.student.deleted_at = timezone.now()
+        self.student.save(update_fields=['deleted_at'])
+
+    def test_class_results_excludes_deleted(self):
+        res = self.client.get(
+            f'/api/classes/{self.klass.id}/results/?session=2026')
+        self.assertEqual(res.status_code, 200)
+        ids = [str(r.get('studentId') or r.get('student_id') or r.get('student'))
+               for r in (res.data if isinstance(res.data, list) else res.data.get('results', []))]
+        self.assertNotIn(str(self.student.id), ids)
+
+    def test_student_results_excludes_deleted(self):
+        res = self.client.get(
+            f'/api/students/{self.student.id}/results/?session=2026')
+        self.assertEqual(res.status_code, 200)
