@@ -384,6 +384,98 @@ class ResultEmptyShellTests(TestCase):
         self.assertEqual(res.status_code, 201)
 
 
+class ResultBulkTests(TestCase):
+    """Whole-grid save: one request, per-item guards, partial success."""
+
+    def setUp(self):
+        from core.models import Subject
+        self.client = APIClient()
+        _auth(self.client)
+        self.klass = SchoolClass.objects.create(name='Class 5', order=1)
+        Subject.objects.create(name='Math', full_marks=100, school_class=self.klass)
+        self.s1 = Student.objects.create(
+            name='S1', student_id='S000001', school_class=self.klass, session='2026')
+        self.s2 = Student.objects.create(
+            name='S2', student_id='S000002', school_class=self.klass, session='2026')
+        Result.objects.create(
+            student=self.s1, term='1', session='2026', marks={'Bangla': 80})
+
+    def _bulk(self, items, term='1', session='2026'):
+        return self.client.post('/api/results/bulk/', {
+            'term': term, 'session': session, 'items': items}, format='json')
+
+    def test_mixed_create_and_update_merges(self):
+        res = self._bulk([
+            {'student': str(self.s1.id), 'marks': {'Math': 75}},
+            {'student': str(self.s2.id), 'marks': {'Math': 70}},
+        ])
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(len(res.data['saved']), 2)
+        self.assertEqual(res.data['failed'], [])
+        r1 = Result.objects.get(student=self.s1, term='1', session='2026')
+        # Sibling subject survives the merge.
+        self.assertEqual(r1.marks, {'Bangla': 80, 'Math': 75})
+
+    def test_per_item_failure_does_not_abort_batch(self):
+        res = self._bulk([
+            {'student': str(self.s1.id), 'marks': {'Math': 999}},
+            {'student': str(self.s2.id), 'marks': {'Math': 70}},
+        ])
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['saved'], [str(self.s2.id)])
+        self.assertEqual(len(res.data['failed']), 1)
+        self.assertEqual(res.data['failed'][0]['student'], str(self.s1.id))
+
+    def test_empty_items_skipped(self):
+        res = self._bulk([
+            {'student': str(self.s1.id), 'marks': {}},
+            {'student': str(self.s2.id), 'marks': {'Math': 70}},
+        ])
+        self.assertEqual(res.data['skipped'], [str(self.s1.id)])
+        self.assertEqual(res.data['saved'], [str(self.s2.id)])
+
+    def test_locked_slice_fails_item(self):
+        from results.models import ResultLock
+        from teachers.models import Teacher
+        ResultLock.objects.create(school_class=self.klass, session='2026', term='1')
+        # Teacher blocked; admin bypasses locks by design.
+        teacher_client = APIClient()
+        user = User.objects.create_user(
+            email='lock-teacher@test.com', name='LT', password='testpass123', role='teacher')
+        Teacher.objects.create(user=user, designation='Assistant', name='LT')
+        refresh = RefreshToken.for_user(user)
+        teacher_client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
+        res = teacher_client.post('/api/results/bulk/', {
+            'term': '1', 'session': '2026',
+            'items': [{'student': str(self.s1.id), 'marks': {'Math': 75}}]}, format='json')
+        self.assertEqual(res.data['saved'], [])
+        self.assertEqual(len(res.data['failed']), 1)
+        res = self._bulk([{'student': str(self.s1.id), 'marks': {'Math': 75}}])
+        self.assertEqual(res.data['saved'], [str(self.s1.id)])
+
+    def test_mass_clear_item_blocked_but_sibling_saves(self):
+        from teachers.models import Teacher
+        teacher_client = APIClient()
+        user = User.objects.create_user(
+            email='bulk-teacher@test.com', name='BT', password='testpass123', role='teacher')
+        Teacher.objects.create(user=user, designation='Assistant', name='BT')
+        refresh = RefreshToken.for_user(user)
+        teacher_client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
+        Result.objects.create(
+            student=self.s2, term='1', session='2026',
+            marks={'A': 1, 'B': 2, 'C': 3, 'D': 4, 'E': 5})
+        res = teacher_client.post('/api/results/bulk/', {
+            'term': '1', 'session': '2026', 'items': [
+                {'student': str(self.s2.id),
+                 'marks': {'A': None, 'B': None, 'C': None, 'D': None}},
+                {'student': str(self.s1.id), 'marks': {'Math': 75}},
+            ]}, format='json')
+        self.assertEqual(res.status_code, 200)
+        failed_ids = [f['student'] for f in res.data['failed']]
+        self.assertIn(str(self.s2.id), failed_ids)
+        self.assertIn(str(self.s1.id), res.data['saved'])
+
+
 class ResultSoftDeleteTests(TestCase):
     """Results of soft-deleted students stay out of listings (Phase 0)."""
 

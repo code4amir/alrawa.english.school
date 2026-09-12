@@ -19,7 +19,7 @@ const loadEnterPrefs = (): Record<string, string> => {
 };
 
 export default function EnterBySubject() {
-  const { classes, fetchClasses, students, fetchStudents, subjects, fetchSubjects, saveStudentResult, academicYears, fetchAcademicYears, classResults, fetchClassResults, resultLocks, fetchResultLocks, lockResults, unlockResults } = useSchoolStore();
+  const { classes, fetchClasses, students, fetchStudents, subjects, fetchSubjects, saveBulkResults, academicYears, fetchAcademicYears, classResults, fetchClassResults, resultLocks, fetchResultLocks, lockResults, unlockResults } = useSchoolStore();
   const role = useAuthStore((s) => s.user?.role);
   const canSaveResults = role === 'admin' || role === 'teacher' || role === 'monitor';
   const isAdmin = role === 'admin';
@@ -43,8 +43,8 @@ export default function EnterBySubject() {
 
   const loadResults = async (clsId: string) => {
     const key = `${clsId}-${sessionFilter}`;
-    // Skip the cache only when it hasn't been invalidated: saveStudentResult
-    // zeroes _fetchedAt for classResults keys after a save, so a plain truthy
+    // Skip the cache only when it hasn't been invalidated: bulk saves
+    // zero _fetchedAt for classResults keys after a save, so a plain truthy
     // check here used to serve STALE marks until a full page reload.
     const invalidated = useSchoolStore.getState()._fetchedAt[`classResults_${key}`] === 0;
     if (classResults[key] && !invalidated) { setAllResults(classResults[key]); return; }
@@ -194,8 +194,6 @@ export default function EnterBySubject() {
     setSaveProgress({ done: 0, total: clsStudents.length });
     clearTimeout(statusTimer.current);
     const canonicalSubject = SUBJECT_KEY_MAP[bulkSubject] || bulkSubject;
-    const failed: string[] = [];
-    const succeeded: string[] = [];
     setCoworkerNote('');
     // U5 snapshot of OTHER subjects: after the save, any change here came
     // from a colleague saving concurrently — surface it instead of silently
@@ -211,30 +209,38 @@ export default function EnterBySubject() {
         .filter((x: any) => String(x.term) === String(bulkTerm))
         .map((x: any) => [rowKey(x), otherMarks(x.marks)])
     );
+    // Delta items: only THIS subject per student (absent key = backend keeps
+    // the stored subject untouched). Blank + nothing stored = no-op skip.
+    const items: { student: string; marks: Record<string, number | null> }[] = [];
     for (const s of clsStudents) {
-      try {
-        const v = bulkMarks[s.id];
-        const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
-        // No-op skip: blank input + no stored value = nothing to write.
-        // (Pre-delta client POSTed these and the backend created empty
-        // shell rows — 16 landed 08-29 in one minute. Backend now 400s them.)
-        const hasValue = v !== '' && v !== undefined && !isNaN(+v);
-        if (!hasValue && existing?.marks?.[canonicalSubject] === undefined) continue;
-        // Delta save: only THIS subject's value goes in the payload — the
-        // backend merges, so including sibling subjects from a possibly
-        // stale page snapshot would clobber a colleague's concurrent save.
-        const marksData: Record<string, number | null> = {};
-        if (v !== '' && v !== undefined && !isNaN(+v)) marksData[canonicalSubject] = Math.min(+v, selectedSubj.fullMarks);
-        else if (existing?.marks?.[canonicalSubject] !== undefined) marksData[canonicalSubject] = null;
-        // (absent key = backend keeps the stored subject untouched)
-        await saveStudentResult(s.id, bulkTerm, marksData, undefined, undefined, sessionFilter, existing);
-        succeeded.push(String(s.id));
-      } catch (e: any) {
-        failed.push(s.name);
-        console.error('Result save failed for', s.name, e?.response?.data || e);
-      } finally {
-        setSaveProgress((p) => (p ? { ...p, done: p.done + 1 } : p));
+      const v = bulkMarks[s.id];
+      const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
+      const hasValue = v !== '' && v !== undefined && !isNaN(+v);
+      if (!hasValue && existing?.marks?.[canonicalSubject] === undefined) continue;
+      const marksData: Record<string, number | null> = {};
+      if (hasValue) marksData[canonicalSubject] = Math.min(+v, selectedSubj.fullMarks);
+      else marksData[canonicalSubject] = null;
+      items.push({ student: String(s.id), marks: marksData });
+    }
+    const failed: string[] = [];
+    let succeeded: string[] = [];
+    try {
+      // ONE request for the whole grid (not N per-student round trips).
+      const res = await saveBulkResults(bulkTerm, items, sessionFilter);
+      succeeded = res.saved || [];
+      setSaveProgress({ done: clsStudents.length, total: clsStudents.length });
+      const failedIds = new Set((res.failed || []).map((f: any) => String(f.student)));
+      for (const s of clsStudents) {
+        if (failedIds.has(String(s.id))) {
+          failed.push(s.name);
+          const err = (res.failed || []).find((f: any) => String(f.student) === String(s.id));
+          console.error('Result save failed for', s.name, err?.error);
+        }
       }
+    } catch (e: any) {
+      // Whole-batch transport failure (offline, timeout): nothing saved.
+      console.error('Bulk result save failed', e?.response?.data || e);
+      for (const s of clsStudents) failed.push(s.name);
     }
     setHasUnsavedChanges(failed.length > 0);
     // Merge ONLY successes into local state: failed rows keep their typed
@@ -282,26 +288,33 @@ export default function EnterBySubject() {
     setSaveProgress({ done: 0, total: clsStudents.length });
     clearTimeout(statusTimer.current);
     const failed: string[] = [];
-    const succeeded: string[] = [];
+    const items: { student: string; attendance: { days: number; present: number } | null }[] = [];
     for (const s of clsStudents) {
-      try {
-        const att = bulkAtt[s.id] || { days: '', present: '' };
-        const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
-        const days = parseInt(att.days) || 0;
-        // No-op skip: blank attendance + none stored = nothing to write.
-        if (days <= 0 && !existing?.attendance) continue;
-        const present = parseInt(att.present) || 0;
-        // Delta save: attendance only — marks/comment keys stay absent so the
-        // backend merge leaves colleagues' concurrent edits untouched.
-        const attendanceData = days > 0 ? { days, present } : null;
-        await saveStudentResult(s.id, bulkTerm, {}, attendanceData, undefined, sessionFilter, existing);
-        succeeded.push(String(s.id));
-      } catch (e: any) {
-        failed.push(s.name);
-        console.error('Attendance save failed for', s.name, e?.response?.data || e);
-      } finally {
-        setSaveProgress((p) => (p ? { ...p, done: p.done + 1 } : p));
+      const att = bulkAtt[s.id] || { days: '', present: '' };
+      const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
+      const days = parseInt(att.days) || 0;
+      // No-op skip: blank attendance + none stored = nothing to write.
+      if (days <= 0 && !existing?.attendance) continue;
+      const present = parseInt(att.present) || 0;
+      items.push({ student: String(s.id), attendance: days > 0 ? { days, present } : null });
+    }
+    let succeeded: string[] = [];
+    try {
+      // ONE request for the whole grid (not N per-student round trips).
+      const res = await saveBulkResults(bulkTerm, items, sessionFilter);
+      succeeded = res.saved || [];
+      setSaveProgress({ done: clsStudents.length, total: clsStudents.length });
+      const failedIds = new Set((res.failed || []).map((f: any) => String(f.student)));
+      for (const s of clsStudents) {
+        if (failedIds.has(String(s.id))) {
+          failed.push(s.name);
+          const err = (res.failed || []).find((f: any) => String(f.student) === String(s.id));
+          console.error('Attendance save failed for', s.name, err?.error);
+        }
       }
+    } catch (e: any) {
+      console.error('Bulk attendance save failed', e?.response?.data || e);
+      for (const s of clsStudents) failed.push(s.name);
     }
     setHasUnsavedChanges(failed.length > 0);
     setAllResults((prev: any[]) => mergeSavedAttendance(prev, succeeded, bulkTerm, bulkAtt));
@@ -324,22 +337,30 @@ export default function EnterBySubject() {
     setSaveProgress({ done: 0, total: clsStudents.length });
     clearTimeout(statusTimer.current);
     const failed: string[] = [];
-    const succeeded: string[] = [];
+    const items: { student: string; comment: string }[] = [];
     for (const s of clsStudents) {
-      try {
-        const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
-        // No-op skip: blank comment + none stored = nothing to write.
-        if (!(bulkComment[s.id] || '') && !(existing?.comment || '')) continue;
-        // Delta save: comment only — marks/attendance keys stay absent so the
-        // backend merge leaves colleagues' concurrent edits untouched.
-        await saveStudentResult(s.id, bulkTerm, {}, undefined, bulkComment[s.id] || '', sessionFilter, existing);
-        succeeded.push(String(s.id));
-      } catch (e: any) {
-        failed.push(s.name);
-        console.error('Comment save failed for', s.name, e?.response?.data || e);
-      } finally {
-        setSaveProgress((p) => (p ? { ...p, done: p.done + 1 } : p));
+      const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
+      // No-op skip: blank comment + none stored = nothing to write.
+      if (!(bulkComment[s.id] || '') && !(existing?.comment || '')) continue;
+      items.push({ student: String(s.id), comment: bulkComment[s.id] || '' });
+    }
+    let succeeded: string[] = [];
+    try {
+      // ONE request for the whole grid (not N per-student round trips).
+      const res = await saveBulkResults(bulkTerm, items, sessionFilter);
+      succeeded = res.saved || [];
+      setSaveProgress({ done: clsStudents.length, total: clsStudents.length });
+      const failedIds = new Set((res.failed || []).map((f: any) => String(f.student)));
+      for (const s of clsStudents) {
+        if (failedIds.has(String(s.id))) {
+          failed.push(s.name);
+          const err = (res.failed || []).find((f: any) => String(f.student) === String(s.id));
+          console.error('Comment save failed for', s.name, err?.error);
+        }
       }
+    } catch (e: any) {
+      console.error('Bulk comment save failed', e?.response?.data || e);
+      for (const s of clsStudents) failed.push(s.name);
     }
     setHasUnsavedChanges(failed.length > 0);
     setAllResults((prev: any[]) => mergeSavedComments(prev, succeeded, bulkTerm, bulkComment));

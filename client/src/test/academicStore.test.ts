@@ -223,5 +223,28 @@ describe('useSchoolStore — academic', () => {
       expect(getSpy).not.toHaveBeenCalled();
       expect(useSchoolStore.getState().studentResultsCache['stu1-2025']).toBeUndefined();
     });
+
+    it('saveBulkResults posts ONE request for the whole grid', async () => {
+      const postSpy = vi.spyOn(api, 'post').mockResolvedValue({
+        data: { saved: ['stu1'], skipped: [], failed: [] },
+      });
+
+      const res = await useSchoolStore.getState().saveBulkResults('1', [
+        { student: 'stu1', marks: { Math: 90 } },
+        { student: 'stu2', marks: { Math: 80 } },
+      ], '2026');
+
+      // A 30-student class used to fire 60+ rapid requests (POST + PATCH
+      // fallback each) — the pattern that trips edge firewalls into IP bans.
+      expect(postSpy).toHaveBeenCalledTimes(1);
+      expect(postSpy).toHaveBeenCalledWith('/results/bulk/', {
+        term: '1', session: '2026',
+        items: [
+          { student: 'stu1', marks: { Math: 90 } },
+          { student: 'stu2', marks: { Math: 80 } },
+        ],
+      });
+      expect(res.saved).toEqual(['stu1']);
+    });
   });
 });

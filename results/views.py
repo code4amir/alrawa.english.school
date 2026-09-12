@@ -111,8 +111,6 @@ class ResultViewSet(viewsets.ModelViewSet):
                            'marks': dict(obj.marks or {})})
 
     def update(self, request, *args, **kwargs):
-        from rest_framework.exceptions import PermissionDenied
-
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
@@ -121,18 +119,26 @@ class ResultViewSet(viewsets.ModelViewSet):
         # Authorization is the results:write role gate only (see create()).
         _reject_if_locked(request.user, instance.student.school_class_id,
                           instance.session, instance.term)
+        self._reject_mass_clear(request.user, serializer.validated_data.get('marks'))
+        self._apply_validated_save(serializer, instance, request)
+        return Response(serializer.data)
+
+    def _reject_mass_clear(self, user, marks):
         # Mass-clear guard: one non-admin save may not wipe many subjects off
         # a row at once — legitimate entry only ever clears one subject per
         # save (delta protocol), so 4+ explicit deletions in a single PATCH
         # is sabotage or a broken client. Admins are exempt.
-        if not is_admin_or_superuser(request.user):
-            incoming = serializer.validated_data.get('marks') or {}
-            cleared = [k for k, v in incoming.items() if v is None]
-            if len(cleared) >= 4:
-                raise PermissionDenied(
-                    f'Clearing {len(cleared)} subjects at once needs an admin '
-                    f'({", ".join(sorted(cleared)[:4])}… ). Clear fewer subjects per save.'
-                )
+        from rest_framework.exceptions import PermissionDenied
+        if is_admin_or_superuser(user):
+            return
+        cleared = [k for k, v in (marks or {}).items() if v is None]
+        if len(cleared) >= 4:
+            raise PermissionDenied(
+                f'Clearing {len(cleared)} subjects at once needs an admin '
+                f'({", ".join(sorted(cleared)[:4])}… ). Clear fewer subjects per save.'
+            )
+
+    def _apply_validated_save(self, serializer, instance, request):
         # Atomic merge: one Result row holds EVERY subject's marks, and each
         # teacher's payload is built from their own page-load snapshot. A
         # plain replace here means the last teacher to save wipes subjects
@@ -168,7 +174,91 @@ class ResultViewSet(viewsets.ModelViewSet):
                            'student_name': getattr(instance.student, 'name', ''),
                            'term': instance.term, 'session': instance.session,
                            'marks_changed': changes})
-        return Response(serializer.data)
+
+    @action(detail=False, methods=['post'], url_path='bulk')
+    def bulk(self, request):
+        """Whole-grid save in ONE request (not N per-student round trips).
+
+        Body: {session, term, items: [{student, marks?, attendance?, comment?}]}.
+        The old per-student loop fired 60+ rapid requests per class save —
+        the pattern that trips edge firewalls into IP bans. Per-item guards
+        are identical to single saves (lock, mass-clear, max-marks); partial
+        success by design:
+        200 {saved: [studentIds], skipped: [studentIds], failed: [{student, error}]}.
+        """
+        from django.db import IntegrityError
+        from rest_framework.exceptions import PermissionDenied, ValidationError
+
+        session = request.data.get('session', '')
+        term = request.data.get('term')
+        items = request.data.get('items', [])
+        if term is None or not isinstance(items, list):
+            return Response({'error': 'term and items[] required'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        term = str(term)
+        saved, skipped, failed = [], [], []
+
+        def _err(e):
+            detail = getattr(e, 'detail', None) or str(e)
+            if isinstance(detail, dict):
+                first = next(iter(detail.values()), 'Invalid data.')
+                detail = first[0] if isinstance(first, list) else first
+            return str(detail)[:200]
+
+        for item in items:
+            sid = item.get('student') if isinstance(item, dict) else None
+            try:
+                if not sid:
+                    raise ValidationError('Missing student.')
+                student = Student.objects.filter(id=sid).first()
+                if not student:
+                    raise ValidationError('Student not found.')
+                data = {'student': str(student.id), 'session': session, 'term': term}
+                for key in ('marks', 'attendance', 'comment'):
+                    if isinstance(item, dict) and key in item:
+                        data[key] = item[key]
+                marks = data.get('marks') or {}
+                _reject_if_locked(request.user, student.school_class_id, session, term)
+                instance = Result.objects.filter(
+                    student=student, term=term, session=session).first()
+                serializer = self.get_serializer(
+                    instance, data=data, partial=bool(instance))
+                serializer.is_valid(raise_exception=True)
+                # Mass-clear guard BEFORE the empty-skip below: an all-null
+                # wipe must 403, not slip through as "nothing to do".
+                self._reject_mass_clear(request.user, serializer.validated_data.get('marks'))
+                has_data = (
+                    any(v is not None for v in marks.values())
+                    or data.get('attendance') is not None
+                    or (data.get('comment') or '') != ''
+                )
+                if not has_data:
+                    skipped.append(str(student.id))
+                    continue
+                if instance is None:
+                    try:
+                        with db_transaction.atomic():
+                            self.perform_create(serializer)
+                    except IntegrityError:
+                        # Lost a create race with another teacher — fall back
+                        # to merging onto the row that just appeared.
+                        instance = Result.objects.filter(
+                            student=student, term=term, session=session).first()
+                        if instance is None:
+                            raise
+                        serializer = self.get_serializer(
+                            instance, data=data, partial=True)
+                        serializer.is_valid(raise_exception=True)
+                        self._apply_validated_save(serializer, instance, request)
+                else:
+                    self._apply_validated_save(serializer, instance, request)
+                saved.append(str(student.id))
+            except (ValidationError, PermissionDenied) as e:
+                failed.append({'student': str(sid), 'error': _err(e)})
+            except Exception:
+                logger.exception('Bulk result save failed for student %s', sid)
+                failed.append({'student': str(sid), 'error': 'Unexpected error — retry.'})
+        return Response({'saved': saved, 'skipped': skipped, 'failed': failed})
 
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:

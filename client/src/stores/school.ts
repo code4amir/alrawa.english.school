@@ -67,6 +67,7 @@ interface SchoolState {
   deleteSubject: (id: string) => Promise<void>;
 
   saveStudentResult: (studentId: string, term: string, marks: Record<string, number | null>, attendance?: { days: number; present: number } | null, comment?: string, session?: string, existingRow?: any) => Promise<void>;
+  saveBulkResults: (term: string, items: { student: string; marks?: Record<string, number | null>; attendance?: { days: number; present: number } | null; comment?: string }[], session?: string) => Promise<{ saved: string[]; skipped: string[]; failed: { student: string; error: string }[] }>;
   studentResultsCache: Record<string, { data: Result[]; ts: number }>;
   getStudentResults: (studentId: string, session?: string) => Promise<Result[]>;
 
@@ -491,6 +492,28 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
       }
       return { studentResultsCache: next, _fetchedAt: fetchedAt };
     });
+  },
+  // Bulk grid save: ONE request for the whole class (POST /results/bulk/).
+  // The old per-student loop fired 60+ rapid requests per save — the pattern
+  // that trips edge firewalls into IP bans. Partial success by design: the
+  // server returns per-student failed[] and the caller names them.
+  saveBulkResults: async (term, items, session) => {
+    const res = await api.post('/results/bulk/', { term, session, items });
+    classResultsEpoch++;
+    set((s) => {
+      const next = { ...s.studentResultsCache };
+      for (const item of items) {
+        for (const key of Object.keys(next)) {
+          if (key.startsWith(item.student)) delete next[key];
+        }
+      }
+      const fetchedAt = { ...s._fetchedAt };
+      for (const key of Object.keys(fetchedAt)) {
+        if (key.startsWith('classResults')) fetchedAt[key] = 0;
+      }
+      return { studentResultsCache: next, _fetchedAt: fetchedAt };
+    });
+    return res.data;
   },
   getStudentResults: async (studentId: string, session?: string) => {
     const key = `${studentId}${session ? '-' + session : ''}`;

@@ -72,7 +72,7 @@ const Login = () => {
           const cred = await (navigator.credentials.create as any)({ password: { id: email, password, name: email.split('@')[0] } });
           if (cred) { await navigator.credentials.store(cred); }
         }
-      } catch {}
+      } catch { /* biometric store is best-effort */ }
       localStorage.setItem('bio_has_cred', '1');
       setHasCred(true);
       if (needsLinking) {
@@ -81,7 +81,12 @@ const Login = () => {
         navigate('/', { replace: true });
       }
     } catch (err: any) {
-      const msg = err.response?.data?.detail || err.response?.data?.error || 'Failed to login. Please try again.';
+      // No response at all = the request never reached the server (offline,
+      // timeout, firewall/IP block). Say that plainly instead of implying
+      // wrong credentials — that misdiagnosis cost a full debug cycle.
+      const msg = !err.response
+        ? "Can't reach the server — check your connection (or try VPN), then retry."
+        : err.response?.data?.detail || err.response?.data?.error || 'Failed to login. Please try again.';
       setError(msg);
     } finally {
       setLoading(false);
