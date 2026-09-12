@@ -50,7 +50,8 @@ class AttendanceViewSet(viewsets.GenericViewSet):
     filterset_fields = ['school_class', 'date', 'term', 'session']
 
     def get_permissions(self):
-        if self.action in ['list', 'student_month', 'summary', 'class_report']:
+        if self.action in ['list', 'student_month', 'summary', 'class_report',
+                           'class_daily_report', 'monthly_report', 'all_classes_daily']:
             return [require_permission('students:read')()]
         return [CanMarkAttendance()]
 
@@ -72,6 +73,16 @@ class AttendanceViewSet(viewsets.GenericViewSet):
                 {'error': 'class_id and date query params are required'},
                 status=400,
             )
+        # Parent role: verify linked student is in this class
+        if request.user.is_authenticated and request.user.role == 'parent':
+            parent_student_ids = set(
+                request.user.parent_links.values_list('student_id', flat=True)
+            )
+            has_linked_student = Student.objects.filter(
+                id__in=parent_student_ids, school_class_id=class_id
+            ).exists()
+            if not has_linked_student:
+                return Response({'error': 'Class not found'}, status=404)
         qs = self.get_queryset()
         serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
@@ -458,6 +469,17 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         if not class_id or not date_param:
             return Response({'error': 'class_id and date query params are required'}, status=400)
 
+        # Parent role: verify linked student is in this class
+        if request.user.is_authenticated and request.user.role == 'parent':
+            parent_student_ids = set(
+                request.user.parent_links.values_list('student_id', flat=True)
+            )
+            has_linked_student = Student.objects.filter(
+                id__in=parent_student_ids, school_class_id=class_id
+            ).exists()
+            if not has_linked_student:
+                return Response({'error': 'Class not found'}, status=404)
+
         try:
             school_class = SchoolClass.objects.get(id=class_id)
         except SchoolClass.DoesNotExist:
@@ -525,7 +547,20 @@ class AttendanceViewSet(viewsets.GenericViewSet):
 
         summaries = []
 
-        for klass in SchoolClass.objects.all().order_by('order', 'name'):
+        if request.user.is_authenticated and request.user.role == 'parent':
+            # Parent role: restrict to classes containing linked students
+            linked_class_ids = set(
+                Student.objects.filter(
+                    id__in=request.user.parent_links.values_list('student_id', flat=True),
+                ).values_list('school_class_id', flat=True)
+            )
+            class_qs = SchoolClass.objects.filter(
+                id__in=linked_class_ids
+            ).order_by('order', 'name')
+        else:
+            class_qs = SchoolClass.objects.all().order_by('order', 'name')
+
+        for klass in class_qs:
             roster_ids = Student.objects.filter(
                 school_class=klass, deleted_at__isnull=True,
             ).values_list('id', flat=True)
@@ -576,6 +611,17 @@ class AttendanceViewSet(viewsets.GenericViewSet):
 
         if not class_id:
             return Response({'error': 'class_id is required'}, status=400)
+
+        # Parent role: verify linked student is in this class
+        if request.user.is_authenticated and request.user.role == 'parent':
+            parent_student_ids = set(
+                request.user.parent_links.values_list('student_id', flat=True)
+            )
+            has_linked_student = Student.objects.filter(
+                id__in=parent_student_ids, school_class_id=class_id
+            ).exists()
+            if not has_linked_student:
+                return Response({'error': 'Class not found'}, status=404)
 
         try:
             school_class = SchoolClass.objects.get(id=class_id)

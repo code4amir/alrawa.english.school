@@ -20,14 +20,14 @@ class RoutineTemplateAdmin(admin.ModelAdmin):
                 class_id, 'routine_published',
                 'Weekly Class Plan Updated',
                 f'Tap to view the updated schedule and lesson topics for {cls.name}.',
-                url='/parent/routine',
+                url='/#/parent/routine',
             )
             self.message_user(request, f'Notification sent to parents of {cls.name}')
         else:
             notify_all_parents(
                 'Weekly Class Plan Updated',
                 'Tap to view the updated class schedule and lesson topics.',
-                url='/parent/routine',
+                url='/#/parent/routine',
                 event_type='routine_published',
             )
             self.message_user(request, 'Notification sent to all parents')

@@ -546,11 +546,15 @@ class LinkChildView(APIView):
         if ParentStudentLink.objects.filter(parent=request.user, student=student).exists():
             return Response({'error': 'Already linked'}, status=409)
 
-        siblings = Student.objects.filter(
-            contact=student.contact, deleted_at__isnull=True,
-        )
-        for sib in siblings:
-            ParentStudentLink.objects.get_or_create(parent=request.user, student=sib)
+        contact = (student.contact or '').strip()
+        if contact:
+            siblings = Student.objects.filter(
+                contact=student.contact, deleted_at__isnull=True,
+            )
+            for sib in siblings:
+                ParentStudentLink.objects.get_or_create(parent=request.user, student=sib)
+        else:
+            ParentStudentLink.objects.get_or_create(parent=request.user, student=student)
 
         return Response({
             'status': 'linked',

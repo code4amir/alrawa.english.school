@@ -381,7 +381,7 @@ class ResultViewSet(viewsets.ModelViewSet):
                             sid, 'result_published',
                             f'{label} results published — {session}',
                             'Tap to view your child\'s results.',
-                            url='/parent/results',
+                            url='/#/parent/results',
                         )
                     except Exception:
                         logger.exception('Failed to notify parent for student %s', sid)

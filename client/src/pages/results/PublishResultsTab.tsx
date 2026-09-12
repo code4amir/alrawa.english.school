@@ -25,7 +25,7 @@ export default function PublishResultsTab() {
     }).catch(() => {})
     .finally(() => setLoading(false));
 
-    api.get('/core/academic-years/').then((r) => {
+    api.get('/academic-years/').then((r) => {
       const yrs = (r.data.results || r.data || []).map((y: any) => y.name);
       setSessions(yrs);
       if (yrs.length > 0 && !session) setSession(yrs[0]);

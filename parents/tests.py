@@ -203,3 +203,121 @@ class ParentPaymentsTests(TestCase):
     def test_unauthenticated_gets_401(self):
         res = self.client.get(f'/api/parents/payments/{self.student.id}/')
         self.assertEqual(res.status_code, 401)
+
+
+class MultiGuardianConnectTests(TestCase):
+    """Regression: one connect link serves up to 3 distinct guardians."""
+
+    def setUp(self):
+        from django.utils import timezone
+        from datetime import timedelta
+        from parents.models import StudentConnectLink
+        self.client = APIClient()
+        self.klass = SchoolClass.objects.create(name='KG Multi')
+        self.student = Student.objects.create(
+            name='Child M', student_id='E000501', school_class=self.klass,
+            contact='01712345678',
+            father_name='Md. Karim Uddin', mother_name='Fatema Begum',
+        )
+        # Phone-format variant of the same family number.
+        self.sibling = Student.objects.create(
+            name='Sibling M', student_id='E000502', school_class=self.klass,
+            contact='+8801712345678',
+            father_name='MD Karim Uddin', mother_name='Fatema Begum',
+        )
+        self.guardians = []
+        for i in range(1, 5):
+            self.guardians.append(User.objects.create_user(
+                email=f'g{i}@test.com', name=f'G{i}', password='testpass123',
+                email_verified=True, role='parent',
+            ))
+        self.link = StudentConnectLink.objects.create(
+            student=self.student, token='multi-guardian-test-token-1',
+            expires_at=timezone.now() + timedelta(days=30),
+        )
+        self.facts = {
+            'fatherName': 'Karim Uddin',
+            'motherName': '',
+            'contact': '01712 345678',
+        }
+
+    def _auth(self, user):
+        refresh = RefreshToken.for_user(user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
+
+    def _claim(self, user, facts=None):
+        self._auth(user)
+        return self.client.post(
+            f'/api/parents/connect/{self.link.token}/', facts or self.facts,
+        )
+
+    def test_sibling_phone_variants_resolve(self):
+        from parents.connect import sibling_students, normalize_phone
+        self.assertEqual(normalize_phone('+8801712345678'), normalize_phone('01712 345678'))
+        sibs = sibling_students(self.student)
+        self.assertIsNotNone(sibs)
+        self.assertIn(self.sibling.id, set(sibs.values_list('id', flat=True)))
+
+    def test_second_guardian_claim_ok_and_reclaim_idempotent(self):
+        from parents.models import ConnectClaim, ParentStudentLink
+        r1 = self._claim(self.guardians[0])
+        self.assertEqual(r1.status_code, 201)
+        self.assertEqual(r1.data['status'], 'linked')
+        # Partially-claimed link still reports shareable.
+        self._auth(self.guardians[1])
+        g = self.client.get(f'/api/parents/connect/{self.link.token}/')
+        self.assertEqual(g.data['status'], 'unclaimed')
+        r2 = self._claim(self.guardians[1])
+        self.assertEqual(r2.status_code, 201)
+        self.assertEqual(ConnectClaim.objects.filter(link=self.link).count(), 2)
+        self.assertEqual(
+            ParentStudentLink.objects.filter(student=self.student).count(), 2,
+        )
+        # Same-user reclaim is idempotent, not a 409.
+        r_again = self._claim(self.guardians[0])
+        self.assertEqual(r_again.status_code, 200)
+        self.assertEqual(r_again.data['status'], 'already_linked')
+        self.assertEqual(ConnectClaim.objects.filter(link=self.link).count(), 2)
+
+    def test_fourth_guardian_blocked(self):
+        from parents.models import ConnectClaim
+        for g in self.guardians[:3]:
+            res = self._claim(g)
+            self.assertEqual(res.status_code, 201)
+        self.assertEqual(ConnectClaim.objects.filter(link=self.link).count(), 3)
+        blocked = self._claim(self.guardians[3])
+        self.assertEqual(blocked.status_code, 409)
+        self._auth(self.guardians[3])
+        g = self.client.get(f'/api/parents/connect/{self.link.token}/')
+        self.assertEqual(g.data['status'], 'claimed')
+        self.assertFalse(g.data['claimedByMe'])
+
+    def test_expired_link_rejected(self):
+        from django.utils import timezone
+        from datetime import timedelta
+        from parents.models import StudentConnectLink
+        expired = StudentConnectLink.objects.create(
+            student=self.student, token='expired-link-token-xyz',
+            expires_at=timezone.now() - timedelta(days=1),
+        )
+        self._auth(self.guardians[0])
+        res = self.client.post(
+            f'/api/parents/connect/{expired.token}/', self.facts,
+        )
+        self.assertEqual(res.status_code, 410)
+        get = self.client.get(f'/api/parents/connect/{expired.token}/')
+        self.assertFalse(get.data['valid'])
+        self.assertEqual(get.data['status'], 'expired')
+
+    def test_no_subscription_error_logged(self):
+        from parents.services import notify_parents_of_student
+        from parents.models import ParentStudentLink
+        ParentStudentLink.objects.create(parent=self.guardians[0], student=self.student)
+        n = notify_parents_of_student(
+            self.student.id, 'dues_reminder', 'Fee Dues Reminder', 'You have dues',
+        )
+        self.assertEqual(n, 1)
+        log = NotificationLog.objects.filter(
+            user=self.guardians[0], event_type='dues_reminder',
+        ).latest('sent_at')
+        self.assertEqual(log.error, 'no_subscription')

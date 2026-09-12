@@ -7,6 +7,7 @@ from django.contrib.auth.hashers import make_password
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 from students.models import Student
 from core.models import SchoolClass
+from parents.models import ParentStudentLink
 from teachers.models import Teacher, ClassTeacher
 from .models import AttendanceRecord, Holiday
 
@@ -802,4 +803,80 @@ class PinAdminMonitorFeatureTests(TestCase):
         names = {c['name'] for c in res.data['classes']}
         self.assertEqual(names, {'RR Class'})
         self.assertEqual(res.data['teacher']['role'], 'teacher')
+
+
+class ParentAttendanceScopeTests(TestCase):
+    """Parent role is restricted to classes containing linked students (else 404)."""
+
+    def setUp(self):
+        self.klass = SchoolClass.objects.create(name='Linked Class', order=1)
+        self.other_klass = SchoolClass.objects.create(name='Other Class', order=2)
+        self.s1 = Student.objects.create(
+            name='Alice', student_id='PS0001',
+            school_class=self.klass, session='2026',
+        )
+        self.s2 = Student.objects.create(
+            name='Bob', student_id='PS0002',
+            school_class=self.other_klass, session='2026',
+        )
+        self.parent = User.objects.create_user(
+            email='parent@test.com', password='testpass123',
+            name='Parent', role='parent',
+        )
+        ParentStudentLink.objects.create(parent=self.parent, student=self.s1)
+        self.client = APIClient()
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f'Bearer {RefreshToken.for_user(self.parent).access_token}'
+        )
+        today = timezone.now().date()
+        while today.weekday() in (4, 5):
+            today = today - timedelta(days=1)
+        self.today = today
+
+    def test_list_linked_class_ok(self):
+        res = self.client.get('/api/attendance/', {
+            'class_id': str(self.klass.id), 'date': self.today.isoformat(),
+        })
+        self.assertEqual(res.status_code, 200, msg=res.content[:300])
+
+    def test_list_unlinked_class_404(self):
+        res = self.client.get('/api/attendance/', {
+            'class_id': str(self.other_klass.id), 'date': self.today.isoformat(),
+        })
+        self.assertEqual(res.status_code, 404)
+
+    def test_class_daily_report_linked_ok(self):
+        res = self.client.get('/api/attendance/class-daily-report/', {
+            'class_id': str(self.klass.id), 'date': self.today.isoformat(),
+        })
+        self.assertEqual(res.status_code, 200, msg=res.content[:300])
+
+    def test_class_daily_report_unlinked_404(self):
+        res = self.client.get('/api/attendance/class-daily-report/', {
+            'class_id': str(self.other_klass.id), 'date': self.today.isoformat(),
+        })
+        self.assertEqual(res.status_code, 404)
+
+    def test_monthly_report_linked_ok(self):
+        res = self.client.get('/api/attendance/monthly-report/', {
+            'class_id': str(self.klass.id),
+            'year': str(self.today.year), 'month': str(self.today.month),
+        })
+        self.assertEqual(res.status_code, 200, msg=res.content[:300])
+
+    def test_monthly_report_unlinked_404(self):
+        res = self.client.get('/api/attendance/monthly-report/', {
+            'class_id': str(self.other_klass.id),
+            'year': str(self.today.year), 'month': str(self.today.month),
+        })
+        self.assertEqual(res.status_code, 404)
+
+    def test_all_classes_daily_only_linked(self):
+        res = self.client.get('/api/attendance/all-classes-daily/', {
+            'date': self.today.isoformat(),
+        })
+        self.assertEqual(res.status_code, 200, msg=res.content[:300])
+        class_ids = {c['class']['id'] for c in res.data['classes']}
+        self.assertIn(str(self.klass.id), class_ids)
+        self.assertNotIn(str(self.other_klass.id), class_ids)
 

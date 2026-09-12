@@ -21,6 +21,34 @@ from teachers.models import ClassTeacher
 
 CONNECT_LINK_TTL_DAYS = 90
 
+#: Max distinct guardians that may claim one connect link.
+MAX_CONNECT_CLAIMS = 3
+
+
+def link_claim_count(link):
+    """Distinct guardians that have claimed this link (legacy + claims)."""
+    from parents.models import ConnectClaim
+    count = ConnectClaim.objects.filter(link=link).count()
+    if link.claimed_by_id and not ConnectClaim.objects.filter(
+        link=link, user_id=link.claimed_by_id
+    ).exists():
+        count += 1
+    return count
+
+
+def user_has_claimed(link, user):
+    """Has this user already claimed this link?"""
+    from parents.models import ConnectClaim
+    if user is None or not getattr(user, 'is_authenticated', False):
+        return False
+    if link.claimed_by_id and str(link.claimed_by_id) == str(user.id):
+        return True
+    return ConnectClaim.objects.filter(link=link, user=user).exists()
+
+
+def link_is_fully_claimed(link):
+    return link_claim_count(link) >= MAX_CONNECT_CLAIMS
+
 
 def normalize_phone(value):
     if not value:
@@ -90,18 +118,40 @@ def id_facts_match(student, father_name='', mother_name='', contact=''):
 
 
 def sibling_students(student):
-    """Students sharing a family signal with this student (excluding it)."""
-    q = Q()
-    if (student.contact or '').strip():
-        q |= Q(contact=student.contact.strip())
-    if (student.father_name or '').strip():
-        q |= Q(father_name__iexact=student.father_name.strip())
-    if (student.mother_name or '').strip():
-        q |= Q(mother_name__iexact=student.mother_name.strip())
-    if not q:
-        return None
+    """Students sharing a family signal with this student (excluding it).
+
+    Tolerant matching — reuses the same normalizers as the ID-facts gate:
+    - contact: compared via normalize_phone so 01… / +8801… / spaced /
+      dashed variants resolve to the same family.
+    - father/mother: compared via _name_match so case, spaces,
+      punctuation and "Md."-style affixes do not split a family.
+    """
     from students.models import Student
-    return Student.objects.filter(q).exclude(id=student.id).exclude(deleted_at__isnull=False)
+    base_phone = normalize_phone(student.contact)
+    has_phone = bool(base_phone)
+    has_father = bool(normalize_name(student.father_name))
+    has_mother = bool(normalize_name(student.mother_name))
+    if not (has_phone or has_father or has_mother):
+        return None
+    candidates = (
+        Student.objects.exclude(id=student.id)
+        .exclude(deleted_at__isnull=False)
+        .filter(Q(contact__gt='') | Q(father_name__gt='') | Q(mother_name__gt=''))
+    )
+    match_ids = []
+    for cand in candidates.only('id', 'contact', 'father_name', 'mother_name'):
+        if has_phone and base_phone == normalize_phone(cand.contact):
+            match_ids.append(cand.id)
+            continue
+        if has_father and _name_match(student.father_name, cand.father_name):
+            match_ids.append(cand.id)
+            continue
+        if has_mother and _name_match(student.mother_name, cand.mother_name):
+            match_ids.append(cand.id)
+            continue
+    if not match_ids:
+        return Student.objects.none()
+    return Student.objects.filter(id__in=match_ids)
 
 
 def family_parent_exists(student):
@@ -113,13 +163,26 @@ def family_parent_exists(student):
 
 
 def current_active_link(student):
-    """The student's currently-shareable link, or None."""
-    return StudentConnectLink.objects.filter(
-        student=student,
-        revoked_at__isnull=True,
-        claimed_at__isnull=True,
-        expires_at__gt=timezone.now(),
-    ).order_by('-created_at').first()
+    """The student's currently-shareable link, or None.
+
+    Multi-guardian: a link stays shareable until revoked/expired or fully
+    claimed (MAX_CONNECT_CLAIMS distinct guardians). Partially-claimed
+    links (1-2 claims) are still active so the 2nd/3rd guardian can use
+    the same WhatsApp-shared link.
+    """
+    now = timezone.now()
+    candidates = (
+        StudentConnectLink.objects.filter(
+            student=student,
+            revoked_at__isnull=True,
+            expires_at__gt=now,
+        )
+        .order_by('-created_at')
+    )
+    for link in candidates:
+        if link_claim_count(link) < MAX_CONNECT_CLAIMS:
+            return link
+    return None
 
 
 def issue_link(student, user):

@@ -49,8 +49,22 @@ def notify(user, title, body, url=None, icon=None):
     return sent
 
 
+def _delivery_error(user, sent):
+    """Map a push outcome to the NotificationLog error string.
+
+    - None only when at least one push was actually delivered.
+    - 'no_subscription' when the user has zero push subscriptions.
+    - 'push_failed' when subs exist but nothing was delivered.
+    """
+    if sent and sent > 0:
+        return None
+    if PushSubscription.objects.filter(user=user).exists():
+        return 'push_failed'
+    return 'no_subscription'
+
+
 def count_linked_parents(student_id):
-    """Number of parent accounts linked to a student (no side effects).
+    """Number of parent accounts linked to a student (no side effects)."
 
     Used by the dues-reminder dry-run to report how many parents *would*
     be notified, without sending anything.
@@ -76,6 +90,8 @@ def notify_parents_of_student(student_id, event_type, title, body, url=None):
         err = None
         try:
             sent = notify(parent, title, body, url)
+            if err is None:
+                err = _delivery_error(parent, sent)
         except Exception as e:
             err = str(e)
             logger.exception('Error notifying %s: %s', parent.email, e)
@@ -105,6 +121,8 @@ def notify_parents_of_class(class_id, event_type, title, body, url=None):
         err = None
         try:
             sent = notify(parent, title, body, url)
+            if err is None:
+                err = _delivery_error(parent, sent)
         except Exception as e:
             err = str(e)
             logger.exception('Error notifying %s: %s', parent.email, e)
@@ -131,6 +149,8 @@ def notify_all_parents(title, body, url=None, event_type='announcement'):
         err = None
         try:
             sent = notify(parent, title, body, url)
+            if err is None:
+                err = _delivery_error(parent, sent)
         except Exception as e:
             err = str(e)
             logger.exception('Error notifying %s: %s', parent.email, e)

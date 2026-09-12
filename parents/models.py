@@ -87,6 +87,42 @@ class StudentConnectLink(models.Model):
         return f"connect link for {self.student_id} ({self.token[:8]}…)"
 
 
+class ConnectClaim(models.Model):
+    """One guardian's claim of a connect link (multi-guardian support).
+
+    A link stays claimable until revoked/expired or MAX_CONNECT_CLAIMS
+    distinct guardians have claimed it. Same (link, user) pair is unique —
+    reclaiming by the same guardian is idempotent (already_linked).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    link = models.ForeignKey(
+        StudentConnectLink, on_delete=models.CASCADE, related_name='claims',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='connect_claims',
+    )
+    claimed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['link', 'user'],
+                name='unique_connect_claim',
+            ),
+        ]
+        verbose_name = 'connect claim'
+        verbose_name_plural = 'connect claims'
+        indexes = [
+            models.Index(fields=['link']),
+            models.Index(fields=['user']),
+        ]
+
+    def __str__(self):
+        return f"claim {str(self.link_id)[:8]} by {self.user_id}"
+
+
 class PushSubscription(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
@@ -114,10 +150,12 @@ class NotificationLog(models.Model):
     EVENT_TYPES = [
         ('attendance_marked', 'Attendance Marked'),
         ('fee_received', 'Fee Received'),
+        ('fee_reversal', 'Fee Reversal'),
         ('result_published', 'Result Published'),
         ('announcement', 'Announcement'),
         ('dues_reminder', 'Dues Reminder'),
         ('agent_digest', 'Agent Digest'),
+        ('routine_published', 'Routine Published'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

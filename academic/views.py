@@ -2,7 +2,8 @@ from datetime import date, timedelta
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, BasePermission, SAFE_METHODS
+from rest_framework.exceptions import PermissionDenied
 
 from accounts.permissions import (
     require_permission, is_admin_or_superuser,
@@ -27,6 +28,29 @@ def get_teacher_assigned_class_ids(teacher):
     subject_classes = TeacherSubject.objects.filter(teacher=teacher).values_list('school_class_id', flat=True)
     ct_classes = ClassTeacher.objects.filter(teacher=teacher).values_list('school_class_id', flat=True)
     return set(list(subject_classes) + list(ct_classes))
+
+
+class IsTeacherOrAdminForWrite(BasePermission):
+    """Allow reads for any authenticated user; writes need a teacher profile or admin."""
+
+    def has_permission(self, request, view):
+        if request.method in SAFE_METHODS:
+            return True
+        return is_admin_or_superuser(request.user) or get_teacher_profile(request.user) is not None
+
+
+def _write_teacher_or_403(user):
+    """Return the teacher profile that must own the write, or None for admin.
+
+    Raises PermissionDenied (403) for anyone without a teacher profile who
+    is not an admin.
+    """
+    if is_admin_or_superuser(user):
+        return None
+    teacher = get_teacher_profile(user)
+    if teacher is None:
+        raise PermissionDenied('Teacher profile required')
+    return teacher
 
 
 # ─── Period Settings ────────────────────────────────────────────────
@@ -81,7 +105,7 @@ class AdminRoutineTemplateViewSet(viewsets.ModelViewSet):
                     class_id, 'routine_published',
                     'Weekly Class Plan Updated',
                     f'Tap to view the updated schedule and lesson topics for {cls.name}.',
-                    url='/parent/routine',
+                    url='/#/parent/routine',
                 )
                 return Response({'notified': f'Parents of {cls.name}'})
             except SchoolClass.DoesNotExist:
@@ -89,7 +113,7 @@ class AdminRoutineTemplateViewSet(viewsets.ModelViewSet):
         notify_all_parents(
             'Weekly Class Plan Updated',
             'Tap to view the updated class schedule and lesson topics.',
-            url='/parent/routine',
+            url='/#/parent/routine',
             event_type='routine_published',
         )
         return Response({'notified': 'All parents'})
@@ -186,7 +210,7 @@ class TeacherRoutineViewSet(viewsets.GenericViewSet):
 
 class TeacherHomeworkViewSet(viewsets.ModelViewSet):
     serializer_class = HomeworkSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsTeacherOrAdminForWrite]
 
     def get_queryset(self):
         teacher = get_teacher_profile(self.request.user)
@@ -209,8 +233,8 @@ class TeacherHomeworkViewSet(viewsets.ModelViewSet):
         return qs.select_related('school_class', 'subject', 'teacher').order_by('-date', '-created_at')
 
     def perform_create(self, serializer):
-        teacher = get_teacher_profile(self.request.user)
-        if teacher:
+        teacher = _write_teacher_or_403(self.request.user)
+        if teacher is not None:
             obj = serializer.save(teacher=teacher)
         else:
             obj = serializer.save()
@@ -219,24 +243,32 @@ class TeacherHomeworkViewSet(viewsets.ModelViewSet):
                 obj.school_class_id, 'homework_published',
                 f'New homework: {obj.subject.name}',
                 f'{obj.topic} — Due: {obj.due_date}',
-                url='/parent/homework',
+                url='/#/parent/homework',
             )
 
     def perform_update(self, serializer):
+        teacher = _write_teacher_or_403(self.request.user)
         was_published = serializer.instance.published if serializer.instance else False
-        obj = serializer.save()
+        if teacher is not None:
+            obj = serializer.save(teacher=teacher)
+        else:
+            obj = serializer.save()
         if obj.published and not was_published:
             notify_parents_of_class(
                 obj.school_class_id, 'homework_published',
                 f'New homework: {obj.subject.name}',
                 f'{obj.topic} — Due: {obj.due_date}',
-                url='/parent/homework',
+                url='/#/parent/homework',
             )
+
+    def perform_destroy(self, instance):
+        _write_teacher_or_403(self.request.user)
+        instance.delete()
 
 
 class TeacherDiaryViewSet(viewsets.ModelViewSet):
     serializer_class = DiarySerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsTeacherOrAdminForWrite]
 
     def get_queryset(self):
         teacher = get_teacher_profile(self.request.user)
@@ -256,8 +288,8 @@ class TeacherDiaryViewSet(viewsets.ModelViewSet):
         return qs.select_related('school_class', 'subject', 'teacher').order_by('-date', '-created_at')
 
     def perform_create(self, serializer):
-        teacher = get_teacher_profile(self.request.user)
-        if teacher:
+        teacher = _write_teacher_or_403(self.request.user)
+        if teacher is not None:
             obj = serializer.save(teacher=teacher)
         else:
             obj = serializer.save()
@@ -265,8 +297,19 @@ class TeacherDiaryViewSet(viewsets.ModelViewSet):
             obj.school_class_id, 'diary_created',
             f'Diary entry: {obj.subject.name}',
             f'{obj.topic}',
-            url='/parent/diary',
+            url='/#/parent/diary',
         )
+
+    def perform_update(self, serializer):
+        teacher = _write_teacher_or_403(self.request.user)
+        if teacher is not None:
+            serializer.save(teacher=teacher)
+        else:
+            serializer.save()
+
+    def perform_destroy(self, instance):
+        _write_teacher_or_403(self.request.user)
+        instance.delete()
 
 
 @api_view(['GET'])

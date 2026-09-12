@@ -5,6 +5,7 @@ import os
 from datetime import date
 from decimal import Decimal
 from django.db.models import Sum, Count, Q
+from django.db import transaction
 from django.utils import timezone
 from django.conf import settings
 from rest_framework import permissions, status
@@ -21,6 +22,7 @@ from core.audit import log_audit
 from .connect import (
     current_active_link, issue_link, can_manage_connect,
     id_facts_match, sibling_students, family_parent_exists,
+    link_claim_count, user_has_claimed, link_is_fully_claimed,
 )
 from .serializers import (
     ParentStudentSerializer, ParentAttendanceSerializer,
@@ -494,13 +496,46 @@ class StudentConnectView(APIView):
         ).filter(token=token).first()
 
     def _link_student(self, link, student, user, now, action='connect_claim'):
-        ParentStudentLink.objects.get_or_create(parent=user, student=student)
-        link.claimed_by = user
-        link.claimed_at = now
-        link.save(update_fields=['claimed_by', 'claimed_at'])
+        """Atomically claim a connect link for one guardian (multi-guardian).
+
+        - Runs in transaction.atomic with select_for_update on the link row
+          so concurrent claims serialize.
+        - Re-checks claimed state inside the lock: same-user reclaim →
+          'already_linked' (idempotent); 3 distinct guardians already →
+          'fully_claimed'.
+        - Otherwise creates a ConnectClaim row + ParentStudentLink, keeps the
+          legacy claimed_by/claimed_at fields for the first claimer (audit /
+          admin display), and returns 'linked'.
+        """
+        from .models import ConnectClaim
+        with transaction.atomic():
+            locked = StudentConnectLink.objects.select_for_update().get(pk=link.pk)
+            if locked.revoked_at:
+                return 'revoked'
+            if locked.expires_at <= timezone.now():
+                return 'expired'
+            if user_has_claimed(locked, user):
+                ParentStudentLink.objects.get_or_create(parent=user, student=student)
+                return 'already_linked'
+            if link_is_fully_claimed(locked):
+                return 'fully_claimed'
+            ParentStudentLink.objects.get_or_create(parent=user, student=student)
+            ConnectClaim.objects.get_or_create(link=locked, user=user)
+            updates = []
+            if locked.claimed_by_id is None:
+                locked.claimed_by = user
+                updates.append('claimed_by')
+            if locked.claimed_at is None:
+                locked.claimed_at = now
+                updates.append('claimed_at')
+            if updates:
+                locked.save(update_fields=updates)
+            link.claimed_by = locked.claimed_by
+            link.claimed_at = locked.claimed_at
         log_audit(action, 'student', entity_id=str(student.id),
                   details={'token': link.token[:8], 'parent': user.email},
                   request=self.request)
+        return 'linked'
 
     def _authorize_user(self, user, student, request):
         """Can this guardian claim this student? (sibling overlap or ID facts)"""
@@ -531,13 +566,13 @@ class StudentConnectView(APIView):
             return Response({'valid': False, 'status': 'expired'})
         student = link.student
 
-        if link.claimed_at and link.claimed_by_id:
+        if link_is_fully_claimed(link):
             return Response({
                 'valid': True,
                 'status': 'claimed',
-                'claimedByMe': (
+                'claimedByMe': bool(
                     request.user.is_authenticated
-                    and str(request.user.id) == str(link.claimed_by_id)
+                    and user_has_claimed(link, request.user)
                 ),
                 'studentName': student.name,
                 'className': student.school_class.name if student.school_class else '',
@@ -575,11 +610,11 @@ class StudentConnectView(APIView):
         student = link.student
         now = timezone.now()
 
-        if link.claimed_at and link.claimed_by_id:
-            if request.user.is_authenticated and str(request.user.id) == str(link.claimed_by_id):
+        if link_is_fully_claimed(link):
+            if request.user.is_authenticated and user_has_claimed(link, request.user):
                 return Response({'status': 'already_linked', 'studentName': student.name})
             return Response(
-                {'error': 'This student is already connected to another guardian account.'},
+                {'error': 'This link has already been claimed by 3 guardians. Ask the school to regenerate a new link.'},
                 status=409,
             )
 
@@ -597,7 +632,16 @@ class StudentConnectView(APIView):
                 return Response(
                     {'error': 'The ID card details did not match this student.'}, status=409,
                 )
-            self._link_student(link, student, user, now)
+            outcome = self._link_student(link, student, user, now)
+            if outcome == 'already_linked':
+                return Response({'status': 'already_linked', 'studentName': student.name})
+            if outcome == 'fully_claimed':
+                return Response(
+                    {'error': 'This link has already been claimed by 3 guardians. Ask the school to regenerate a new link.'},
+                    status=409,
+                )
+            if outcome in ('revoked', 'expired'):
+                return Response({'error': 'This link is no longer valid.'}, status=410)
             return Response({'status': 'linked', 'studentName': student.name}, status=201)
 
         # ---- anonymous ----
@@ -630,7 +674,16 @@ class StudentConnectView(APIView):
             return Response(
                 {'error': 'The ID card details did not match this student.'}, status=409,
             )
-        self._link_student(link, student, user, now)
+        outcome = self._link_student(link, student, user, now)
+        if outcome == 'already_linked':
+            return Response({'status': 'already_linked', 'studentName': student.name, 'loggedIn': True})
+        if outcome == 'fully_claimed':
+            return Response(
+                {'error': 'This link has already been claimed by 3 guardians. Ask the school to regenerate a new link.'},
+                status=409,
+            )
+        if outcome in ('revoked', 'expired'):
+            return Response({'error': 'This link is no longer valid.'}, status=410)
         response = Response({'status': 'linked', 'studentName': student.name, 'loggedIn': True}, status=201)
         return _set_auth_cookies(response, user)
 
@@ -666,13 +719,26 @@ class StudentConnectView(APIView):
                 {'error': 'The ID card details did not match this student. Check the details printed on the ID card.'},
                 status=409,
             )
+        if link_is_fully_claimed(link):
+            return Response(
+                {'error': 'This link has already been claimed by 3 guardians. Ask the school to regenerate a new link.'},
+                status=409,
+            )
         user = User.objects.create_user(
             email=email, password=password, name=name,
             role='parent', email_verified=True,
         )
         try:
-            ParentStudentLink.objects.create(parent=user, student=student)
-            self._link_student(link, student, user, now, action='connect_create')
+            outcome = self._link_student(link, student, user, now, action='connect_create')
+            if outcome == 'fully_claimed':
+                user.delete()
+                return Response(
+                    {'error': 'This link has already been claimed by 3 guardians. Ask the school to regenerate a new link.'},
+                    status=409,
+                )
+            if outcome in ('revoked', 'expired'):
+                user.delete()
+                return Response({'error': 'This link is no longer valid.'}, status=410)
         except Exception:
             user.delete()
             raise
@@ -723,7 +789,7 @@ class StudentConnectLinkAdminView(APIView):
         # (a revoked/consumed link stays dead until the staff explicitly re-issues one).
         last = StudentConnectLink.objects.filter(student=student).order_by('-created_at').first()
         if last is not None:
-            if last.claimed_at and last.claimed_by_id:
+            if link_claim_count(last) > 0:
                 return Response({
                     'status': 'claimed',
                     'claimedBy': last.claimed_by.email if last.claimed_by else '',
