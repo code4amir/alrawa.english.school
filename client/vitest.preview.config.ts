@@ -7,7 +7,7 @@ import path from 'path';
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['tests/pdf-preview.test.ts'],
+    include: ['tests/pdf-preview.test.ts', 'tests/agm-pdf-preview.test.ts'],
     testTimeout: 60000,
     setupFiles: ['tests/shims.setup.ts'],
   },

@@ -6,6 +6,7 @@ import { Calendar, BarChart3, Scale, Users, Loader } from 'lucide-react';
 import { toast } from '../components/Toast';
 import ExportMenu from '../components/ExportMenu';
 import { getMonthName, fmt, headwise, pdfIncomeReport, pdfExpenseReport, pdfAudit, pdfYearlyAGM } from '../lib/financeReportPdf';
+import { aggregateMonthly, monthlyBarChartSvg, expensePieSvg, svgToPngDataUrl } from '../lib/agmCharts';
 import { FISCAL_YEAR_START_MONTH, FISCAL_START_LABEL, FISCAL_END_LABEL } from '../lib/config';
 import { ACCOUNT_IDS, PRIMARY_BANK, SECONDARY_BANK } from '../lib/accounts';
 
@@ -81,12 +82,28 @@ const FinanceReports = () => {
 
   const [agmData, setAgmData] = useState<any>(null);
   const [agmLoading, setAgmLoading] = useState(false);
+  const [monthlyData, setMonthlyData] = useState<any>(null);
+  const [prevAgm, setPrevAgm] = useState<any>(null);
+  const [duesOutstanding, setDuesOutstanding] = useState<number | null>(null);
 
   useEffect(() => {
     if (tab === 'yearly-agm') {
       setAgmLoading(true);
-      api.get('/finance/reports/agm', { params: { year: yearFilter } })
-        .then(res => setAgmData(res.data))
+      const y = Number(yearFilter);
+      Promise.all([
+        api.get('/finance/reports/agm', { params: { year: yearFilter } }),
+        api.get('/finance/reports/monthly', { params: { year: yearFilter } }).catch(() => null),
+        api.get('/finance/reports/agm', { params: { year: String(y - 1) } }).catch(() => null),
+        // Full-FY dues: Sep(y-1) → Aug(y) so monthly fees count all 12 months.
+        api.get('/finance/defaulter/', { params: { monthFrom: `${y - 1}-09`, monthTo: `${y}-08`, limit: '1' } }).catch(() => null),
+      ])
+        .then(([agm, monthly, prev, dues]) => {
+          setAgmData(agm.data);
+          setMonthlyData(monthly?.data || null);
+          setPrevAgm(prev?.data || null);
+          const bal = dues?.data?.grandTotalBalance;
+          setDuesOutstanding(bal === undefined || bal === null ? null : Number(bal));
+        })
         .catch(() => { setAgmData(null); toast('Failed to load AGM report from server', 'error'); })
         .finally(() => setAgmLoading(false));
     }
@@ -187,7 +204,7 @@ const FinanceReports = () => {
     } catch { toast('Excel export failed', 'error'); }
   };
 
-  const handlePdf = () => {
+  const handlePdf = async () => {
     try {
       if (tab === 'income-report') {
         const hw = headwise(incomeTx);
@@ -218,8 +235,26 @@ const FinanceReports = () => {
         pdfAudit({ totalIncome: ti, totalExpense: te, netSurplus: ti - te, incomeByCategory: incHw, expenseByCategory: expHw }, yearFilter);
       }
       else if (tab === 'yearly-agm' && agmData) {
-        const { income, expense, totalIncome, totalExpense, netSurplus, opening, closing, totalAssets, totalTransfers, transactionCount } = agmData;
-        pdfYearlyAGM(income, expense, totalIncome, totalExpense, netSurplus, opening, closing, totalAssets, totalTransfers, transactionCount, yearFilter);
+        const { income, expense, totalIncome, totalExpense, netSurplus, opening, closing, totalAssets, totalTransfers, transactionCount, transferCount } = agmData;
+        const mi = aggregateMonthly(monthlyData?.income || []);
+        const me = aggregateMonthly(monthlyData?.expense || []);
+        const barSvg = monthlyBarChartSvg(mi.map(m => m.total), me.map(m => m.total), mi.map(m => m.label));
+        const pieSvg = expensePieSvg((expense || []).map(([c, a]: [string, number]) => [c, Number(a)]));
+        let barPng: string | null = null;
+        let piePng: string | null = null;
+        try {
+          [barPng, piePng] = await Promise.all([
+            monthlyData ? svgToPngDataUrl(barSvg, 640, 300) : Promise.resolve(null),
+            (expense || []).length > 0 ? svgToPngDataUrl(pieSvg, 640, 240) : Promise.resolve(null),
+          ]);
+        } catch { /* charts stay out of the PDF, tables still print */ }
+        await pdfYearlyAGM({
+          yearFilter, income, expense, totalIncome, totalExpense, netSurplus,
+          opening, closing, totalAssets, totalTransfers, transactionCount, transferCount,
+          monthlyIncome: mi.map(m => ({ label: m.label, total: m.total })),
+          monthlyExpense: me.map(m => ({ label: m.label, total: m.total })),
+          barPng, piePng, prev: prevAgm, duesOutstanding,
+        });
       }
       toast('PDF downloaded ✓', 'success');
     } catch { toast('PDF generation failed', 'error'); }
@@ -392,24 +427,91 @@ const FinanceReports = () => {
             const { totalIncome, totalExpense, netSurplus, opening, closing, totalAssets, totalTransfers, transactionCount } = agmData;
             const fyLabel = `${Number(yearFilter)-1}-${yearFilter}`;
             const openTotal = ACCOUNT_IDS.reduce((s, id) => s + (opening[id] || 0), 0);
+            // Monthly series (FY Sep→Aug) for the table + chart; absent when the endpoint fails.
+            const mi = aggregateMonthly(monthlyData?.income || []);
+            const me = aggregateMonthly(monthlyData?.expense || []);
+            const monthLabels = mi.map(m => m.label);
+            const barSvg = monthlyBarChartSvg(mi.map(m => m.total), me.map(m => m.total), monthLabels);
+            const pieSvg = expensePieSvg((agmData.expense || []).map(([c, a]: [string, number]) => [c, Number(a)]));
+            const prevRows = prevAgm ? [
+              { label: 'Total Income', cur: totalIncome, prev: prevAgm.totalIncome },
+              { label: 'Total Expenditure', cur: totalExpense, prev: prevAgm.totalExpense },
+              { label: 'Annual Surplus', cur: netSurplus, prev: prevAgm.netSurplus },
+            ] : [];
             return (
             <div className="space-y-6">
               <h4 className="font-serif text-lg text-school-primary">Annual General Meeting Report — FY {fyLabel}</h4>
               <p className="text-xs text-school-muted">Financial Year {fyLabel} ({FISCAL_START_LABEL} {Number(yearFilter)-1} – {FISCAL_END_LABEL} {yearFilter})</p>
+
+              {/* Key figures */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  { label: 'Total Income', value: totalIncome, cls: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
+                  { label: 'Total Expenditure', value: totalExpense, cls: 'bg-rose-50 border-rose-200 text-rose-700' },
+                  { label: netSurplus >= 0 ? 'Surplus' : 'Deficit', value: Math.abs(netSurplus), cls: 'bg-blue-50 border-blue-200 text-blue-700' },
+                  { label: 'Closing Assets', value: totalAssets, cls: 'bg-amber-50 border-amber-200 text-amber-700' },
+                ].map(k => (
+                  <div key={k.label} className={`${k.cls} border rounded-xl p-3 text-center`}>
+                    <div className="text-[10px] uppercase font-bold opacity-70">{k.label}</div>
+                    <div className="font-bold text-sm">{fmt(k.value)} /-</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Monthly income vs expenditure */}
+              <div>
+                <h5 className="font-bold text-sm uppercase text-school-primary mb-3 border-b border-school-border pb-1">Monthly Income & Expenditure</h5>
+                {monthlyData ? (
+                  <>
+                    <div className="overflow-x-auto mb-3" dangerouslySetInnerHTML={{ __html: barSvg }} />
+                    <table className="w-full text-sm">
+                      <thead><tr className="bg-school-primary text-white text-[10px] uppercase"><th className="px-3 py-2 text-left">Month</th><th className="px-3 py-2 text-right">Income</th><th className="px-3 py-2 text-right">Expenditure</th><th className="px-3 py-2 text-right">Net</th></tr></thead>
+                      <tbody>
+                        {mi.map((m, i) => {
+                          const net = m.total - me[i].total;
+                          return (
+                            <tr key={m.month} className="border-t border-school-border/50">
+                              <td className="px-3 py-1.5">{m.label}</td>
+                              <td className="px-3 py-1.5 text-right text-emerald-700">{fmt(m.total)} /-</td>
+                              <td className="px-3 py-1.5 text-right text-rose-700">{fmt(me[i].total)} /-</td>
+                              <td className={`px-3 py-1.5 text-right font-bold ${net >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmt(net)} /-</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </>
+                ) : (
+                  <p className="text-xs text-school-muted">Monthly breakdown unavailable.</p>
+                )}
+              </div>
 
               {/* 1. Income & Expenditure */}
               <div>
                 <h5 className="font-bold text-sm uppercase text-school-primary mb-3 border-b border-school-border pb-1">1. Income & Expenditure Statement</h5>
                 <div className="space-y-1">
                   <div className="text-xs font-bold text-emerald-700 uppercase mb-1">Income</div>
-                  {agmData.income.map(([cat, amt]: [string, number]) => <div key={cat} className="flex justify-between py-1 border-b border-school-border/50 text-sm"><span>{cat}</span><span className="font-bold">{fmt(amt)} /-</span></div>)}
+                  {agmData.income.map(([cat, amt]: [string, number]) => (
+                    <div key={cat} className="py-1 border-b border-school-border/50 text-sm">
+                      <div className="flex justify-between"><span>{cat}</span><span className="font-bold">{fmt(amt)} /- ({totalIncome > 0 ? ((Number(amt) / totalIncome) * 100).toFixed(1) : '0.0'}%)</span></div>
+                      <div className="h-1 bg-gray-100 rounded mt-1"><div className="h-1 bg-emerald-500 rounded" style={{ width: `${totalIncome > 0 ? (Number(amt) / totalIncome) * 100 : 0}%` }} /></div>
+                    </div>
+                  ))}
                   <div className="flex justify-between py-2 border-b-2 border-school-primary font-bold text-sm bg-school-paper rounded px-2"><span>Total Income</span><span className="text-emerald-600">{fmt(totalIncome)} /-</span></div>
                 </div>
                 <div className="space-y-1 mt-3">
                   <div className="text-xs font-bold text-rose-700 uppercase mb-1">Expenditure</div>
-                  {agmData.expense.map(([cat, amt]: [string, number]) => <div key={cat} className="flex justify-between py-1 border-b border-school-border/50 text-sm"><span>{cat}</span><span className="font-bold">{fmt(amt)} /-</span></div>)}
+                  {agmData.expense.map(([cat, amt]: [string, number]) => (
+                    <div key={cat} className="py-1 border-b border-school-border/50 text-sm">
+                      <div className="flex justify-between"><span>{cat}</span><span className="font-bold">{fmt(amt)} /- ({totalExpense > 0 ? ((Number(amt) / totalExpense) * 100).toFixed(1) : '0.0'}%)</span></div>
+                      <div className="h-1 bg-gray-100 rounded mt-1"><div className="h-1 bg-rose-500 rounded" style={{ width: `${totalExpense > 0 ? (Number(amt) / totalExpense) * 100 : 0}%` }} /></div>
+                    </div>
+                  ))}
                   <div className="flex justify-between py-2 border-b-2 border-school-primary font-bold text-sm bg-school-paper rounded px-2"><span>Total Expenditure</span><span className="text-rose-600">{fmt(totalExpense)} /-</span></div>
                 </div>
+                {(agmData.expense || []).length > 0 && (
+                  <div className="mt-3 overflow-x-auto" dangerouslySetInnerHTML={{ __html: pieSvg }} />
+                )}
                 <div className="flex justify-between py-3 mt-2 bg-school-primary text-white rounded-xl px-4 font-bold"><span>Annual {netSurplus >= 0 ? 'Surplus' : 'Deficit'}</span><span>{fmt(Math.abs(netSurplus))} /-</span></div>
               </div>
 
@@ -454,13 +556,38 @@ const FinanceReports = () => {
                 <p className="text-xs text-school-muted mt-1">Internal transfers between bank accounts and Cash in Hand do not affect income/expense.</p>
               </div>
 
-              {/* 5. Recommendations */}
+              {/* 5. Year-on-year comparison */}
+              {prevRows.length > 0 && (
+                <div>
+                  <h5 className="font-bold text-sm uppercase text-school-primary mb-2 border-b border-school-border pb-1">5. Comparison With Previous Year</h5>
+                  <table className="w-full text-sm">
+                    <thead><tr className="bg-school-primary text-white text-[10px] uppercase"><th className="px-3 py-2 text-left">Head</th><th className="px-3 py-2 text-right">FY {Number(yearFilter)-2}-{Number(yearFilter)-1}</th><th className="px-3 py-2 text-right">FY {fyLabel}</th><th className="px-3 py-2 text-right">Change</th></tr></thead>
+                    <tbody>
+                      {prevRows.map(r => {
+                        const diff = Number(r.cur) - Number(r.prev);
+                        const pct = Number(r.prev) !== 0 ? ` (${((diff / Number(r.prev)) * 100).toFixed(1)}%)` : '';
+                        return (
+                          <tr key={r.label} className="border-t border-school-border/50">
+                            <td className="px-3 py-2">{r.label}</td>
+                            <td className="px-3 py-2 text-right">{fmt(r.prev)} /-</td>
+                            <td className="px-3 py-2 text-right font-bold">{fmt(r.cur)} /-</td>
+                            <td className={`px-3 py-2 text-right font-bold ${diff >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{diff >= 0 ? '+' : ''}{fmt(diff)}{pct} /-</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* 6. Recommendations */}
               <div>
-                <h5 className="font-bold text-sm uppercase text-school-primary mb-2 border-b border-school-border pb-1">5. Recommendations</h5>
+                <h5 className="font-bold text-sm uppercase text-school-primary mb-2 border-b border-school-border pb-1">6. Notes & Recommendations</h5>
                 <ol className="list-decimal list-inside space-y-1 text-sm text-gray-600">
                   <li>Net surplus of {fmt(netSurplus)} /- for FY {fyLabel}.</li>
                   {totalIncome > 0 && <li>Expense-to-income ratio: {((totalExpense / totalIncome) * 100).toFixed(1)}%.</li>}
                   <li>Total assets stand at {fmt(totalAssets)} /- across 3 accounts.</li>
+                  {duesOutstanding !== null && <li>Fee dues outstanding for the year: {fmt(duesOutstanding)} /-.</li>}
                   <li>{transactionCount} total transactions recorded during the year.</li>
                   <li>All financial records are available for detailed audit.</li>
                 </ol>

@@ -310,18 +310,53 @@ export function pdfAudit(data: { totalIncome: number; totalExpense: number; netS
   doc.save(`Audit_Report_${yearFilter}.pdf`);
 }
 
-export function pdfYearlyAGM(
-  income: any[], expense: any[],
-  totalIncome: number, totalExpense: number, netSurplus: number,
-  opening: Record<string, number>,
-  closing: Record<string, number>,
-  totalAssets: number, totalTransfers: number, transactionCount: number,
-  yearFilter: string,
-) {
+export interface AgmPdfData {
+  yearFilter: string;
+  income: [string, number][];
+  expense: [string, number][];
+  totalIncome: number;
+  totalExpense: number;
+  netSurplus: number;
+  opening: Record<string, number>;
+  closing: Record<string, number>;
+  totalAssets: number;
+  totalTransfers: number;
+  transactionCount: number;
+  transferCount?: number;
+  monthlyIncome: { label: string; total: number }[];
+  monthlyExpense: { label: string; total: number }[];
+  barPng: string | null;
+  piePng: string | null;
+  prev: { totalIncome: number; totalExpense: number; netSurplus: number } | null;
+  duesOutstanding: number | null;
+}
+
+export async function pdfYearlyAGM(d: AgmPdfData) {
+  const {
+    income, expense, totalIncome, totalExpense, netSurplus,
+    opening, closing, totalAssets, totalTransfers, transactionCount,
+    monthlyIncome, monthlyExpense, barPng, piePng, prev, duesOutstanding,
+    yearFilter,
+  } = d;
   const doc = new jsPDF({ format: 'a4', unit: 'mm' });
   let y = addHeader(doc, 'ANNUAL GENERAL MEETING REPORT', `Session: ${Number(yearFilter)-1}-${yearFilter} (${FISCAL_START_LABEL} ${Number(yearFilter)-1} – ${FISCAL_END_LABEL} ${yearFilter})`, 10);
 
   const fyLabel = `${Number(yearFilter)-1}-${yearFilter}`;
+
+  // ── KEY FIGURES STRIP ──
+  const figs: [string, number][] = [
+    ['Income', totalIncome], ['Expenditure', totalExpense],
+    [netSurplus >= 0 ? 'Surplus' : 'Deficit', Math.abs(netSurplus)], ['Closing Assets', totalAssets],
+  ];
+  figs.forEach(([lbl, val], i) => {
+    const x = 12 + i * 47;
+    doc.setFillColor(245, 242, 235); doc.rect(x, y, 45, 12, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(130, 124, 114);
+    doc.text(lbl.toUpperCase(), x + 22.5, y + 4, { align: 'center' });
+    doc.setFontSize(9); doc.setTextColor(26, 26, 46);
+    doc.text(fmt(val) + ' /-', x + 22.5, y + 9, { align: 'center' });
+  });
+  y += 17;
 
   // ── 1. INCOME AND EXPENDITURE STATEMENT ──
   doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(26, 26, 46);
@@ -336,7 +371,10 @@ export function pdfYearlyAGM(
   (income as [string, number][]).forEach(([cat, amt]) => {
     if (y > 270) { doc.addPage(); y = 14; }
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(26, 26, 46);
-    doc.text(cat, 14, y + 4); doc.text(fmt(amt) + ' /-', 196, y + 4, { align: 'right' });
+    doc.text(cat, 14, y + 4);
+    if (totalIncome > 0) { doc.setFontSize(7); doc.setTextColor(130, 124, 114); doc.text(`${((Number(amt) / totalIncome) * 100).toFixed(1)}%`, 140, y + 4); }
+    doc.setFontSize(9); doc.setTextColor(26, 26, 46);
+    doc.text(fmt(amt) + ' /-', 196, y + 4, { align: 'right' });
     y += 5;
   });
   doc.setFillColor(240, 235, 225); doc.rect(12, y, 186, 6, 'F');
@@ -350,13 +388,25 @@ export function pdfYearlyAGM(
   (expense as [string, number][]).forEach(([cat, amt]) => {
     if (y > 270) { doc.addPage(); y = 14; }
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(26, 26, 46);
-    doc.text(cat, 14, y + 4); doc.text(fmt(amt) + ' /-', 196, y + 4, { align: 'right' });
+    doc.text(cat, 14, y + 4);
+    if (totalExpense > 0) { doc.setFontSize(7); doc.setTextColor(130, 124, 114); doc.text(`${((Number(amt) / totalExpense) * 100).toFixed(1)}%`, 140, y + 4); }
+    doc.setFontSize(9); doc.setTextColor(26, 26, 46);
+    doc.text(fmt(amt) + ' /-', 196, y + 4, { align: 'right' });
     y += 5;
   });
   doc.setFillColor(240, 235, 225); doc.rect(12, y, 186, 6, 'F');
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
   doc.text('Total Expenditure', 14, y + 4); doc.text(fmt(totalExpense) + ' /-', 196, y + 4, { align: 'right' });
   y += 9;
+
+  // Expense mix donut
+  if (piePng) {
+    if (y > 190) { doc.addPage(); y = 14; }
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(26, 26, 46);
+    doc.text('Expenditure Mix', 12, y); y += 4;
+    doc.addImage(piePng, 'PNG', 12, y, 186, 70);
+    y += 74;
+  }
 
   // Annual Surplus / Deficit
   doc.setFillColor(26, 26, 46); doc.rect(12, y, 186, 7, 'F');
@@ -365,10 +415,38 @@ export function pdfYearlyAGM(
   doc.text(fmt(Math.abs(netSurplus)) + ' /-', 196, y + 4.5, { align: 'right' });
   y += 12;
 
-  // ── 2. BALANCE SHEET ──
+  // ── 2. MONTHLY INCOME AND EXPENDITURE ──
+  if (monthlyIncome.length > 0) {
+    if (y > 200) { doc.addPage(); y = 14; }
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(26, 26, 46);
+    doc.text('2. MONTHLY INCOME AND EXPENDITURE', 12, y); y += 8;
+    if (barPng) {
+      doc.addImage(barPng, 'PNG', 12, y, 186, 87);
+      y += 91;
+    }
+    doc.setFillColor(26, 26, 46); doc.rect(12, y, 186, 6, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(255, 255, 255);
+    doc.text('Month', 14, y + 4); doc.text('Income', 120, y + 4, { align: 'right' });
+    doc.text('Expenditure', 158, y + 4, { align: 'right' }); doc.text('Net', 196, y + 4, { align: 'right' });
+    y += 6;
+    monthlyIncome.forEach((m, i) => {
+      if (y > 270) { doc.addPage(); y = 14; }
+      const exp = monthlyExpense[i]?.total || 0;
+      if (i % 2 === 0) { doc.setFillColor(255, 253, 247); doc.rect(12, y, 186, 5.5, 'F'); }
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(26, 26, 46);
+      doc.text(m.label, 14, y + 4);
+      doc.text(fmt(m.total) + ' /-', 120, y + 4, { align: 'right' });
+      doc.text(fmt(exp) + ' /-', 158, y + 4, { align: 'right' });
+      doc.text(fmt(m.total - exp) + ' /-', 196, y + 4, { align: 'right' });
+      y += 5.5;
+    });
+    y += 4;
+  }
+
+  // ── 3. BALANCE SHEET ──
   if (y > 200) { doc.addPage(); y = 14; }
   doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(26, 26, 46);
-  doc.text('2. BALANCE SHEET', 12, y); y += 8;
+  doc.text('3. BALANCE SHEET', 12, y); y += 8;
 
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(130, 124, 114);
   doc.text(`As at 31 August ${yearFilter}`, 12, y); y += 6;
@@ -401,10 +479,10 @@ export function pdfYearlyAGM(
   doc.text(fmt(totalAssets) + ' /-', 196, y + 4.5, { align: 'right' });
   y += 12;
 
-  // ── 3. RECEIPTS AND PAYMENTS STATEMENT ──
+  // ── 4. RECEIPTS AND PAYMENTS STATEMENT ──
   if (y > 200) { doc.addPage(); y = 14; }
   doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(26, 26, 46);
-  doc.text('3. RECEIPTS AND PAYMENTS STATEMENT', 12, y); y += 8;
+  doc.text('4. RECEIPTS AND PAYMENTS STATEMENT', 12, y); y += 8;
 
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(130, 124, 114);
   doc.text(`For the financial year ${fyLabel}`, 12, y); y += 6;
@@ -439,24 +517,54 @@ export function pdfYearlyAGM(
   doc.text(`Total Cash Paid: ${fmt(totalPaid)} /-`, 14, y + 4); y += 5;
   doc.text(`Net Movement: ${fmt(totalReceived - totalPaid)} /-`, 14, y + 4); y += 12;
 
-  // ── 4. INTERNAL TRANSFERS ──
+  // ── 5. INTERNAL TRANSFERS ──
   if (y > 200) { doc.addPage(); y = 14; }
   doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(26, 26, 46);
-  doc.text('4. INTERNAL TRANSFERS', 12, y); y += 7;
+  doc.text('5. INTERNAL TRANSFERS', 12, y); y += 7;
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(26, 26, 46);
   doc.text(`Total Internal Transfers: ${fmt(totalTransfers)} /-`, 14, y); y += 6;
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(130, 124, 114);
   doc.text('Note: Internal transfers between bank accounts and Cash in Hand do not affect the income/expense ledger.', 14, y); y += 10;
 
-  // ── 5. RECOMMENDATIONS ──
+  // ── 6. YEAR-ON-YEAR COMPARISON ──
+  if (prev) {
+    if (y > 220) { doc.addPage(); y = 14; }
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(26, 26, 46);
+    doc.text('6. COMPARISON WITH PREVIOUS YEAR', 12, y); y += 8;
+    doc.setFillColor(26, 26, 46); doc.rect(12, y, 186, 6, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(255, 255, 255);
+    doc.text('Head', 14, y + 4);
+    doc.text(`FY ${Number(yearFilter) - 2}-${Number(yearFilter) - 1}`, 130, y + 4, { align: 'right' });
+    doc.text(`FY ${fyLabel}`, 163, y + 4, { align: 'right' });
+    doc.text('Change', 196, y + 4, { align: 'right' });
+    y += 6;
+    ([
+      ['Total Income', prev.totalIncome, totalIncome],
+      ['Total Expenditure', prev.totalExpense, totalExpense],
+      ['Annual Surplus', prev.netSurplus, netSurplus],
+    ] as [string, number, number][]).forEach(([lbl, p, c], i) => {
+      if (i % 2 === 0) { doc.setFillColor(255, 253, 247); doc.rect(12, y, 186, 6, 'F'); }
+      const diff = Number(c) - Number(p);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(26, 26, 46);
+      doc.text(lbl, 14, y + 4);
+      doc.text(fmt(p) + ' /-', 130, y + 4, { align: 'right' });
+      doc.text(fmt(c) + ' /-', 163, y + 4, { align: 'right' });
+      doc.text(`${diff >= 0 ? '+' : ''}${fmt(diff)} /-`, 196, y + 4, { align: 'right' });
+      y += 6;
+    });
+    y += 4;
+  }
+
+  // ── 7. NOTES AND RECOMMENDATIONS ──
   if (y > 200) { doc.addPage(); y = 14; }
   doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(26, 26, 46);
-  doc.text('5. RECOMMENDATIONS', 12, y); y += 8;
+  doc.text('7. NOTES AND RECOMMENDATIONS', 12, y); y += 8;
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(60, 60, 60);
   const recs = [
     `Net surplus of ${fmt(netSurplus)} /- for FY ${fyLabel}.`,
     totalIncome > 0 ? `Expense-to-income ratio: ${((totalExpense / totalIncome) * 100).toFixed(1)}%.` : 'No income recorded.',
     `Total assets stand at ${fmt(totalAssets)} /- across 3 accounts.`,
+    ...(duesOutstanding !== null ? [`Fee dues outstanding for the year: ${fmt(duesOutstanding)} /-.`] : []),
     `${transactionCount} total transactions recorded during the year.`,
     'All financial records are available for detailed audit.',
   ];
