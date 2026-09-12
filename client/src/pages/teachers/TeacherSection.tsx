@@ -441,7 +441,7 @@ function AssignmentPanel({ teacher, classes, fetchTeachers, onClose }: {
     setLoading(true);
     try {
       await api.post(`/teachers/${teacher.id}/subject_assignment/`, { subjectId: selectedSubject, classId: selectedClass });
-      toast('Subject assigned', 'success');
+      toast('Marked as subject owner', 'success');
       const cls = classes.find((c: any) => c.id === selectedClass);
       const subj = classSubjects.find((s: any) => s.id === selectedSubject);
       setSubjectAssignments([...subjectAssignments, {
@@ -477,7 +477,7 @@ function AssignmentPanel({ teacher, classes, fetchTeachers, onClose }: {
         <div className="sticky top-0 bg-white border-b border-school-border p-4 flex items-center justify-between rounded-t-2xl">
           <div>
             <h3 className="font-bold text-school-primary">{teacher.name}</h3>
-            <p className="text-xs text-school-muted">Assign classes and subjects</p>
+            <p className="text-xs text-school-muted">Assign classes · mark subject owners</p>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg" aria-label="Close"><X size={20} /></button>
         </div>
@@ -525,9 +525,10 @@ function AssignmentPanel({ teacher, classes, fetchTeachers, onClose }: {
             )}
           </div>
 
-          {/* Subject Assignment Section */}
+          {/* Subject owners — informational only: entry is NOT restricted by this list. */}
           <div>
-            <h4 className="text-sm font-bold text-school-primary mb-2 flex items-center gap-1.5"><BookOpen size={14} /> Subject Assignments</h4>
+            <h4 className="text-sm font-bold text-school-primary mb-1 flex items-center gap-1.5"><BookOpen size={14} /> Subject Owners <span className="text-[9px] font-bold px-1.5 py-0.5 bg-gray-100 text-school-muted rounded-full">INFORMATIONAL</span></h4>
+            <p className="text-[11px] text-school-muted mb-2">For reference only — any teacher login can enter any subject's marks.</p>
             {subjectAssignments.length > 0 && (
               <div className="space-y-1.5 mb-2">
                 {subjectAssignments.map((sa: any) => (
