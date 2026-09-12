@@ -396,3 +396,189 @@ class SchedulerTests(TestCase):
             self.assertEqual(res.status_code, 200)
             self.assertFalse(res.data['configured'])
             self.assertIn('ALWAYSDATA_SCHED_TOKEN', res.data['error'])
+
+
+class AgentFindingTests(TestCase):
+    """Board: idempotent filing, self-healing resolve, admin triage (Phase 1)."""
+
+    def setUp(self):
+        from .models import AgentFinding
+        self.AgentFinding = AgentFinding
+        self.client = APIClient()
+        _auth(self.client)
+
+    def test_report_dedupes_open_findings(self):
+        from .findings import report
+        report('watchdog', 'warning', 'result', 'row-1', 'Blanks remain')
+        report('watchdog', 'warning', 'result', 'row-1', 'Blanks remain (12 now)')
+        qs = self.AgentFinding.objects.filter(agent='watchdog', status='open')
+        self.assertEqual(qs.count(), 1)
+        self.assertIn('12 now', qs.first().summary)
+
+    def test_resolve_stale_heals_fixed(self):
+        from .findings import report, resolve_stale
+        report('watchdog', 'warning', 'result', 'row-1', 'Blanks remain')
+        report('watchdog', 'warning', 'result', 'row-2', 'Blanks remain')
+        n = resolve_stale('watchdog', [('result', 'row-2')])
+        self.assertEqual(n, 1)
+        self.assertEqual(
+            self.AgentFinding.objects.get(agent='watchdog', entity_id='row-1').status,
+            'resolved')
+
+    def test_board_api_lists_and_transitions(self):
+        from .findings import report
+        f = report('integrity', 'critical', 'result', 'row-9', 'Out of range')
+        res = self.client.get('/api/agent-findings/?status=open')
+        self.assertEqual(res.status_code, 200)
+        res = self.client.post(f'/api/agent-findings/{f.id}/ack/', {'resolution': 'looking'}, format='json')
+        self.assertEqual(res.status_code, 200)
+        res = self.client.post(f'/api/agent-findings/{f.id}/resolve/', {}, format='json')
+        self.assertEqual(res.status_code, 200)
+        f.refresh_from_db()
+        self.assertEqual(f.status, 'resolved')
+
+    def test_board_rejects_forged_writes(self):
+        for method, url, body in [
+            ('post', '/api/agent-findings/', {'summary': 'fake'}),
+            ('put', '/api/agent-findings/00000000-0000-0000-0000-000000000000/', {'summary': 'x'}),
+            ('delete', '/api/agent-findings/00000000-0000-0000-0000-000000000000/', None),
+        ]:
+            res = getattr(self.client, method)(url, body, format='json')
+            self.assertIn(res.status_code, (404, 405), method)
+        self.assertEqual(self.AgentFinding.objects.count(), 0)
+
+
+class WatchdogTests(TestCase):
+    """watch_entry files gaps, heals silently, dry-runs clean (Phase 1)."""
+
+    def setUp(self):
+        import json
+        from core.models import AcademicYear, SchoolSetting
+        from students.models import Student
+        from results.models import Result
+        self.year = AcademicYear.objects.create(
+            name='2026', start_date='2026-01-01', end_date='2026-12-31', is_active=True)
+        self.klass = SchoolClass.objects.create(name='Class 5', order=1)
+        Subject.objects.create(name='Math', full_marks=100, school_class=self.klass)
+        self.s1 = Student.objects.create(
+            name='S1', student_id='S000001', school_class=self.klass, session='2026')
+        self.s2 = Student.objects.create(
+            name='S2', student_id='S000002', school_class=self.klass, session='2026')
+        Result.objects.create(
+            student=self.s1, term='1', session='2026', marks={'Math': 80})
+        SchoolSetting.objects.create(
+            key='published_terms', value=json.dumps({'2026': ['1']}))
+
+    def _run(self, *args):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('watch_entry', *args, stdout=out)
+        return out.getvalue()
+
+    def test_files_published_gap(self):
+        from .models import AgentFinding
+        out = self._run()
+        self.assertIn('filed=1', out)
+        f = AgentFinding.objects.get(agent='watchdog', status='open')
+        self.assertIn('Math 1/2', f.summary)
+
+    def test_heals_when_completed(self):
+        from .models import AgentFinding
+        from results.models import Result
+        self._run()
+        Result.objects.create(
+            student=self.s2, term='1', session='2026', marks={'Math': 70})
+        out = self._run()
+        self.assertIn('auto-resolved=1', out)
+        self.assertEqual(
+            AgentFinding.objects.filter(agent='watchdog', status='open').count(), 0)
+
+    def test_dry_run_writes_nothing(self):
+        from .models import AgentFinding
+        out = self._run('--dry-run')
+        self.assertIn('DRY-RUN', out)
+        self.assertEqual(AgentFinding.objects.count(), 0)
+
+
+class IntegrityTests(TestCase):
+    """check_integrity reports bad data, repairs nothing (Phase 1)."""
+
+    def setUp(self):
+        from django.utils import timezone
+        from core.models import AcademicYear
+        from students.models import Student
+        from results.models import Result
+        AcademicYear.objects.create(
+            name='2026', start_date='2026-01-01', end_date='2026-12-31', is_active=True)
+        self.klass = SchoolClass.objects.create(name='Class 5', order=1)
+        Subject.objects.create(name='Math', full_marks=100, school_class=self.klass)
+        self.gone = Student.objects.create(
+            name='Gone', student_id='S000009', school_class=self.klass,
+            session='2026', deleted_at=timezone.now())
+        Result.objects.create(
+            student=self.gone, term='1', session='2026', marks={'Math': 60})
+        self.s1 = Student.objects.create(
+            name='S1', student_id='S000001', school_class=self.klass, session='2026')
+        Result.objects.create(
+            student=self.s1, term='1', session='2026', marks={'Math': 999})
+
+    def _run(self, *args):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('check_integrity', *args, stdout=out)
+        return out.getvalue()
+
+    def test_files_over_range_and_orphan(self):
+        from .models import AgentFinding
+        out = self._run()
+        self.assertIn('filed=2', out)
+        kinds = set(AgentFinding.objects.filter(
+            agent='integrity', status='open').values_list('details__kind', flat=True))
+        self.assertEqual(kinds, {'over-range', 'orphan-rows'})
+
+    def test_repairs_nothing(self):
+        from results.models import Result
+        self._run()
+        # The 999 stands — agents report, humans fix (board revert).
+        self.assertEqual(
+            Result.objects.get(student=self.s1).marks, {'Math': 999})
+
+
+class DigestTests(TestCase):
+    """send_agent_digest notifies admins once, stays quiet when clear."""
+
+    def setUp(self):
+        self.client = APIClient()
+        _auth(self.client)
+
+    def test_quiet_when_nothing_open(self):
+        from io import StringIO
+        from django.core.management import call_command
+        out = StringIO()
+        call_command('send_agent_digest', stdout=out)
+        self.assertIn('nothing open', out.getvalue())
+
+    def test_dry_run_lists_without_sending(self):
+        from io import StringIO
+        from django.core.management import call_command
+        from .findings import report
+        from parents.models import NotificationLog
+        report('watchdog', 'warning', 'result', 'c1:1', 'Class 5 Term 1 gaps')
+        out = StringIO()
+        call_command('send_agent_digest', '--dry-run', stdout=out)
+        self.assertIn('would notify 1 admin', out.getvalue())
+        self.assertEqual(NotificationLog.objects.count(), 0)
+
+    def test_send_logs_notification(self):
+        from io import StringIO
+        from django.core.management import call_command
+        from .findings import report
+        from parents.models import NotificationLog
+        report('integrity', 'critical', 'result', 'c1:x', 'Bad data')
+        out = StringIO()
+        call_command('send_agent_digest', stdout=out)
+        self.assertIn('admins_notified=1', out.getvalue())
+        self.assertEqual(
+            NotificationLog.objects.filter(event_type='agent_digest').count(), 1)

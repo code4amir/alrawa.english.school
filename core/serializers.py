@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import SchoolClass, Subject, AcademicYear, SchoolSetting, AuditLog, Category, ServiceType
+from .models import SchoolClass, Subject, AcademicYear, SchoolSetting, AuditLog, Category, ServiceType, AgentFinding
 
 
 class SchoolClassSerializer(serializers.ModelSerializer):
@@ -65,6 +65,19 @@ class AuditLogSerializer(CamelCaseModelSerializer):
         model = AuditLog
         fields = ['id', 'user_id', 'user_name', 'action', 'entity_type', 'entity_id', 'details', 'created_at']
         read_only_fields = ['created_at']
+
+
+class AgentFindingSerializer(serializers.ModelSerializer):
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
+
+    class Meta:
+        model = AgentFinding
+        fields = ['id', 'agent', 'severity', 'entity_type', 'entity_id',
+                  'summary', 'details', 'status', 'resolution',
+                  'createdAt', 'updatedAt']
+        read_only_fields = ['id', 'agent', 'severity', 'entity_type', 'entity_id',
+                            'summary', 'details', 'createdAt', 'updatedAt']
 
 
 class CategorySerializer(serializers.ModelSerializer):

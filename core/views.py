@@ -4,14 +4,14 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 from django.db.models import Count, Q, Subquery, OuterRef
-from .models import SchoolClass, Subject, AcademicYear, SchoolSetting, AuditLog, Category, ServiceType
+from .models import SchoolClass, Subject, AcademicYear, SchoolSetting, AuditLog, Category, ServiceType, AgentFinding
 from students.models import Student
 from books.models import Book
 from .serializers import (
     SchoolClassSerializer, SchoolClassReorderSerializer,
     SubjectSerializer, AcademicYearSerializer,
     SchoolSettingSerializer, AuditLogSerializer, CategorySerializer,
-    PromoteAllSerializer, ServiceTypeSerializer,
+    PromoteAllSerializer, ServiceTypeSerializer, AgentFindingSerializer,
 )
 from accounts.permissions import require_permission
 from .services import promote_all as promote_all_service, auto_create_fee_schedules_for_service
@@ -182,6 +182,65 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['action', 'entity_type', 'user_id']
     search_fields = ['entity_id', 'details']
     ordering_fields = ['created_at']
+
+
+class AgentFindingViewSet(viewsets.ModelViewSet):
+    """The agents' message board (Phase 1).
+
+    Findings are filed server-side via core.findings (no HTTP create);
+    admins triage here with ack/resolve, and the digest command reads the
+    open rows to compose the morning message.
+    """
+
+    queryset = AgentFinding.objects.all()
+    serializer_class = AgentFindingSerializer
+    filterset_fields = ['agent', 'severity', 'status', 'entity_type']
+    ordering_fields = ['created_at', 'updated_at']
+    ordering = ['-created_at']
+
+    def get_permissions(self):
+        return [require_permission('audit:read')()]
+
+    def create(self, request, *args, **kwargs):
+        # Findings are filed server-side via core.findings — no HTTP create,
+        # so a client can never forge or spam the board.
+        from rest_framework.exceptions import MethodNotAllowed
+        raise MethodNotAllowed('POST')
+
+    def update(self, request, *args, **kwargs):
+        # Mutations go through ack/resolve only (they write audit rows).
+        from rest_framework.exceptions import MethodNotAllowed
+        raise MethodNotAllowed('PUT')
+
+    def partial_update(self, request, *args, **kwargs):
+        from rest_framework.exceptions import MethodNotAllowed
+        raise MethodNotAllowed('PATCH')
+
+    def destroy(self, request, *args, **kwargs):
+        from rest_framework.exceptions import MethodNotAllowed
+        raise MethodNotAllowed('DELETE')
+
+    def _transition(self, request, pk, to_status):
+        from core.audit import log_audit
+        finding = self.get_object()
+        resolution = str(request.data.get('resolution', ''))[:500]
+        finding.status = to_status
+        if resolution:
+            finding.resolution = resolution
+        finding.save(update_fields=['status', 'resolution', 'updated_at'])
+        log_audit(to_status, 'agent_finding', entity_id=str(finding.pk),
+                  request=request,
+                  details={'agent': finding.agent, 'summary': finding.summary,
+                           'resolution': finding.resolution})
+        return Response(self.get_serializer(finding).data)
+
+    @action(detail=True, methods=['post'])
+    def ack(self, request, pk=None):
+        return self._transition(request, pk, 'acked')
+
+    @action(detail=True, methods=['post'])
+    def resolve(self, request, pk=None):
+        return self._transition(request, pk, 'resolved')
 
 
 class CategoryViewSet(AuditLogMixin, viewsets.ModelViewSet):

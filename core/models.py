@@ -161,3 +161,53 @@ class ServiceType(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class AgentFinding(models.Model):
+    """Shared message board for monitor agents (Phase 1).
+
+    Agents never call each other — they write findings here, read each
+    other's, and the admin board UI renders them. Human data is never
+    auto-repaired; a finding is evidence + a pointer, nothing more.
+    """
+
+    SEVERITIES = [
+        ('info', 'Info'),
+        ('warning', 'Warning'),
+        ('critical', 'Critical'),
+    ]
+    STATUSES = [
+        ('open', 'Open'),
+        ('acked', 'Acknowledged'),
+        ('resolved', 'Resolved'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    agent = models.CharField(max_length=50)
+    severity = models.CharField(max_length=20, choices=SEVERITIES, default='info')
+    entity_type = models.CharField(max_length=50, blank=True, default='')
+    entity_id = models.CharField(max_length=100, blank=True, null=True)
+    summary = models.CharField(max_length=500)
+    details = models.JSONField(blank=True, default=dict)
+    status = models.CharField(max_length=20, choices=STATUSES, default='open')
+    resolution = models.CharField(max_length=500, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', 'agent']),
+            models.Index(fields=['status', '-created_at']),
+        ]
+        constraints = [
+            # One open finding per agent+entity: re-reports update in place
+            # instead of spamming the board every run.
+            models.UniqueConstraint(
+                fields=['agent', 'entity_type', 'entity_id'],
+                condition=Q(status='open'),
+                name='unique_open_finding_per_agent_entity'),
+        ]
+
+    def __str__(self):
+        return f"[{self.severity}] {self.agent}: {self.summary[:80]}"

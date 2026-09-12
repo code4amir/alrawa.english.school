@@ -104,6 +104,9 @@ const revertResultEntry = async (entityId: string, changes: Record<string, { fro
 const AuditLogs = () => {
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [total, setTotal] = useState(0);
+  const [view, setView] = useState<'logs' | 'findings'>('logs');
+  const [findings, setFindings] = useState<any[]>([]);
+  const [findingsLoading, setFindingsLoading] = useState(false);
   const [page, setPage] = useState(1);
   const limit = 50;
   const [loading, setLoading] = useState(true);
@@ -153,6 +156,28 @@ const AuditLogs = () => {
 
   useEffect(() => { fetchLogs(); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Phase 1 board: agents' findings live here next to the audit trail.
+  const fetchFindings = async () => {
+    setFindingsLoading(true);
+    try {
+      const res = await api.get('/agent-findings/', { params: { status: 'open', limit: 100 } });
+      setFindings(res.data.results || res.data.data || res.data || []);
+    } catch { /* ignore */ }
+    setFindingsLoading(false);
+  };
+  useEffect(() => { if (view === 'findings') fetchFindings(); }, [view]);
+
+  const transitionFinding = async (id: string, to: 'ack' | 'resolve') => {
+    if (to === 'resolve' && !window.confirm('Mark this finding resolved? The agents will re-file it if the problem returns.')) return;
+    try {
+      await api.post(`/agent-findings/${id}/${to}/`, {});
+      toast(to === 'ack' ? 'Acknowledged' : 'Resolved ✓', 'success');
+      fetchFindings();
+    } catch {
+      toast('Action failed', 'error');
+    }
+  };
+
   const applyFilters = () => { setPage(1); fetchLogs(); };
   const clearFilters = () => {
     setActionFilter(''); setEntityFilter(''); setDateFrom(''); setDateTo('');
@@ -176,6 +201,45 @@ const AuditLogs = () => {
           </div>
         </div>
 
+        <div className="flex gap-2">
+          {(['logs', 'findings'] as const).map((v) => (
+            <button key={v} onClick={() => setView(v)}
+              className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${view === v ? 'bg-school-primary text-white shadow-lg' : 'bg-white border border-school-border hover:border-school-accent'}`}>
+              {v === 'logs' ? 'Log Trail' : `Agent Findings${findings.length > 0 && view !== 'findings' ? ` (${findings.length})` : ''}`}
+            </button>
+          ))}
+        </div>
+
+        {view === 'findings' ? (
+          <div className="bg-white rounded-xl border border-school-border overflow-hidden">
+            {findingsLoading ? (
+              <Skeleton type="table" rows={4} />
+            ) : findings.length === 0 ? (
+              <div className="text-center py-12 text-school-muted text-sm">✓ All clear — no open findings.</div>
+            ) : (
+              <div className="divide-y divide-school-border/50">
+                {findings.map((f: any) => (
+                  <div key={f.id} className="px-4 py-3 flex items-start gap-3">
+                    <span className={`mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase shrink-0 ${f.severity === 'critical' ? 'bg-red-50 text-red-600' : f.severity === 'warning' ? 'bg-amber-50 text-amber-700' : 'bg-blue-50 text-blue-600'}`}>
+                      {f.severity}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-school-primary">{f.summary}</div>
+                      <div className="text-[11px] text-school-muted mt-0.5">
+                        {f.agent} · {f.createdAt ? new Date(f.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}
+                      </div>
+                    </div>
+                    <div className="flex gap-1.5 shrink-0">
+                      <button onClick={() => transitionFinding(f.id, 'ack')} className="px-2.5 py-1 text-[11px] font-bold border border-school-border rounded-lg hover:border-school-accent">Ack</button>
+                      <button onClick={() => transitionFinding(f.id, 'resolve')} className="px-2.5 py-1 text-[11px] font-bold bg-green-600 text-white rounded-lg hover:opacity-90">Resolve</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+        <>
         <div className="bg-white rounded-xl border border-school-border p-3 space-y-2">
           <div className="flex flex-wrap gap-2 items-end">
             <div>
@@ -305,6 +369,8 @@ const AuditLogs = () => {
               </div>
             )}
           </div>
+        )}
+        </>
         )}
       </div>
 
