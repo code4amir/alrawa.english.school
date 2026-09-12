@@ -45,6 +45,53 @@ def _waiver_expected_amount(waiver, fee_schedule_amount):
     return Decimal(str(waiver_value))
 
 
+def _waiver_covers_date(waiver, dt):
+    """True if a waiver's active window covers the given date.
+
+    A waiver with no starts_at/ends_at covers every date. Accepts a date
+    or datetime. Pending/rejected waivers must already be filtered out by
+    the caller (approval_status='approved').
+    """
+    if not waiver:
+        return False
+    d = dt.date() if hasattr(dt, 'date') else dt
+    starts_at = waiver.starts_at if hasattr(waiver, 'starts_at') else waiver.get('starts_at')
+    ends_at = waiver.ends_at if hasattr(waiver, 'ends_at') else waiver.get('ends_at')
+    if starts_at and starts_at > d:
+        return False
+    if ends_at and ends_at < d:
+        return False
+    return True
+
+
+def _waiver_covers_month(waiver, month):
+    """True if a waiver's active window covers a 'YYYY-MM' fee month."""
+    if not waiver or not month:
+        return False
+    starts_at = waiver.starts_at if hasattr(waiver, 'starts_at') else waiver.get('starts_at')
+    ends_at = waiver.ends_at if hasattr(waiver, 'ends_at') else waiver.get('ends_at')
+    start_month = starts_at.strftime('%Y-%m') if starts_at else None
+    end_month = ends_at.strftime('%Y-%m') if ends_at else None
+    if start_month and start_month > month:
+        return False
+    if end_month and end_month < month:
+        return False
+    return True
+
+
+def _parse_month(value, field_name):
+    """Parse a 'YYYY-MM' string into (year, month); 400 on garbage."""
+    from rest_framework.exceptions import ValidationError
+    try:
+        y, m = str(value).split('-')
+        y, m = int(y), int(m)
+        if not 1 <= m <= 12:
+            raise ValueError
+        return y, m
+    except (ValueError, AttributeError):
+        raise ValidationError({field_name: 'Expected YYYY-MM.'})
+
+
 PRIMARY_BANK = 'AL_RAWA_BANK'
 SECONDARY_BANK = 'GLOBAL_FORUM_BANK'
 CASH_BANK = 'CASH_IN_HAND'
@@ -77,6 +124,64 @@ def _invalidate_internal_accounts_cache():
     cache.delete('active_bank_account_names')
 
 
+def _next_receipt_sequence(tx_date, receipt_type):
+    """Allocate the next receipt/counter sequence, retrying on races.
+
+    Two concurrent creates can both miss the get_or_create and collide on
+    the unique (counter_date, receipt_type) pair; on IntegrityError just
+    re-read the row the other transaction committed.
+    """
+    from django.db import IntegrityError
+    from finance.models import ReceiptCounter
+    for _ in range(3):
+        try:
+            counter, _ = ReceiptCounter.objects.select_for_update().get_or_create(
+                counter_date=tx_date,
+                receipt_type=receipt_type,
+                defaults={'next_sequence': 1, 'fiscal_year': tx_date.year},
+            )
+            seq = counter.next_sequence
+            counter.next_sequence = seq + 1
+            counter.save(update_fields=['next_sequence'])
+            return seq
+        except IntegrityError:
+            continue
+    counter = ReceiptCounter.objects.select_for_update().get(
+        counter_date=tx_date, receipt_type=receipt_type,
+    )
+    seq = counter.next_sequence
+    counter.next_sequence = seq + 1
+    counter.save(update_fields=['next_sequence'])
+    return seq
+
+
+def _roll_balances_forward(account, fy):
+    """Re-roll opening/closing balances forward through an FY.
+
+    Keeps the earliest existing month's stored opening (0 when the FY
+    started with no activity) and cascades each month's close into the
+    next month's opening. This self-heals backdated entries: writing to
+    an old month re-rolls every later month in the same FY.
+    FY months run September(9) -> August(8).
+    """
+    rows = list(
+        AccountBalance.objects.select_for_update().filter(
+            account=account, fiscal_year=fy
+        )
+    )
+    if not rows:
+        return
+    by_month = {b.month: b for b in rows}
+    prev_close = None
+    for m in sorted(by_month.keys(), key=lambda m: (m - 9) % 12):
+        b = by_month[m]
+        if prev_close is not None:
+            b.opening_balance = prev_close
+        b.closing_balance = b.opening_balance + b.total_credits - b.total_debits
+        b.save(update_fields=['opening_balance', 'closing_balance'])
+        prev_close = b.closing_balance
+
+
 def _account_balances_update(transaction):
     """Update AccountBalance cache for a transaction's accounts."""
     with db_transaction.atomic():
@@ -95,6 +200,11 @@ def _account_balances_update(transaction):
                 defaults={'opening_balance': 0},
             )
             is_source = (account_field == 'source_account')
+            # Cancelled originals and their reversals are both EXCLUDED from
+            # balances (mirroring the ledger/balances endpoints, which filter
+            # is_cancelled=False AND reversal_of_id__isnull=True): the cancel
+            # subtracts the original posting, and the reversal row is never
+            # fed into this cache — applying it would double-count.
             if transaction.is_cancelled:
                 if is_source:
                     bal.total_debits -= transaction.amount
@@ -107,6 +217,10 @@ def _account_balances_update(transaction):
                     bal.total_credits += transaction.amount
             bal.closing_balance = bal.opening_balance + bal.total_credits - bal.total_debits
             bal.save()
+            # Cascade the new close forward so later months (and the AI
+            # balances handler, which reads the latest month) stay correct,
+            # including for backdated transactions.
+            _roll_balances_forward(account, fy)
 
 
 def _param(request, *names):
@@ -139,19 +253,50 @@ def _fiscal_year_from_date(dt):
     return dt.year + 1 if dt.month > FISCAL_YEAR_START_MONTH else dt.year
 
 
+def _resolve_fiscal_year(obj):
+    """Resolve the fiscal year a finance object belongs to.
+
+    Transactions/OpeningBalances carry `fiscal_year` directly. Fee models
+    don't: FeeSchedule anchors to its academic year's start date, and
+    FeeWaiver/StudentFeeAssignment inherit their fee schedule's year.
+    Returns None when no year can be resolved (check is skipped).
+    Accepts a model instance or a validated-data dict.
+    """
+    if obj is None:
+        return None
+    get = obj.get if isinstance(obj, dict) else lambda k: getattr(obj, k, None)
+
+    fy = get('fiscal_year')
+    if fy:
+        return fy
+
+    year = get('academic_year')
+    if year is None:
+        schedule = get('fee_schedule')
+        if schedule is not None:
+            year = schedule.get('academic_year') if isinstance(schedule, dict) else getattr(schedule, 'academic_year', None)
+    start = year.get('start_date') if isinstance(year, dict) else getattr(year, 'start_date', None)
+    if start:
+        return _fiscal_year_from_date(start)
+    return None
+
+
 class PeriodClosedMixin:
     def perform_create(self, serializer):
-        fiscal_year = serializer.validated_data.get('fiscal_year')
+        fiscal_year = _resolve_fiscal_year(serializer.validated_data)
         if fiscal_year:
             _check_period_open(fiscal_year)
         serializer.save()
 
     def perform_update(self, serializer):
-        if serializer.instance and hasattr(serializer.instance, 'fiscal_year'):
-            _check_period_open(serializer.instance.fiscal_year)
+        if serializer.instance:
+            fiscal_year = _resolve_fiscal_year(serializer.instance)
+            if fiscal_year:
+                _check_period_open(fiscal_year)
         serializer.save()
 
     def perform_destroy(self, instance):
-        if hasattr(instance, 'fiscal_year') and instance.fiscal_year:
-            _check_period_open(instance.fiscal_year)
+        fiscal_year = _resolve_fiscal_year(instance)
+        if fiscal_year:
+            _check_period_open(fiscal_year)
         instance.delete()

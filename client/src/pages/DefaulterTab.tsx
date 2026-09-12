@@ -208,7 +208,7 @@ export default function DefaulterTab() {
       const all = await fetchAllDefaulters('print');
       if (!all) return;
       const w = window.open('', '_blank');
-      if (!w) return;
+      if (!w) { toast('Please allow pop-ups for printing', 'error'); return; }
       w.document.write(`<html><head><title>Defaulter Report</title><style>
       @page{size:landscape;margin:10mm}
       body{font-family:system-ui,sans-serif;padding:20px;color:#1a1a2e;font-size:12px}
@@ -455,7 +455,7 @@ export default function DefaulterTab() {
               <tfoot>
                 <tr className="bg-school-primary/5 border-t-2 border-school-primary/20">
                   <td className="px-4 py-3 sticky left-0 bg-school-primary/5 text-xs font-bold" colSpan={1 + yearlyFeeNames.length}>
-                    Grand Total {totalRows > filtered.length ? `(all ${totalRows} students)` : ''}
+                    Grand Total{filterFee ? ' (all fees)' : ''} {totalRows > filtered.length ? `(all ${totalRows} students)` : ''}
                   </td>
                   {hasMonthly && monthRange.flatMap(m => monthlyFeeNames.map(name => (
                     <td key={`gt_${m}_${name}`} className="px-2 py-3" />

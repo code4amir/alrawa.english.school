@@ -2,6 +2,7 @@ import uuid
 import datetime
 from django.db import models
 from django.db.models import Q
+from django.core.validators import MinValueValidator
 
 
 class BankAccount(models.Model):
@@ -38,7 +39,7 @@ class Transaction(models.Model):
         BankAccount, on_delete=models.PROTECT,
         blank=True, null=True, related_name='destination_transactions'
     )
-    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
     category = models.CharField(max_length=100, blank=True, null=True)
     description = models.TextField(blank=True, null=True)
     student = models.ForeignKey(
@@ -101,7 +102,7 @@ class FeeSchedule(models.Model):
         blank=True, null=True, related_name='fee_schedules'
     )
     category = models.CharField(max_length=100)
-    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
     frequency = models.CharField(max_length=20, choices=FREQUENCY_CHOICES, default='MONTHLY')
     applicability = models.CharField(max_length=20, choices=APPLICABILITY_CHOICES, default='AUTO')
     effective_from = models.DateField(blank=True, null=True)
@@ -152,7 +153,7 @@ class FeeWaiver(models.Model):
         related_name='waivers'
     )
     type = models.CharField(max_length=20, choices=WAIVER_TYPES, default='CUSTOM_AMOUNT')
-    value = models.DecimalField(max_digits=12, decimal_places=2)
+    value = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
     reason = models.TextField(blank=True, null=True)
     approved_by = models.CharField(max_length=100, blank=True, null=True)
     approved_at = models.DateTimeField(blank=True, null=True)
@@ -195,6 +196,9 @@ class StudentFeeAssignment(models.Model):
         indexes = [
             models.Index(fields=['student', 'fee_schedule']),
         ]
+        constraints = [
+            models.UniqueConstraint(fields=['student', 'fee_schedule'], name='unique_student_fee_assignment'),
+        ]
         verbose_name = 'student fee assignment'
         verbose_name_plural = 'student fee assignments'
 
@@ -217,7 +221,7 @@ class PaymentAllocation(models.Model):
         related_name='payment_allocations'
     )
     period = models.CharField(max_length=20, blank=True, null=True)
-    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -256,7 +260,7 @@ class OpeningBalance(models.Model):
         BankAccount, on_delete=models.PROTECT,
         related_name='opening_balances'
     )
-    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(0)])
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.CharField(max_length=100, blank=True, null=True)
 

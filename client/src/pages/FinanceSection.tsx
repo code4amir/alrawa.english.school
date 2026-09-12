@@ -3,6 +3,7 @@ import type { ReactNode, FormEvent } from 'react';
 import DOMPurify from 'dompurify';
 import { useSchoolStore, useAuthStore, useUIStore, api } from '../store';
 import { useFocusTrap } from '../lib/useFocusTrap';
+import { isUsableWaiver, waiverExpectedAmount } from '../lib/waivers';
 import { Clock, BarChart3, AlertTriangle, Users, Upload, Ban, ChevronLeft, ChevronRight, DollarSign, TrendingDown, RefreshCw, BookOpen, Shield, Lock, Scale, Printer, CheckCircle } from 'lucide-react';
 import Skeleton from '../components/Skeleton';
 import { toast } from '../components/Toast';
@@ -52,6 +53,12 @@ function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, r
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  // Debounce ledger search: one request per pause, not one per keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
   const [page, setPage] = useState(1);
   const [cancelId, setCancelId] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState('');
@@ -73,7 +80,7 @@ function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, r
       const params: Record<string, string> = { account: ledgerAccount, limit: String(PAGE_SIZE) };
       if (dateFrom) params.dateFrom = dateFrom;
       if (dateTo) params.dateTo = dateTo;
-      if (search) params.search = search;
+      if (debouncedSearch) params.search = debouncedSearch;
       params.page = String(p);
       const res = await api.get('/finance/ledger/', { params });
       if (res.data?.data) {
@@ -87,14 +94,14 @@ function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, r
       }
     } catch (e) { if (import.meta.env.DEV) console.warn('[FinanceSection] ledger fetch failed', e); }
     finally { setLoading(false); }
-  }, [ledgerAccount, dateFrom, dateTo, search]);
+  }, [ledgerAccount, dateFrom, dateTo, debouncedSearch]);
 
   useEffect(() => { 
     fetchFinance(); 
     fetchFeeSchedules();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   
-  useEffect(() => { setPage(1); fetchData(1); }, [ledgerAccount, dateFrom, dateTo, search, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (page === 1) fetchData(1); else setPage(1); }, [ledgerAccount, dateFrom, dateTo, debouncedSearch, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { fetchData(page); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -124,32 +131,44 @@ function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, r
     }
   };
 
+  // Backend caps ledger pages at 200 rows — page through ALL of them so
+  // exports cover the full filtered set (totals shown are global).
+  const fetchAllLedgerEntries = async (base: Record<string, string>) => {
+    let page = 1;
+    let allEntries: any[] = [];
+    let first: any = null;
+    for (;;) {
+      const res = await api.get('/finance/ledger/', { params: { ...base, page: String(page), limit: '200' } });
+      if (!first) first = res.data;
+      allEntries = allEntries.concat(res.data?.data || []);
+      if (page >= (res.data?.totalPages || 1)) break;
+      page += 1;
+    }
+    return { allEntries, first };
+  };
+
   const handleDownloadPdf = async () => {
     try {
-      const params: Record<string, string> = { account: ledgerAccount, limit: '9999' };
+      const params: Record<string, string> = { account: ledgerAccount };
       if (dateFrom) params.dateFrom = dateFrom;
       if (dateTo) params.dateTo = dateTo;
       if (search) params.search = search;
-      params.page = '1';
-      const res = await api.get('/finance/ledger/', { params });
-      const allEntries = res.data?.data || [];
+      const { allEntries, first } = await fetchAllLedgerEntries(params);
       const { pdfLedger } = await import('../lib/financeReportPdf');
-      pdfLedger(allEntries, ledgerAccount, dateFrom, dateTo, res.data.openingBalance, res.data.closingBalance, res.data.totalDebit, res.data.totalCredit);
+      pdfLedger(allEntries, ledgerAccount, dateFrom, dateTo, first.openingBalance, first.closingBalance, first.totalDebit, first.totalCredit);
       toast('PDF downloaded', 'success');
     } catch { toast('PDF generation failed', 'error'); }
   };
 
   const handlePrint = async () => {
     try {
-      const params: Record<string, string> = { account: ledgerAccount, limit: '9999' };
+      const params: Record<string, string> = { account: ledgerAccount };
       if (dateFrom) params.dateFrom = dateFrom;
       if (dateTo) params.dateTo = dateTo;
       if (search) params.search = search;
-      params.page = '1';
-      const res = await api.get('/finance/ledger/', { params });
-      const allEntries = res.data?.data || [];
+      const { allEntries, first } = await fetchAllLedgerEntries(params);
       const { buildLedgerPrintHtml } = await import('../lib/financeReportPdf');
-      const rawHtml = buildLedgerPrintHtml(allEntries, ledgerAccount, dateFrom, dateTo, res.data.openingBalance, res.data.closingBalance, fmt, res.data.totalDebit, res.data.totalCredit);
+      const rawHtml = buildLedgerPrintHtml(allEntries, ledgerAccount, dateFrom, dateTo, first.openingBalance, first.closingBalance, fmt, first.totalDebit, first.totalCredit);
       const w = window.open('', '_blank');
       if (!w) { toast('Please allow pop-ups for printing', 'error'); return; }
       w.document.write(DOMPurify.sanitize(rawHtml));
@@ -420,8 +439,8 @@ const FinanceSection = () => {
     api.get(`/finance/fee-waivers/`, { signal: ctrl.signal, params: { studentId: selectedStudent, feeScheduleId: sched.id, active: 'true' } })
       .then(res => {
         const data = res.data.results || res.data.data || res.data;
-        const waiver = data?.[0];
-        const amount = waiver ? Number(waiver.value) : Number(sched.amount);
+        const waiver = (data || []).find((w: any) => isUsableWaiver(w)) || null;
+        const amount = waiverExpectedAmount(waiver, Number(sched.amount));
         setAmount(String(amount));
       })
       .catch(() => {});

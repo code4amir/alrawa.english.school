@@ -6,8 +6,7 @@ from rest_framework.response import Response
 from django.db.models import Sum, Q, Count, OuterRef, Subquery, DateTimeField
 from django.db.models.functions import ExtractMonth
 
-from finance.models import Transaction, StudentFeeAssignment, OpeningBalance
-from students.models import Student
+from finance.models import Transaction, OpeningBalance
 from finance.serializers import TransactionSerializer
 from accounts.permissions import require_permission
 from .base import (
@@ -158,8 +157,8 @@ class ReportView(generics.GenericAPIView):
         opening = {}
         closing = {}
         ob_map = {
-            ob.account_name: ob
-            for ob in OpeningBalance.objects.filter(account__name__in=accounts, fiscal_year=fy)
+            ob.account.name: ob
+            for ob in OpeningBalance.objects.filter(account__name__in=accounts, fiscal_year=fy).select_related('account')
         }
         for account in accounts:
             ob = ob_map.get(account)
@@ -188,54 +187,40 @@ class ReportView(generics.GenericAPIView):
         })
 
     def _report_defaulter(self, fy, request):
+        # Single source of truth: delegate to DefaulterService so this
+        # endpoint agrees with /finance/defaulter/ on waivers, monthly
+        # proration, assignment windows, and cancelled transactions.
+        # Response shape is kept flat for backward compatibility.
+        from finance.services.defaulter_service import DefaulterService
         class_id = request.query_params.get('class_id')
         fee_category = request.query_params.get('fee_category')
+        month_from = request.query_params.get('month_from') or request.query_params.get('monthFrom')
+        month_to = request.query_params.get('month_to') or request.query_params.get('monthTo')
+        year_str = request.query_params.get('year') or request.query_params.get('fiscal_year')
 
-        students_qs = Student.objects.filter(
-            deleted_at__isnull=True,
-        ).select_related('school_class')
+        svc = DefaulterService(
+            fee_category=fee_category or None,
+            month_from=month_from, month_to=month_to,
+            year_str=year_str,
+        )
+        svc.resolve_year()
+        students_qs = svc.get_student_queryset()
         if class_id:
             students_qs = students_qs.filter(school_class_id=class_id)
-
-        student_ids = list(students_qs.values_list('id', flat=True))
-
-        paid_map = dict(
-            Transaction.objects.filter(
-                student_id__in=student_ids,
-                transaction_type='INCOME',
-                is_cancelled=False,
-            ).values('student_id').annotate(
-                total=Sum('amount')
-            ).values_list('student_id', 'total')
-        )
-
-        assignment_filters = {
-            'student_id__in': student_ids,
-            'active': True,
-        }
-        if fee_category:
-            assignment_filters['fee_schedule__category'] = fee_category
-
-        expected_map = dict(
-            StudentFeeAssignment.objects.filter(
-                **assignment_filters
-            ).values('student_id').annotate(
-                total=Sum('fee_schedule__amount')
-            ).values_list('student_id', 'total')
-        )
+        students = list(students_qs.select_related('school_class'))
+        computed = svc.compute(students, [s.id for s in students])
 
         result = []
-        for student in students_qs:
-            paid = paid_map.get(student.id, Decimal('0'))
-            expected = expected_map.get(student.id, Decimal('0'))
+        for entry, student in zip(computed, students):
+            due = entry['totalDue'] - entry['totalPaid']
             result.append({
                 'student_id': student.id,
                 'student_name': student.name,
                 'roll': student.roll,
                 'class': student.school_class.name if student.school_class else '',
-                'paid': paid,
-                'expected': expected,
-                'due': expected - paid,
+                'paid': entry['totalPaid'],
+                'expected': entry['totalDue'],
+                'due': due,
             })
 
         return Response(result)

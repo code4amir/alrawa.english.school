@@ -171,18 +171,20 @@ const FinanceReports = () => {
   };
 
   const handleExcel = async () => {
-    if (tab === 'income-report') {
-      const rows = headwise(incomeTx).map(([cat, amt]: [string, number]) => [cat, Number(amt), incomeTx.filter((t: any) => (t.category || 'Uncategorized') === cat).length]);
-      downloadExcel(`Income_Report_${dateFrom}_${dateTo}.xlsx`, ['Category', 'Amount', 'Count'], rows);
-    } else if (tab === 'expense-report') {
-      const rows = headwise(expenseTx).map(([cat, amt]: [string, number]) => [cat, Number(amt), expenseTx.filter((t: any) => (t.category || 'Uncategorized') === cat).length]);
-      downloadExcel(`Expense_Report_${dateFrom}_${dateTo}.xlsx`, ['Category', 'Amount', 'Count'], rows);
-    } else if (tab === 'audit' || tab === 'yearly-agm') {
-      const incRows = headwise(yearIncome).map(([cat, amt]: [string, number]) => ['Income', cat, Number(amt)]);
-      const expRows = headwise(yearExpense).map(([cat, amt]: [string, number]) => ['Expense', cat, Number(amt)]);
-      downloadExcel(`Annual_Report_${yearFilter}.xlsx`, ['Type', 'Category', 'Amount'], [...incRows, ...expRows]);
-    }
-    toast('Excel downloaded ✓', 'success');
+    try {
+      if (tab === 'income-report') {
+        const rows = headwise(incomeTx).map(([cat, amt]: [string, number]) => [cat, Number(amt), incomeTx.filter((t: any) => (t.category || 'Uncategorized') === cat).length]);
+        await downloadExcel(`Income_Report_${dateFrom}_${dateTo}.xlsx`, ['Category', 'Amount', 'Count'], rows);
+      } else if (tab === 'expense-report') {
+        const rows = headwise(expenseTx).map(([cat, amt]: [string, number]) => [cat, Number(amt), expenseTx.filter((t: any) => (t.category || 'Uncategorized') === cat).length]);
+        await downloadExcel(`Expense_Report_${dateFrom}_${dateTo}.xlsx`, ['Category', 'Amount', 'Count'], rows);
+      } else if (tab === 'audit' || tab === 'yearly-agm') {
+        const incRows = headwise(yearIncome).map(([cat, amt]: [string, number]) => ['Income', cat, Number(amt)]);
+        const expRows = headwise(yearExpense).map(([cat, amt]: [string, number]) => ['Expense', cat, Number(amt)]);
+        await downloadExcel(`Annual_Report_${yearFilter}.xlsx`, ['Type', 'Category', 'Amount'], [...incRows, ...expRows]);
+      }
+      toast('Excel downloaded ✓', 'success');
+    } catch { toast('Excel export failed', 'error'); }
   };
 
   const handlePdf = () => {

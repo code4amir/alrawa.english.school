@@ -6,7 +6,7 @@ const FREQUENCIES = ['MONTHLY', 'YEARLY', 'ONE_TIME'];
 const APPLICABILITIES = ['AUTO', 'ASSIGNED_ONLY'];
 
 const FeeScheduleTab = () => {
-  const { classes, feeSchedules: schedules, academicYears: years, fetchClasses, fetchFeeSchedules } = useSchoolStore();
+  const { classes, feeSchedules: schedules, academicYears: years, fetchClasses, fetchFeeSchedules, fetchAcademicYears } = useSchoolStore();
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -22,7 +22,7 @@ const FeeScheduleTab = () => {
     ? schedules.filter((s: any) => s.academicYearId === previousYear.id)
     : [];
 
-  useEffect(() => { Promise.all([fetchClasses(), fetchFeeSchedules()]).then(() => setLoading(false)); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { Promise.all([fetchClasses(), fetchFeeSchedules(), fetchAcademicYears()]).then(() => setLoading(false)); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleEdit = (s: any) => {
     setEditingId(s.id);
@@ -80,7 +80,7 @@ const FeeScheduleTab = () => {
   const handleCopyFromPreviousYear = async () => {
     if (!activeYear || !previousYear) return;
     try {
-      const res = await api.post('/finance/fee-schedules/copy-from-year/', {
+      const res = await api.post('/finance/fee-schedules/copy_from_year/', {
         sourceAcademicYearId: previousYear.id,
         targetAcademicYearId: activeYear.id,
       });

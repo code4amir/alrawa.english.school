@@ -73,8 +73,20 @@ describe('useSchoolStore — finance', () => {
 
       await useSchoolStore.getState().fetchTransactions();
 
-      expect(api.get).toHaveBeenCalledWith('/finance/transactions/', { params: undefined });
+      expect(api.get).toHaveBeenCalledWith('/finance/transactions/', { params: { offset: '0', limit: '50' } });
       expect(useSchoolStore.getState().transactions).toEqual(txData);
+    });
+
+    it('accumulates all DRF pages so client-side totals see every row', async () => {
+      const getSpy = vi.spyOn(api, 'get')
+        .mockResolvedValueOnce({ data: { results: [{ id: 't1' }], count: 3, next: 'http://x/?offset=50' } })
+        .mockResolvedValueOnce({ data: { results: [{ id: 't2' }, { id: 't3' }], count: 3, next: null } });
+
+      await useSchoolStore.getState().fetchTransactions();
+
+      expect(getSpy).toHaveBeenCalledTimes(2);
+      expect(useSchoolStore.getState().transactions).toEqual([{ id: 't1' }, { id: 't2' }, { id: 't3' }]);
+      expect(useSchoolStore.getState().transactionTotal).toBe(3);
     });
 
     it('handles paginated response with data property', async () => {
@@ -83,7 +95,7 @@ describe('useSchoolStore — finance', () => {
 
       await useSchoolStore.getState().fetchTransactions({ type: 'INCOME' });
 
-      expect(api.get).toHaveBeenCalledWith('/finance/transactions/', { params: { type: 'INCOME' } });
+      expect(api.get).toHaveBeenCalledWith('/finance/transactions/', { params: { offset: '0', limit: '50', type: 'INCOME' } });
       const state = useSchoolStore.getState();
       expect(state.transactions).toEqual(txData);
       expect(state.transactionTotal).toBe(50);
@@ -143,23 +155,28 @@ describe('useSchoolStore — finance', () => {
       expect(useSchoolStore.getState().feeSchedules).toEqual(schedules);
     });
 
-    it('fetchOpeningBalances calls GET with year param', async () => {
-      const balances = { AL_RAWA_BANK: 100, CASH_IN_HAND: 50 };
-      vi.spyOn(api, 'get').mockResolvedValue({ data: balances });
+    it('fetchOpeningBalances calls GET with fiscal_year param and normalizes list to map', async () => {
+      const rows = [
+        { account: 'AL_RAWA_BANK', amount: '100.00' },
+        { account: 'CASH_IN_HAND', amount: '50.00' },
+      ];
+      vi.spyOn(api, 'get').mockResolvedValue({ data: rows });
 
       await useSchoolStore.getState().fetchOpeningBalances('2025');
 
-      expect(api.get).toHaveBeenCalledWith('/finance/opening-balances/', { params: { year: '2025' } });
-      expect(useSchoolStore.getState().openingBalances).toEqual(balances);
+      expect(api.get).toHaveBeenCalledWith('/finance/opening-balances/', { params: { fiscal_year: '2025' } });
+      expect(useSchoolStore.getState().openingBalances).toEqual({
+        AL_RAWA_BANK: 100, GLOBAL_FORUM_BANK: 0, CASH_IN_HAND: 50,
+      });
     });
 
-    it('setOpeningBalances calls PUT then re-fetches', async () => {
-      const putSpy = vi.spyOn(api, 'put').mockResolvedValue({ data: { ok: true } });
+    it('setOpeningBalances calls bulk POST then re-fetches', async () => {
+      const postSpy = vi.spyOn(api, 'post').mockResolvedValue({ data: { ok: true } });
       vi.spyOn(api, 'get').mockResolvedValue({ data: { AL_RAWA_BANK: 200 } });
 
       const result = await useSchoolStore.getState().setOpeningBalances('2025', { AL_RAWA_BANK: 200 });
 
-      expect(putSpy).toHaveBeenCalledWith('/finance/opening-balances/', { year: '2025', balances: { AL_RAWA_BANK: 200 } });
+      expect(postSpy).toHaveBeenCalledWith('/finance/opening-balances/bulk/', { fiscal_year: '2025', balances: { AL_RAWA_BANK: 200 } });
       expect(result).toEqual({ ok: true });
       expect(useSchoolStore.getState().openingBalances).toEqual({ AL_RAWA_BANK: 200 });
     });

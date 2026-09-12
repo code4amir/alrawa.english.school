@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.tokens import RefreshToken
 from students.models import Student
 from core.models import SchoolClass, AcademicYear
-from .models import Transaction, FeeSchedule, PaymentAllocation, StudentFeeAssignment, OpeningBalance, PeriodClose, FeeWaiver, BankAccount
+from .models import Transaction, FeeSchedule, PaymentAllocation, StudentFeeAssignment, OpeningBalance, OpeningBalanceHistory, PeriodClose, FeeWaiver, BankAccount
 from parents.models import ParentStudentLink, NotificationLog
 
 User = get_user_model()
@@ -376,7 +376,7 @@ class FinanceTests(TestCase):
         Transaction.objects.create(
             transaction_date='2026-06-01', transaction_type='INCOME',
             amount=1000, description='Test', student=self.student,
-            destination_account=self.bank_ar, fiscal_year=2026
+            destination_account=self.bank_ar, fiscal_year=current_fy
         )
         OpeningBalance.objects.create(
             account=self.bank_ar, fiscal_year=current_fy, amount=50000,
@@ -1380,3 +1380,174 @@ class FinanceMoneyAuditTests(TestCase):
         actions = set(self.AuditLog.objects.filter(
             entity_type='reconciliation', entity_id=str(rid)).values_list('action', flat=True))
         self.assertEqual(actions, {'create', 'update', 'delete'})
+
+
+class FinanceAuditFixTests(TestCase):
+    """Regression tests for the Sept-2026 finance audit fixes (F1/F2/F9/F11/F12/F14)."""
+
+    def setUp(self):
+        from datetime import date
+        self.client = APIClient()
+        _auth(self.client)
+        self.klass = SchoolClass.objects.create(name='Class 5', order=1)
+        self.year = AcademicYear.objects.create(name='2026', start_date=date(2026, 1, 1), end_date=date(2026, 12, 31), is_active=True)
+        self.student = Student.objects.create(name='Stu', student_id='S000001', school_class=self.klass, session='2026')
+        self.fs = FeeSchedule.objects.create(
+            academic_year=self.year, school_class=self.klass,
+            category='Tuition', amount=1000, frequency='MONTHLY', applicability='AUTO'
+        )
+        self.bank_ar, _ = BankAccount.objects.get_or_create(name='AL_RAWA_BANK', display_name='AL RAWA Bank')
+
+    def _income(self, **kw):
+        data = {
+            'transaction_date': '2026-06-01',
+            'transaction_type': 'INCOME',
+            'amount': 1000,
+            'description': 'Test payment',
+            'student': str(self.student.id),
+            'class_name': 'Class 5',
+            'destination_account': 'AL_RAWA_BANK',
+            'fee_month': '2026-06',
+            'feeScheduleId': str(self.fs.id),
+        }
+        data.update(kw)
+        return self.client.post('/api/finance/transactions/', data, format='json')
+
+    def test_agm_with_opening_balance(self):
+        """F1: AGM must not crash when an opening balance exists for the FY."""
+        from django.utils import timezone
+        from finance.views.base import _fiscal_year_from_date
+        current_fy = _fiscal_year_from_date(timezone.now().date())
+        OpeningBalance.objects.create(
+            account=self.bank_ar, fiscal_year=current_fy, amount=50000, updated_by='test')
+        res = self.client.get('/api/finance/reports/agm/', {'year': current_fy})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(float(res.data['opening']['AL_RAWA_BANK']), 50000.0)
+
+    def test_bulk_row_gets_receipt_ref_and_allocation(self):
+        """F2: bulk import runs the full pipeline (receipt counter, allocation)."""
+        row = {
+            'transaction_date': '2026-06-01',
+            'transaction_type': 'INCOME',
+            'amount': 1000,
+            'description': 'Bulk import',
+            'student': str(self.student.id),
+            'class_name': 'Class 5',
+            'destination_account': 'AL_RAWA_BANK',
+            'fee_month': '2026-06',
+            'allocations': [{'feeScheduleId': str(self.fs.id), 'amount': 1000, 'period': '2026-06'}],
+        }
+        res = self.client.post('/api/finance/transactions/bulk/', [row], format='json')
+        self.assertEqual(res.status_code, 201)
+        tx = Transaction.objects.get(description='Bulk import')
+        self.assertTrue(tx.reference_id.startswith('RCPT-'))
+        self.assertIsNotNone(tx.receipt_sequence)
+        self.assertIsNotNone(tx.token_number)
+        self.assertTrue(PaymentAllocation.objects.filter(transaction=tx).exists())
+
+    def test_cancelled_payment_shows_unpaid_in_defaulter(self):
+        """F9: allocations of cancelled transactions must not count as paid."""
+        res = self._income()
+        self.assertEqual(res.status_code, 201)
+        params = {'month_from': '2026-06', 'month_to': '2026-06'}
+        before = self.client.get('/api/finance/defaulter/', params)
+        entry = [r for r in before.data['data'] if r['studentId'] == str(self.student.id)][0]
+        self.assertEqual(float(entry['balance']), 0.0)
+        res = self.client.post(
+            f"/api/finance/transactions/{res.data['id']}/cancel/",
+            {'reason': 'test'}, format='json')
+        self.assertEqual(res.status_code, 200)
+        after = self.client.get('/api/finance/defaulter/', params)
+        entry = [r for r in after.data['data'] if r['studentId'] == str(self.student.id)][0]
+        self.assertEqual(float(entry['balance']), 1000.0)
+
+    def test_closed_period_blocks_fee_schedule_edit(self):
+        """F11: period lock applies to fee models via their academic year."""
+        from finance.views.base import _fiscal_year_from_date
+        fy = _fiscal_year_from_date(self.year.start_date)
+        PeriodClose.objects.create(fiscal_year=fy, closed_by='test')
+        res = self.client.patch(
+            f'/api/finance/fee-schedules/{self.fs.id}/', {'amount': 2000}, format='json')
+        self.assertEqual(res.status_code, 403)
+        res = self.client.post('/api/finance/fee-waivers/', {
+            'student': str(self.student.id), 'fee_schedule': str(self.fs.id),
+            'type': 'CUSTOM_AMOUNT', 'value': 500,
+        }, format='json')
+        self.assertEqual(res.status_code, 403)
+
+    def test_pending_waiver_does_not_discount(self):
+        """F12: only approved waivers affect the expected amount."""
+        FeeWaiver.objects.create(
+            student=self.student, fee_schedule=self.fs,
+            type='CUSTOM_AMOUNT', value=500, approval_status='pending', active=True)
+        res = self._income()
+        self.assertEqual(res.status_code, 201)
+
+    def test_cancel_reverses_balance_cache(self):
+        """F14: cancelling must net the AccountBalance cache back to zero."""
+        from finance.models import AccountBalance
+        from finance.views.base import _fiscal_year_from_date
+        res = self._income()
+        self.assertEqual(res.status_code, 201)
+        fy = _fiscal_year_from_date(self.year.start_date)
+        bal = AccountBalance.objects.get(account=self.bank_ar, fiscal_year=fy, month=6)
+        self.assertEqual(float(bal.closing_balance), 1000.0)
+        self.client.post(
+            f"/api/finance/transactions/{res.data['id']}/cancel/",
+            {'reason': 'test'}, format='json')
+        bal.refresh_from_db()
+        self.assertEqual(float(bal.closing_balance), 0.0)
+
+    def test_negative_amount_rejected(self):
+        """Low: money fields must not accept negative values."""
+        res = self._income(amount=-100)
+        self.assertEqual(res.status_code, 400)
+
+    def test_duplicate_assignment_rejected(self):
+        """Low: (student, fee_schedule) is unique; raw dupes get a 400."""
+        StudentFeeAssignment.objects.create(student=self.student, fee_schedule=self.fs)
+        res = self.client.post('/api/finance/student-fee-assignments/', {
+            'student': str(self.student.id), 'fee_schedule': str(self.fs.id),
+        }, format='json')
+        self.assertEqual(res.status_code, 400)
+
+    def test_defaulter_bad_month_is_400(self):
+        """Low: malformed month params must 400, not 500."""
+        res = self.client.get('/api/finance/defaulter/', {'month_from': 'junk', 'month_to': '2026-06'})
+        self.assertEqual(res.status_code, 400)
+
+    def test_opening_balance_bad_year_is_400(self):
+        """Low: non-integer fiscal_year filter must 400, not 500."""
+        res = self.client.get('/api/finance/opening-balances/', {'fiscal_year': 'junk'})
+        self.assertEqual(res.status_code, 400)
+
+    def test_double_cancel_mints_one_reversal(self):
+        """Low: second cancel of the same transaction is rejected cleanly."""
+        res = self._income()
+        self.assertEqual(res.status_code, 201)
+        tx_id = res.data['id']
+        r1 = self.client.post(f'/api/finance/transactions/{tx_id}/cancel/', {'reason': 'x'}, format='json')
+        self.assertEqual(r1.status_code, 200)
+        r2 = self.client.post(f'/api/finance/transactions/{tx_id}/cancel/', {'reason': 'y'}, format='json')
+        self.assertEqual(r2.status_code, 400)
+        self.assertEqual(Transaction.objects.filter(reversal_of_id=tx_id).count(), 1)
+
+    def test_opening_balance_bulk_upsert(self):
+        """F5: bulk opening-balance save creates rows + history on change."""
+        from django.utils import timezone
+        from finance.views.base import _fiscal_year_from_date
+        fy = _fiscal_year_from_date(timezone.now().date())
+        res = self.client.post('/api/finance/opening-balances/bulk/', {
+            'fiscal_year': fy,
+            'balances': {'AL_RAWA_BANK': 5000, 'CASH_IN_HAND': 250},
+        }, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(
+            float(OpeningBalance.objects.get(account=self.bank_ar, fiscal_year=fy).amount), 5000.0)
+        res = self.client.post('/api/finance/opening-balances/bulk/', {
+            'fiscal_year': fy,
+            'balances': {'AL_RAWA_BANK': 6000},
+        }, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(OpeningBalanceHistory.objects.filter(
+            fiscal_year=fy, account=self.bank_ar, old_amount=5000, new_amount=6000).exists())

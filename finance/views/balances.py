@@ -1,3 +1,4 @@
+from decimal import Decimal, InvalidOperation
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -22,7 +23,11 @@ class OpeningBalanceViewSet(viewsets.ModelViewSet):
         qs = super().get_queryset()
         fiscal_year = _param(self.request, 'fiscal_year', 'fiscalYear')
         if fiscal_year:
-            qs = qs.filter(fiscal_year=int(fiscal_year))
+            try:
+                qs = qs.filter(fiscal_year=int(fiscal_year))
+            except (ValueError, TypeError):
+                from rest_framework.exceptions import ValidationError
+                raise ValidationError({'fiscal_year': 'Expected an integer year.'})
         account = _param(self.request, 'account')
         if account:
             qs = qs.filter(account__name=account)
@@ -42,6 +47,63 @@ class OpeningBalanceViewSet(viewsets.ModelViewSet):
                   details={'fiscal_year': obj.fiscal_year,
                            'account': getattr(obj.account, 'name', str(obj.account_id)),
                            'amount': str(obj.amount)})
+
+    @action(detail=False, methods=['post'], url_path='bulk')
+    def bulk(self, request):
+        """Upsert a whole year's opening balances in one call.
+
+        Body: {fiscal_year, balances: {ACCOUNT_NAME: amount}}.
+        Creates per-account history rows on change, like perform_update.
+        """
+        from finance.models import BankAccount
+        fy = request.data.get('fiscal_year', request.data.get('fiscalYear', request.data.get('year')))
+        try:
+            fy = int(fy)
+        except (TypeError, ValueError):
+            return Response({'error': 'fiscal_year is required'}, status=status.HTTP_400_BAD_REQUEST)
+        _check_period_open(fy)
+        balances = request.data.get('balances') or {}
+        if not isinstance(balances, dict):
+            return Response({'error': 'balances must be an object of account name to amount'}, status=status.HTTP_400_BAD_REQUEST)
+        error = None
+        saved = []
+        with db_transaction.atomic():
+            for account_name, raw_amount in balances.items():
+                try:
+                    amount = Decimal(str(raw_amount))
+                except (TypeError, ValueError, InvalidOperation):
+                    error = f'Invalid amount for {account_name}'
+                    break
+                account = BankAccount.objects.filter(name=account_name).first()
+                if account is None:
+                    error = f'Unknown account {account_name}'
+                    break
+                obj, created = OpeningBalance.objects.get_or_create(
+                    fiscal_year=fy, account=account,
+                    defaults={'amount': amount, 'updated_by': str(request.user.id)},
+                )
+                if created:
+                    log_audit('create', 'opening_balance', entity_id=obj.pk, request=request,
+                              details={'fiscal_year': fy, 'account': account_name, 'amount': str(amount)})
+                elif obj.amount != amount:
+                    old_amount = obj.amount
+                    obj.amount = amount
+                    obj.updated_by = str(request.user.id)
+                    obj.save(update_fields=['amount', 'updated_by', 'updated_at'])
+                    OpeningBalanceHistory.objects.create(
+                        fiscal_year=fy, account=account,
+                        old_amount=old_amount, new_amount=amount,
+                        changed_by=str(request.user.id),
+                    )
+                    log_audit('update', 'opening_balance', entity_id=obj.pk, request=request,
+                              details={'fiscal_year': fy, 'account': account_name,
+                                       'old_amount': str(old_amount), 'new_amount': str(amount)})
+                saved.append(OpeningBalanceSerializer(obj).data)
+            if error:
+                db_transaction.set_rollback(True)
+        if error:
+            return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(saved, status=status.HTTP_200_OK)
 
     def perform_update(self, serializer):
         instance = self.get_object()
@@ -108,6 +170,8 @@ class OpeningBalanceViewSet(viewsets.ModelViewSet):
 class PeriodCloseViewSet(viewsets.ModelViewSet):
     queryset = PeriodClose.objects.all()
     serializer_class = PeriodCloseSerializer
+    # fiscal_year is unique: reopen/delete address the year, not the UUID.
+    lookup_field = 'fiscal_year'
 
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:

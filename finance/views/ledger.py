@@ -279,13 +279,17 @@ class LedgerActionsMixin:
         if not students:
             return Response({'totalStudents': 0, 'notifiedParents': 0, 'skipped': 0})
 
+        # One batched compute for everybody (per-student compute here would
+        # be N+1: a full query set per child).
+        all_results = svc.compute(students, [s.id for s in students])
+        by_student_id = {r['studentId']: r for r in all_results}
+
         notified = 0
         skipped = 0
         processed = 0
         for student in students:
-            student_ids = [student.id]
-            result = svc.compute([student], student_ids)
-            fees = result[0]['fees'] if result else []
+            entry = by_student_id.get(str(student.id))
+            fees = entry['fees'] if entry else []
             if not compose_dues_body(fees):
                 skipped += 1
                 continue

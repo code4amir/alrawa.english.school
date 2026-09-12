@@ -139,7 +139,8 @@ const StudentWaiversTab = () => {
       setEditExpected('');
       setEditReason('');
       setEditApprovedBy('');
-      loadActiveWaivers();
+      await loadActiveWaivers();
+      await loadData();
     } catch { toast('Failed to update', 'error'); }
   };
 

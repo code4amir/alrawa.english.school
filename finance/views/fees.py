@@ -12,8 +12,23 @@ from finance.serializers import (
     StudentFeeAssignmentToggleSerializer, BulkAssignSerializer
 )
 from accounts.permissions import require_permission
-from .base import PeriodClosedMixin, _param
+from .base import PeriodClosedMixin, _param, _resolve_fiscal_year, _check_period_open
 from core.audit import log_audit, AuditLogMixin
+
+
+def _check_schedule_period_open(fee_schedule_id):
+    """Block assignment edits when the schedule's fiscal year is closed.
+
+    Custom actions (toggle/bulk) bypass PeriodClosedMixin, so they check here.
+    """
+    schedule = FeeSchedule.objects.select_related('academic_year').filter(
+        id=fee_schedule_id
+    ).first()
+    if schedule is None:
+        return
+    fiscal_year = _resolve_fiscal_year({'fee_schedule': schedule})
+    if fiscal_year:
+        _check_period_open(fiscal_year)
 
 class FeeScheduleViewSet(PeriodClosedMixin, AuditLogMixin, viewsets.ModelViewSet):
     queryset = FeeSchedule.objects.select_related('academic_year', 'school_class').all()
@@ -60,10 +75,19 @@ class FeeWaiverViewSet(PeriodClosedMixin, AuditLogMixin, viewsets.ModelViewSet):
     serializer_class = FeeWaiverSerializer
 
     def perform_create(self, serializer):
-        serializer.save(
-            approved_by=str(self.request.user.id),
-            approved_at=timezone.now(),
-        )
+        # FeeWaiverViewSet overrides the mixin, so enforce the period lock here.
+        fiscal_year = _resolve_fiscal_year(serializer.validated_data)
+        if fiscal_year:
+            _check_period_open(fiscal_year)
+        # Only stamp approval when the waiver is actually created approved;
+        # a pending waiver must not look approved.
+        if serializer.validated_data.get('approval_status') == 'approved':
+            serializer.save(
+                approved_by=str(self.request.user.id),
+                approved_at=timezone.now(),
+            )
+        else:
+            serializer.save()
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -96,6 +120,21 @@ class StudentFeeAssignmentViewSet(PeriodClosedMixin, AuditLogMixin, viewsets.Mod
     queryset = StudentFeeAssignment.objects.select_related('student', 'fee_schedule').all()
     serializer_class = StudentFeeAssignmentSerializer
 
+    def perform_create(self, serializer):
+        # This overrides PeriodClosedMixin.perform_create, so enforce the
+        # period lock here.
+        fiscal_year = _resolve_fiscal_year(serializer.validated_data)
+        if fiscal_year:
+            _check_period_open(fiscal_year)
+        # UniqueConstraint(student, fee_schedule) backs this; turn a race
+        # duplicate into a 400 instead of a 500.
+        from django.db import IntegrityError
+        from rest_framework.exceptions import ValidationError
+        try:
+            serializer.save()
+        except IntegrityError:
+            raise ValidationError({'fee_schedule': 'This student is already assigned to this fee.'})
+
     def get_queryset(self):
         qs = super().get_queryset()
         student_id = _param(self.request, 'student_id', 'studentId')
@@ -119,6 +158,8 @@ class StudentFeeAssignmentViewSet(PeriodClosedMixin, AuditLogMixin, viewsets.Mod
         serializer = StudentFeeAssignmentToggleSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+
+        _check_schedule_period_open(data['fee_schedule_id'])
 
         assignment, created = StudentFeeAssignment.objects.select_related(
             'student', 'fee_schedule'
@@ -168,6 +209,9 @@ class StudentFeeAssignmentViewSet(PeriodClosedMixin, AuditLogMixin, viewsets.Mod
             school_class_id=data['class_id'],
             deleted_at__isnull=True
         )
+
+        _check_schedule_period_open(data['fee_schedule_id'])
+
         with db_transaction.atomic():
             existing = set(
                 StudentFeeAssignment.objects.filter(
@@ -177,8 +221,9 @@ class StudentFeeAssignmentViewSet(PeriodClosedMixin, AuditLogMixin, viewsets.Mod
             )
             new_assignments = [
                 StudentFeeAssignment(
-                    student=s, 
+                    student=s,
                     fee_schedule_id=data['fee_schedule_id'],
+                    active=data.get('active', True),
                     starts_at=data.get('startsAt'),
                     ends_at=data.get('endsAt')
                 )

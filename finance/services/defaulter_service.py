@@ -3,7 +3,7 @@ from django.db.models import Sum, Q
 from finance.models import FeeSchedule, FeeWaiver, PaymentAllocation, StudentFeeAssignment
 from students.models import Student
 from core.models import AcademicYear
-from finance.views.base import _waiver_expected_amount
+from finance.views.base import _waiver_expected_amount, _waiver_covers_month, _parse_month
 
 
 class DefaulterService:
@@ -98,6 +98,7 @@ class DefaulterService:
     def _fetch_paid_map(self, student_ids):
         paid_allocations = PaymentAllocation.objects.filter(
             student_id__in=student_ids,
+            transaction__is_cancelled=False,
         ).values('student_id', 'fee_schedule_id', 'period').annotate(total=Sum('amount'))
 
         paid_map = {}
@@ -109,7 +110,8 @@ class DefaulterService:
     def _fetch_waiver_map(self, student_ids):
         waivers = FeeWaiver.objects.filter(
             student_id__in=student_ids, active=True,
-        ).values('student_id', 'fee_schedule_id', 'type', 'value')
+            approval_status='approved',
+        ).values('student_id', 'fee_schedule_id', 'type', 'value', 'starts_at', 'ends_at')
 
         return {
             (w['student_id'], w['fee_schedule_id']): w
@@ -155,34 +157,38 @@ class DefaulterService:
                 months_list = []
                 months_to_check = []
                 if self.month_from and self.month_to:
-                    parts_from = self.month_from.split('-')
-                    parts_to = self.month_to.split('-')
-                    if len(parts_from) == 2 and len(parts_to) == 2:
-                        y, m = int(parts_from[0]), int(parts_from[1])
-                        ey, em = int(parts_to[0]), int(parts_to[1])
-                        while y < ey or (y == ey and m <= em):
-                            months_to_check.append(f"{y}-{m:02d}")
-                            m += 1
-                            if m > 12:
-                                m = 1
-                                y += 1
+                    y, m = _parse_month(self.month_from, 'month_from')
+                    ey, em = _parse_month(self.month_to, 'month_to')
+                    while y < ey or (y == ey and m <= em):
+                        months_to_check.append(f"{y}-{m:02d}")
+                        m += 1
+                        if m > 12:
+                            m = 1
+                            y += 1
 
                 waiver_entry = waiver_map.get((sid, fs.id))
                 amt = float(_waiver_expected_amount(waiver_entry, fs.amount))
+                fee_paid = 0
+                fee_due = 0
                 for month_label in months_to_check:
+                    # A waiver only discounts the months inside its active window.
+                    w = waiver_entry if _waiver_covers_month(waiver_entry, month_label) else None
+                    month_amt = float(_waiver_expected_amount(w, fs.amount))
                     paid_amt = paid_map.get((sid, fs.id, month_label), 0)
                     months_list.append({
                         'month': month_label,
-                        'amount': amt,
-                        'paid': paid_amt >= amt,
+                        'amount': month_amt,
+                        'paid': paid_amt >= month_amt,
                     })
-                    total_due += amt
+                    fee_due += month_amt
+                    fee_paid += paid_amt
+                    total_due += month_amt
                     total_paid += paid_amt
 
                 fees.append({
                     'name': fs.category,
                     'amount': amt,
-                    'paid': total_paid >= total_due and len(months_to_check) > 0,
+                    'paid': fee_paid >= fee_due and len(months_to_check) > 0,
                     'type': 'recurring',
                     'months': months_list,
                 })

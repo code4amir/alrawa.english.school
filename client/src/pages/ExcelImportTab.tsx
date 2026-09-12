@@ -3,6 +3,7 @@ import { toast } from '../components/Toast';
 import { Upload, Trash2, Edit2, Check, X, Download, Loader } from 'lucide-react';
 import { useSchoolStore, api } from '../store';
 import { PRIMARY_BANK, CASH_BANK } from '../lib/accounts';
+import { isUsableWaiver, waiverExpectedAmount } from '../lib/waivers';
 import type { FeeWaiver, FeeSchedule, Student } from '../lib/types';
 
 
@@ -102,9 +103,9 @@ function validateRow(row: ImportRow, feeCats: string[], feeSchedules: any[], wai
       const waiver = waivers.find((w: any) => {
         const wStudent = String(w.studentId || w.student || '');
         const wFs = String(w.feeScheduleId || w.feeSchedule || '');
-        return wStudent === String(row.studentId) && wFs === String(fs.id) && w.active;
+        return wStudent === String(row.studentId) && wFs === String(fs.id) && isUsableWaiver(w, row.feeMonth);
       });
-      const expected = waiver ? Number(waiver.value) : Number(fs.amount);
+      const expected = waiverExpectedAmount(waiver || null, Number(fs.amount));
       const actual = parseFloat(String(row.amount).replace(/[,৳$\s]/g, ''));
       if (Math.abs(actual - expected) > 0.01) {
         const msg = waiver ? `should be ${expected} (waiver)` : `should be ${expected}`;
@@ -135,7 +136,7 @@ export default function ExcelImportTab() {
   useEffect(() => {
     fetchExpenseCategories();
     fetchFeeSchedules();
-    api.get('/finance/fee-waivers', { params: { active: 'true' } }).then(r => setWaivers(r.data.results || r.data.data || r.data)).catch(() => {});
+    api.get('/finance/fee-waivers/', { params: { active: 'true' } }).then(r => setWaivers(r.data.results || r.data.data || r.data)).catch(() => {});
     api.get('/finance/transactions/', { params: { limit: '9999' } }).then(r => {
       const txns = r.data?.data || r.data?.results || r.data || [];
       const pSet = new Set<string>();
@@ -210,7 +211,7 @@ export default function ExcelImportTab() {
     try {
       const [fsRes, wRes] = await Promise.all([
         api.get('/finance/fee-schedules/'),
-        api.get('/finance/fee-waivers', { params: { active: 'true' } }),
+        api.get('/finance/fee-waivers/', { params: { active: 'true' } }),
       ]);
       latestFeeSchedules = fsRes.data.results || fsRes.data.data || fsRes.data;
       latestWaivers = wRes.data.results || wRes.data.data || wRes.data;

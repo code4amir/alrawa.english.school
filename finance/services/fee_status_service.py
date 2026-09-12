@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.db.models import Sum, Q
 from finance.models import FeeSchedule, FeeWaiver, PaymentAllocation, Transaction, StudentFeeAssignment
 from students.models import Student
-from finance.views.base import _waiver_expected_amount
+from finance.views.base import _waiver_expected_amount, _waiver_covers_month, _parse_month
 
 
 class FeeStatusService:
@@ -125,7 +125,8 @@ class FeeStatusService:
         return {
             str(w.fee_schedule_id): w
             for w in FeeWaiver.objects.filter(
-                student=student, fee_schedule__in=final_schedules, active=True
+                student=student, fee_schedule__in=final_schedules, active=True,
+                approval_status='approved',
             )
         }
 
@@ -143,16 +144,21 @@ class FeeStatusService:
             has_allocations = bool(schedule_paid)
 
             waiver = waiver_map.get(fs_id)
-            expected_per_month = float(_waiver_expected_amount(waiver, s.amount))
-            expected_total = expected_per_month * num_valid_months
+            expected_per_month = float(s.amount)
+            expected_total = 0.0
 
             unpaid_months = []
             for month in valid_months:
+                # A waiver only discounts the months inside its active window.
+                w = waiver if _waiver_covers_month(waiver, month) else None
+                month_expected = float(_waiver_expected_amount(w, s.amount))
+                expected_per_month = month_expected
+                expected_total += month_expected
                 if has_allocations:
                     month_paid = schedule_paid.get(month, Decimal('0'))
                 else:
                     month_paid = paid_by_category_month.get(s.category, {}).get(month, Decimal('0'))
-                if float(month_paid) < expected_per_month:
+                if float(month_paid) < month_expected:
                     unpaid_months.append(month)
 
             item = {
@@ -190,10 +196,8 @@ class FeeStatusService:
     @staticmethod
     def _months_in_range(start, end):
         months = []
-        parts = start.split('-')
-        y, m = int(parts[0]), int(parts[1])
-        e_parts = end.split('-')
-        ey, em = int(e_parts[0]), int(e_parts[1])
+        y, m = _parse_month(start, 'fee_month')
+        ey, em = _parse_month(end, 'fee_month_to')
         while y < ey or (y == ey and m <= em):
             months.append(f"{y}-{m:02d}")
             m += 1

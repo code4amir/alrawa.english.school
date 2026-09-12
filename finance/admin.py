@@ -19,7 +19,27 @@ class TransactionAdmin(admin.ModelAdmin):
                     'source_account', 'destination_account', 'is_cancelled')
     list_filter = ('transaction_type', 'fiscal_year', 'is_cancelled')
     search_fields = ('description', 'reference_id', 'category')
-    readonly_fields = ('id', 'created_at', 'updated_at')
+    # Ledger entries are immutable — corrections go through cancel+reversal
+    # in the app, so the admin must not edit or delete them either.
+    readonly_fields = ('id', 'transaction_type', 'amount', 'transaction_date',
+                       'entry_date', 'source_account', 'destination_account',
+                       'category', 'description', 'student', 'class_name',
+                       'fee_month', 'fiscal_year', 'reference_id',
+                       'receipt_sequence', 'token_number', 'reversal_of_id',
+                       'is_cancelled', 'cancelled_at', 'cancelled_by',
+                       'cancel_reason', 'created_by', 'approved_by',
+                       'updated_by', 'created_at', 'updated_at')
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def save_model(self, request, obj, form, change):
+        if change:
+            from django.core.exceptions import ValidationError
+            raise ValidationError(
+                'Financial records are immutable. Cancel the transaction in the app instead.'
+            )
+        super().save_model(request, obj, form, change)
 
 
 @admin.register(FeeSchedule)

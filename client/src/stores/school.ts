@@ -257,15 +257,34 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
     if (!params && now - (get()._fetchedAt[key] || 0) < CACHE_TTL) return;
     set((s) => ({ loading: { ...s.loading, transactions: true } }));
     try {
-      const res = await dedupedFetch(key, () => api.get('/finance/transactions/', { params }));
-      set({ _fetchedAt: { ...get()._fetchedAt, [key]: Date.now() } });
-      if (Array.isArray(res.data)) {
-        set({ transactions: res.data });
-      } else if (res.data?.data) {
-        set({ transactions: res.data.data, transactionTotal: res.data.total, transactionPage: res.data.page, transactionTotalPages: res.data.totalPages });
-      } else if (res.data?.results) {
-        set({ transactions: res.data.results, transactionTotal: res.data.count ?? 0 });
+      // DRF paginates at 50/page — accumulate ALL pages: income/expense/
+      // audit totals are computed client-side from this array (same
+      // truncation bug as books had).
+      let offset = 0;
+      let all: any[] = [];
+      let total = 0;
+      let next: string | null = 'https://placeholder';
+      while (next !== null) {
+        const res = await api.get('/finance/transactions/', { params: { offset: String(offset), limit: '50', ...params } });
+        if (Array.isArray(res.data)) {
+          all = res.data;
+          total = res.data.length;
+          next = null;
+        } else if (res.data?.data) {
+          all = res.data.data;
+          total = res.data.total ?? all.length;
+          set({ transactionTotal: total, transactionPage: res.data.page ?? 1, transactionTotalPages: res.data.totalPages ?? 1 });
+          next = null;
+        } else {
+          const results: any[] = res.data.results || res.data || [];
+          all = all.concat(results);
+          total = res.data.count ?? total;
+          // DRF LimitOffsetPagination: res.data.next is a full URL or null.
+          next = res.data.next ?? null;
+          offset += 50;
+        }
       }
+      set({ transactions: all, transactionTotal: total || all.length, _fetchedAt: { ...get()._fetchedAt, [key]: Date.now() } });
     } catch (e) { if (import.meta.env.DEV) console.warn("[store]", e); }
     finally { set((s) => ({ loading: { ...s.loading, transactions: false } })); }
   },
@@ -291,13 +310,22 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
     const now = Date.now();
     if (now - (get()._fetchedAt[key] || 0) < CACHE_TTL) return;
     try {
-      const res = await dedupedFetch(key, () => api.get('/finance/opening-balances/', { params: { year } }));
-      set({ openingBalances: res.data.results || res.data.data || res.data, _fetchedAt: { ...get()._fetchedAt, [key]: Date.now() } });
+      const res = await dedupedFetch(key, () => api.get('/finance/opening-balances/', { params: year ? { fiscal_year: year } : undefined }));
+      // Normalize the record list into the account->amount map the modal reads.
+      const rows = res.data.results || res.data.data || res.data;
+      if (Array.isArray(rows)) {
+        const map: Record<string, number> = {};
+        ACCOUNT_IDS.forEach(id => { map[id] = 0; });
+        rows.forEach((r: any) => { const name = r.account?.name || r.account; if (name) map[name] = Number(r.amount) || 0; });
+        set({ openingBalances: map, _fetchedAt: { ...get()._fetchedAt, [key]: Date.now() } });
+      } else {
+        set({ openingBalances: rows, _fetchedAt: { ...get()._fetchedAt, [key]: Date.now() } });
+      }
     } catch (e) { if (import.meta.env.DEV) console.warn("[store]", e); }
   },
 
   setOpeningBalances: async (year, balances) => {
-    const res = await api.put('/finance/opening-balances/', { year, balances });
+    const res = await api.post('/finance/opening-balances/bulk/', { fiscal_year: year, balances });
     const key = `openingBalances_${year || ''}`;
     set((s) => ({ _fetchedAt: { ...s._fetchedAt, [key]: 0 } }));
     await get().fetchOpeningBalances(year);
@@ -308,7 +336,7 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
     const now = Date.now();
     if (now - (get()._fetchedAt[key] || 0) < CACHE_TTL) return;
     try {
-      const res = await dedupedFetch(key, () => api.get('/finance/opening-balances/history/', { params: { year } }));
+      const res = await dedupedFetch(key, () => api.get('/finance/opening-balances/history/', { params: year ? { fiscal_year: year } : undefined }));
       set({ openingBalancesHistory: res.data.results || res.data.data || res.data, _fetchedAt: { ...get()._fetchedAt, [key]: Date.now() } });
     } catch (e) { if (import.meta.env.DEV) console.warn("[store]", e); }
   },

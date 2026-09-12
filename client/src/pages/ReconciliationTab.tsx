@@ -17,38 +17,27 @@ export default function ReconciliationTab() {
   const [submitting, setSubmitting] = useState(false);
   const [exporting, setExporting] = useState<string | null>(null);
 
-  const handleExport = async (reconciliationId: string) => {
-    setExporting(reconciliationId);
+  const handleExport = (record: any) => {
+    setExporting(record.id);
     try {
-      const res = await api.get(`/finance/reconciliations/${reconciliationId}`);
-      const { reconciliation, openingBalance, transactions } = res.data;
+      // Retrieve returns the flat ReconciliationSerializer — export from
+      // its fields directly (no nested envelope exists).
+      const diff = Number(record.difference || 0);
       const rows = [
-        ['Account', reconciliation.account],
-        ['Statement Date', new Date(reconciliation.statementDate).toLocaleDateString()],
-        ['Opening Balance', openingBalance],
-        ['Closing Balance (Statement)', Number(reconciliation.closingBalance).toLocaleString()],
-        ['System Balance', Number(reconciliation.systemBalance || 0).toLocaleString()],
-        ['Difference', Number(reconciliation.difference || 0).toLocaleString()],
-        ['Status', Math.abs(Number(reconciliation.difference || 0)) < 0.01 ? 'Reconciled' : 'Difference'],
-        [],
-        ['Date', 'Type', 'Source', 'Destination', 'Amount', 'Description', 'Category', 'Student'],
-        ...transactions.map((t: any) => [
-          new Date(t.transaction_date).toLocaleDateString(),
-          t.transaction_type,
-          t.source_account || '',
-          t.destination_account || '',
-          Number(t.amount).toLocaleString(),
-          t.description || '',
-          t.category || '',
-          t.student_id ? `#${t.student_id.slice(0, 8)}` : '',
-        ]),
+        ['Account', (record.account || '').replace(/_/g, ' ')],
+        ['Statement Date', new Date(record.statementDate).toLocaleDateString()],
+        ['Closing Balance (Statement)', Number(record.closingBalance).toLocaleString()],
+        ['System Balance', Number(record.systemBalance || 0).toLocaleString()],
+        ['Difference', Number(record.difference || 0).toLocaleString()],
+        ['Status', Math.abs(diff) < 0.01 ? 'Reconciled' : 'Difference'],
+        ['Notes', record.notes || ''],
       ];
       const csv = rows.map(r => r.map((c: any) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
       const blob = new Blob([csv], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `reconciliation-${reconciliation.account}-${new Date(reconciliation.statementDate).toISOString().split('T')[0]}.csv`;
+      a.download = `reconciliation-${record.account}-${new Date(record.statementDate).toISOString().split('T')[0]}.csv`;
       a.click();
       URL.revokeObjectURL(url);
       toast('Exported ✓', 'success');
@@ -144,16 +133,16 @@ export default function ReconciliationTab() {
                 </span>
               </div>
               <div className="flex gap-4 mt-1">
-                <span className="text-xs text-school-muted">Statement: <strong>{Number(r.closingBalance).toLocaleString()} IQD</strong></span>
-                <span className="text-xs text-school-muted">System: <strong>{Number(r.systemBalance || 0).toLocaleString()} IQD</strong></span>
+                <span className="text-xs text-school-muted">Statement: <strong>{Number(r.closingBalance).toLocaleString()} ৳</strong></span>
+                <span className="text-xs text-school-muted">System: <strong>{Number(r.systemBalance || 0).toLocaleString()} ৳</strong></span>
                 <span className={`text-xs font-bold ${reconciled ? 'text-emerald-600' : 'text-red-600'}`}>
-                  Diff: {diff >= 0 ? '+' : ''}{diff.toLocaleString()} IQD
+                  Diff: {diff >= 0 ? '+' : ''}{diff.toLocaleString()} ৳
                 </span>
               </div>
               {r.notes && <p className="text-xs text-school-muted mt-0.5">{r.notes}</p>}
               <p className="text-[10px] text-school-muted mt-0.5">{new Date(r.statementDate).toLocaleDateString()} &middot; Recorded: {new Date(r.createdAt).toLocaleDateString()}</p>
             </div>
-            <button onClick={() => handleExport(r.id)} disabled={exporting === r.id}
+            <button onClick={() => handleExport(r)} disabled={exporting === r.id}
               className="flex-shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-school-paper text-school-muted hover:bg-school-accent/10 hover:text-school-accent border border-school-border transition-all disabled:opacity-50">
               <Download size={12} /> {exporting === r.id ? '...' : 'Export'}
             </button>

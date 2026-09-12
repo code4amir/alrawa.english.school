@@ -12,7 +12,7 @@ from django.core.cache import cache
 
 from finance.models import (
     Transaction, FeeSchedule, FeeWaiver, PaymentAllocation,
-    ReceiptCounter, StudentFeeAssignment,
+    ReceiptCounter, StudentFeeAssignment, OpeningBalance,
 )
 from finance.serializers import (
     TransactionSerializer, TransactionCancelSerializer
@@ -21,7 +21,7 @@ from accounts.permissions import require_permission
 from .base import (
     PRIMARY_BANK, PeriodClosedMixin, CROSS_BANK_INCOME, CROSS_BANK_EXPENSE,
     _internal_accounts, _account_balances_update, _param,
-    _check_period_open, _fiscal_year_from_date,
+    _check_period_open, _fiscal_year_from_date, _next_receipt_sequence,
     _waiver_expected_amount, _invalidate_dashboard_cache,
 )
 from .ledger import LedgerActionsMixin
@@ -58,7 +58,7 @@ class TransactionViewSet(AuditLogMixin, LedgerActionsMixin, PeriodClosedMixin, v
         )
 
     def get_permissions(self):
-        if self.action in ['list', 'retrieve', 'balances', 'ledger', 'fee_status']:
+        if self.action in ['list', 'retrieve', 'balances', 'ledger', 'fee_status', 'dashboard_summary', 'defaulter']:
             return [require_permission('finance:read')()]
         return [require_permission('finance:write')()]
 
@@ -86,47 +86,43 @@ class TransactionViewSet(AuditLogMixin, LedgerActionsMixin, PeriodClosedMixin, v
         errors = []
         seen_paid = set()
 
-        for idx, item in enumerate(request.data):
-            sid = db_transaction.savepoint()
-            try:
-                serializer = self.get_serializer(data=item)
-                serializer.is_valid(raise_exception=True)
+        # Outer atomic makes the per-row savepoints real: a failing row
+        # rolls back only itself, a passing row keeps the full
+        # create_transaction() pipeline (counters, waiver/allocation
+        # validation, audit log, parent notify).
+        with db_transaction.atomic():
+            for idx, item in enumerate(request.data):
+                sid = db_transaction.savepoint()
+                try:
+                    serializer = self.get_serializer(data=item)
+                    serializer.is_valid(raise_exception=True)
 
-                fiscal_year = serializer.validated_data.get('fiscal_year')
-                if fiscal_year:
-                    _check_period_open(fiscal_year)
+                    student = serializer.validated_data.get('student')
+                    fee_month = serializer.validated_data.get('fee_month')
+                    category = serializer.validated_data.get('category')
 
-                student = serializer.validated_data.get('student')
-                fee_month = serializer.validated_data.get('fee_month')
-                category = serializer.validated_data.get('category')
+                    if student and fee_month and category:
+                        dup_key = (str(student.id), fee_month, category)
+                        if dup_key in seen_paid:
+                            errors.append({'index': idx, 'student': str(student.id), 'feeMonth': fee_month, 'category': category, 'error': f'Fee month {fee_month} already imported for this student in {category}'})
+                            db_transaction.savepoint_rollback(sid)
+                            continue
+                        exists = Transaction.objects.filter(
+                            student=student, fee_month=fee_month, category=category,
+                            is_cancelled=False,
+                        ).exists()
+                        if exists:
+                            errors.append({'index': idx, 'student': str(student.id), 'feeMonth': fee_month, 'category': category, 'error': f'Fee month {fee_month} already paid for {student.name} in {category}'})
+                            db_transaction.savepoint_rollback(sid)
+                            continue
+                        seen_paid.add(dup_key)
 
-                if student and fee_month and category:
-                    dup_key = (str(student.id), fee_month, category)
-                    if dup_key in seen_paid:
-                        errors.append({'index': idx, 'student': str(student.id), 'feeMonth': fee_month, 'category': category, 'error': f'Fee month {fee_month} already imported for this student in {category}'})
-                        db_transaction.savepoint_rollback(sid)
-                        continue
-                    exists = Transaction.objects.filter(
-                        student=student, fee_month=fee_month, category=category,
-                        is_cancelled=False,
-                    ).exists()
-                    if exists:
-                        errors.append({'index': idx, 'student': str(student.id), 'feeMonth': fee_month, 'category': category, 'error': f'Fee month {fee_month} already paid for {student.name} in {category}'})
-                        db_transaction.savepoint_rollback(sid)
-                        continue
-                    seen_paid.add(dup_key)
-
-                tx_date = serializer.validated_data.get('transaction_date') or timezone.now().date()
-                tx = serializer.save(
-                    created_by=str(self.request.user.id),
-                    fiscal_year=fiscal_year or _fiscal_year_from_date(tx_date),
-                )
-                _account_balances_update(tx)
-                db_transaction.savepoint_commit(sid)
-                results.append(TransactionSerializer(tx).data)
-            except Exception as e:
-                db_transaction.savepoint_rollback(sid)
-                errors.append({'index': idx, 'error': str(e)})
+                    tx = create_transaction(serializer, self.request, row_data=item)
+                    db_transaction.savepoint_commit(sid)
+                    results.append(TransactionSerializer(tx).data)
+                except Exception as e:
+                    db_transaction.savepoint_rollback(sid)
+                    errors.append({'index': idx, 'error': str(e)})
 
         if errors and not results:
             return Response({'error': 'All rows failed', 'details': errors}, status=status.HTTP_400_BAD_REQUEST)
@@ -137,21 +133,31 @@ class TransactionViewSet(AuditLogMixin, LedgerActionsMixin, PeriodClosedMixin, v
 
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
-        tx = self.get_object()
-        if tx.is_cancelled:
-            return Response({'error': 'Already cancelled'}, status=400)
-        if tx.fiscal_year:
-            _check_period_open(tx.fiscal_year)
-
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from django.http import Http404
         serializer = TransactionCancelSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        # Single atomic block with a row lock: two concurrent cancels of
+        # the same transaction serialize here instead of each minting a
+        # reversal.
         with db_transaction.atomic():
+            try:
+                # select_related(None): Postgres forbids FOR UPDATE over the
+                # nullable LEFT JOINs in this viewset's base queryset.
+                tx = self.get_queryset().select_related(None).select_for_update().get(pk=pk)
+            except (Transaction.DoesNotExist, DjangoValidationError):
+                raise Http404
+            if tx.is_cancelled:
+                return Response({'error': 'Already cancelled'}, status=400)
+            if tx.fiscal_year:
+                _check_period_open(tx.fiscal_year)
+
             tx.is_cancelled = True
             tx.cancelled_at = timezone.now()
             tx.cancelled_by = str(request.user.id)
             tx.cancel_reason = serializer.validated_data['reason']
-            tx.save()
+            tx.save(update_fields=['is_cancelled', 'cancelled_at', 'cancelled_by', 'cancel_reason'])
             _account_balances_update(tx)
 
             reversal = Transaction.objects.create(
@@ -182,13 +188,7 @@ class TransactionViewSet(AuditLogMixin, LedgerActionsMixin, PeriodClosedMixin, v
                 reversal_type = 'PV'
             else:
                 reversal_type = 'TV'
-            counter, _ = ReceiptCounter.objects.select_for_update().get_or_create(
-                counter_date=reversal.transaction_date, receipt_type=reversal_type,
-                defaults={'next_sequence': 1, 'fiscal_year': reversal.transaction_date.year},
-            )
-            seq = counter.next_sequence
-            counter.next_sequence = seq + 1
-            counter.save(update_fields=['next_sequence'])
+            seq = _next_receipt_sequence(reversal.transaction_date, reversal_type)
             reversal.reference_id = f"{reversal_type}-{reversal.transaction_date:%Y%m%d}-{seq:04d}"
             reversal.save()
 
@@ -225,6 +225,13 @@ class TransactionViewSet(AuditLogMixin, LedgerActionsMixin, PeriodClosedMixin, v
 
         accounts = _internal_accounts()
 
+        from finance.models import OpeningBalance
+        fy = _fiscal_year_from_date(timezone.now().date())
+        # Scope the sums to the same FY as the opening balance below;
+        # summing lifetime transactions against one year's opening
+        # double-counts every prior year.
+        qs = qs.filter(fiscal_year=fy)
+
         income_qs = qs.filter(transaction_type='INCOME').values(
             'destination_account__name'
         ).annotate(total=Sum('amount')).values_list('destination_account__name', 'total')
@@ -245,8 +252,6 @@ class TransactionViewSet(AuditLogMixin, LedgerActionsMixin, PeriodClosedMixin, v
         ).annotate(total=Sum('amount')).values_list('source_account__name', 'total')
         transfer_out_map = dict(transfer_out_qs)
 
-        from finance.models import OpeningBalance
-        fy = _fiscal_year_from_date(timezone.now().date())
         opening_qs = OpeningBalance.objects.filter(
             fiscal_year=fy, account__name__in=accounts
         ).select_related('account').values_list('account__name', 'amount')
