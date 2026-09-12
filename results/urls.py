@@ -4,6 +4,7 @@ from . import views
 
 router = DefaultRouter()
 router.register(r'results', views.ResultViewSet, basename='result')
+router.register(r'result-locks', views.ResultLockViewSet, basename='result-lock')
 
 urlpatterns = [
     path('', include(router.urls)),

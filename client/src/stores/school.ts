@@ -76,6 +76,10 @@ interface SchoolState {
   fetchServiceTypes: (force?: boolean) => Promise<void>;
   classResults: Record<string, Result[]>;
   fetchClassResults: (classId: string, session: string, term?: string) => Promise<void>;
+  resultLocks: any[];
+  fetchResultLocks: (session: string) => Promise<void>;
+  lockResults: (classId: string, session: string, term: string) => Promise<void>;
+  unlockResults: (lockId: string) => Promise<void>;
   expenseCategories: string[];
   fetchExpenseCategories: () => Promise<void>;
   invalidateCache: (key: string) => void;
@@ -108,6 +112,7 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
   academicYears: [],
   serviceTypes: [],
   classResults: {},
+  resultLocks: [],
   studentResultsCache: {},
   expenseCategories: [],
   dashboardSummary: { totalIncome: 0, totalDepositedToBank: 0, depositRemaining: 0 },
@@ -409,6 +414,32 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
       set((s) => ({ classResults: { ...s.classResults, [cacheKey]: res.data.results || res.data.data || res.data }, _fetchedAt: { ...s._fetchedAt, [key]: Date.now() } }));
     } catch (e) { if (import.meta.env.DEV) console.warn("[store]", e); }
     finally { set((s) => ({ loading: { ...s.loading, classResults: false } })); }
+  },
+  // C3 finalize switch: lock rows readable by all result viewers; only
+  // admins create/delete (backend enforces results:admin).
+  fetchResultLocks: async (session: string) => {
+    const key = `resultLocks_${session}`;
+    const now = Date.now();
+    if (now - (get()._fetchedAt[key] || 0) < CACHE_TTL) return;
+    try {
+      const res = await dedupedFetch(key, () => api.get('/result-locks/', { params: { session } }));
+      set({ resultLocks: res.data.results || res.data.data || res.data, _fetchedAt: { ...get()._fetchedAt, [key]: Date.now() } });
+    } catch (e) { if (import.meta.env.DEV) console.warn("[store]", e); }
+  },
+  lockResults: async (classId: string, session: string, term: string) => {
+    await api.post('/result-locks/', { school_class: classId, session, term });
+    set((s) => ({ _fetchedAt: { ...s._fetchedAt, [`resultLocks_${session}`]: 0 } }));
+    await get().fetchResultLocks(session);
+  },
+  unlockResults: async (lockId: string) => {
+    await api.delete(`/result-locks/${lockId}/`);
+    set((s) => {
+      const fetchedAt = { ...s._fetchedAt };
+      for (const key of Object.keys(fetchedAt)) {
+        if (key.startsWith('resultLocks_')) fetchedAt[key] = 0;
+      }
+      return { _fetchedAt: fetchedAt };
+    });
   },
   fetchExpenseCategories: async () => {
     const key = 'expenseCategories';

@@ -12,14 +12,23 @@ const SUBJECT_KEY_MAP: Record<string, string> = {
   'Quran Learning': 'Religion and Quran Learning',
 };
 
+// U3: reopen where the teacher left off — last class/subject/term/session.
+const ENTER_PREFS_KEY = 'alrawa-enter-subject-v1';
+const loadEnterPrefs = (): Record<string, string> => {
+  try { return JSON.parse(localStorage.getItem(ENTER_PREFS_KEY) || '{}'); } catch { return {}; }
+};
+
 export default function EnterBySubject() {
-  const { students, fetchStudents, subjects, fetchSubjects, saveStudentResult, academicYears, fetchAcademicYears, classResults, fetchClassResults } = useSchoolStore();
+  const { classes, fetchClasses, students, fetchStudents, subjects, fetchSubjects, saveStudentResult, academicYears, fetchAcademicYears, classResults, fetchClassResults, resultLocks, fetchResultLocks, lockResults, unlockResults } = useSchoolStore();
   const role = useAuthStore((s) => s.user?.role);
   const canSaveResults = role === 'admin' || role === 'teacher' || role === 'monitor';
+  const isAdmin = role === 'admin';
+  const prefsRef = useRef<Record<string, string> | null>(null);
+  if (prefsRef.current === null) prefsRef.current = loadEnterPrefs();
   const [cls, setCls] = useState<any>(null);
   const [sessionFilter, setSessionFilter] = useState('');
-  const [bulkSubject, setBulkSubject] = useState('');
-  const [termFilter, setTermFilter] = useState('1');
+  const [bulkSubject, setBulkSubject] = useState(() => prefsRef.current!.subject || '');
+  const [termFilter, setTermFilter] = useState(() => prefsRef.current!.term || '1');
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [allResults, setAllResults] = useState<any[]>([]);
   const [bulkMarks, setBulkMarks] = useState<Record<string, string>>({});
@@ -28,6 +37,8 @@ export default function EnterBySubject() {
   const bulkTerm = termFilter;
   const [saveStatus, setSaveStatus] = useState<'' | 'saving' | 'saved' | 'error'>('');
   const [saveError, setSaveError] = useState('');
+  const [saveProgress, setSaveProgress] = useState<{ done: number; total: number } | null>(null);
+  const [coworkerNote, setCoworkerNote] = useState('');
   const statusTimer = useRef<any>(null);
 
   const loadResults = async (clsId: string) => {
@@ -41,15 +52,69 @@ export default function EnterBySubject() {
     setAllResults(useSchoolStore.getState().classResults[key] || []);
   };
 
+  const handleSelectClass = (c: any) => { setCls(c); setBulkSubject(''); fetchSubjects(c.id); if (sessionFilter) loadResults(c.id); fetchStudents({ className: c.name }, true); };
+
   useEffect(() => {
     fetchAcademicYears().then(() => {
       const academicYears = useSchoolStore.getState().academicYears;
+      const prefs = prefsRef.current || {};
+      const saved = prefs.session && academicYears.some((y: any) => y.name === prefs.session)
+        ? prefs.session : null;
       const active = academicYears.find((y: any) => y.isActive);
-      setSessionFilter(active ? active.name : (academicYears.length > 0 ? academicYears[0].name : ''));
+      setSessionFilter(saved || (active ? active.name : (academicYears.length > 0 ? academicYears[0].name : '')));
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // U3: restore last class once the class list arrives (also re-applies the
+  // saved subject — selecting a class resets it).
+  const restoredCls = useRef(false);
+  useEffect(() => {
+    if (restoredCls.current || cls) return;
+    const classId = prefsRef.current?.classId;
+    if (!classId) return;
+    fetchClasses().then(() => {
+      const list = useSchoolStore.getState().classes;
+      const c = list.find((x: any) => String(x.id) === String(classId));
+      if (c && !restoredCls.current) {
+        restoredCls.current = true;
+        handleSelectClass(c);
+        if (prefsRef.current?.subject) setBulkSubject(prefsRef.current.subject);
+      }
+    });
+  }, [classes.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // U3: persist every switch so the next visit reopens here.
+  useEffect(() => {
+    try {
+      localStorage.setItem(ENTER_PREFS_KEY, JSON.stringify({
+        classId: cls?.id || '', subject: bulkSubject, term: termFilter, session: sessionFilter,
+      }));
+    } catch { /* private mode */ }
+  }, [cls, bulkSubject, termFilter, sessionFilter]);
+
   useEffect(() => { if (cls) loadResults(cls.id); }, [sessionFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (sessionFilter) fetchResultLocks(sessionFilter); }, [sessionFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // U1 jump target: My Tasks fires alrawa-enter-task {classId, subject, term}.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      if (!d?.classId) return;
+      const apply = (c: any) => {
+        handleSelectClass(c);
+        if (d.subject) setBulkSubject(d.subject);
+        if (d.term) setTermFilter(d.term);
+      };
+      const found = useSchoolStore.getState().classes.find((x: any) => String(x.id) === String(d.classId));
+      if (found) { apply(found); return; }
+      fetchClasses().then(() => {
+        const c = useSchoolStore.getState().classes.find((x: any) => String(x.id) === String(d.classId));
+        if (c) apply(c);
+      });
+    };
+    window.addEventListener('alrawa-enter-task', handler);
+    return () => window.removeEventListener('alrawa-enter-task', handler);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
@@ -59,12 +124,36 @@ export default function EnterBySubject() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [hasUnsavedChanges]);
 
-  const handleSelectClass = (c: any) => { setCls(c); setBulkSubject(''); fetchSubjects(c.id); if (sessionFilter) loadResults(c.id); fetchStudents({ className: c.name }, true); };
-
   const clsStudents = useMemo(() => cls ? students.filter((s: any) => s.class === cls.name).sort((a: any, b: any) => (+a.roll || 999) - (+b.roll || 999) || a.name.localeCompare(b.name)) : [], [students, cls]);
   const selectedSubj = subjects.find((s: any) => s.name === bulkSubject);
   const isAttendance = bulkSubject === '__attendance__';
   const isComment = bulkSubject === '__comment__';
+  const isMarksMode = !!bulkSubject && !isAttendance && !isComment;
+  // U4 missing-marks: blank inputs glow amber + counter + jump-to-first-blank.
+  const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const blankIds = isMarksMode && cls
+    ? clsStudents.filter((s: any) => { const v = bulkMarks[s.id]; return v === '' || v === undefined; }).map((s: any) => String(s.id))
+    : [];
+  const jumpToFirstBlank = () => {
+    const first = blankIds[0];
+    if (!first) return;
+    const el = inputRefs.current[first];
+    if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.focus({ preventScroll: true }); }
+  };
+  // U6 phone-first: Enter jumps to the next student's input (thumb typing).
+  const focusNextStudent = (sid: string) => {
+    const idx = clsStudents.findIndex((x: any) => String(x.id) === String(sid));
+    const next = idx >= 0 ? clsStudents[idx + 1] : null;
+    if (!next) return;
+    const el = inputRefs.current[String(next.id)];
+    if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.focus({ preventScroll: true }); }
+  };
+  // C3 finalize switch: locked class × term blocks non-admin saves.
+  const lock = cls && sessionFilter ? (resultLocks || []).find((l: any) =>
+    String(l.school_class) === String(cls.id) &&
+    String(l.session) === String(sessionFilter) &&
+    String(l.term) === String(bulkTerm)) || null : null;
+  const lockedForMe = !!lock && !isAdmin;
 
   // Basis for input rebuilds: full rebuild only on class/subject/term switch.
   // Late-arriving data on the same basis must NOT wipe unsaved typing (it did
@@ -77,6 +166,7 @@ export default function EnterBySubject() {
     const basis = `${cls.id}|${bulkSubject}|${bulkTerm}`;
     const reset = basis !== buildBasis.current;
     buildBasis.current = basis;
+    if (reset) setCoworkerNote('');
     const canonicalSubject = SUBJECT_KEY_MAP[bulkSubject] || bulkSubject;
     const ids = clsStudents.map((s: any) => String(s.id));
     const rowOf = (sid: string) => allResults.find((x: any) => String(x.studentId) === String(sid) && String(x.term) === String(bulkTerm));
@@ -98,12 +188,29 @@ export default function EnterBySubject() {
 
   const saveBulkMarks = async () => {
     if (!selectedSubj) return;
+    if (lockedForMe) { setSaveStatus('error'); setSaveError('This term is locked — ask an admin to unlock it.'); return; }
     setSaveStatus('saving');
     setSaveError('');
+    setSaveProgress({ done: 0, total: clsStudents.length });
     clearTimeout(statusTimer.current);
     const canonicalSubject = SUBJECT_KEY_MAP[bulkSubject] || bulkSubject;
     const failed: string[] = [];
     const succeeded: string[] = [];
+    setCoworkerNote('');
+    // U5 snapshot of OTHER subjects: after the save, any change here came
+    // from a colleague saving concurrently — surface it instead of silently
+    // swapping values under the teacher.
+    const rowKey = (r: any) => `${r.studentId}|${r.term}`;
+    const otherMarks = (marks: any) => {
+      const m = { ...(marks || {}) };
+      delete m[canonicalSubject];
+      return m;
+    };
+    const beforeOthers = new Map(
+      allResults
+        .filter((x: any) => String(x.term) === String(bulkTerm))
+        .map((x: any) => [rowKey(x), otherMarks(x.marks)])
+    );
     for (const s of clsStudents) {
       try {
         const v = bulkMarks[s.id];
@@ -120,6 +227,8 @@ export default function EnterBySubject() {
       } catch (e: any) {
         failed.push(s.name);
         console.error('Result save failed for', s.name, e?.response?.data || e);
+      } finally {
+        setSaveProgress((p) => (p ? { ...p, done: p.done + 1 } : p));
       }
     }
     setHasUnsavedChanges(failed.length > 0);
@@ -129,6 +238,29 @@ export default function EnterBySubject() {
     setAllResults((prev: any[]) => mergeSavedMarks(prev, succeeded, bulkTerm, canonicalSubject, bulkMarks, selectedSubj.fullMarks));
     if (failed.length === 0) buildBasis.current = ''; // force one fresh rebuild (e.g. clamped values)
     await loadResults(cls.id);
+    setSaveProgress(null);
+    // U5: diff sibling subjects against the pre-save snapshot — our own save
+    // only touched canonicalSubject, so any other-subject delta is a
+    // colleague's concurrent save. Name it instead of staying silent.
+    {
+      const fresh = useSchoolStore.getState().classResults[`${cls.id}-${sessionFilter}`] || [];
+      const touched = new Set<string>();
+      for (const r of fresh as any[]) {
+        if (String((r as any).term) !== String(bulkTerm)) continue;
+        const now = otherMarks((r as any).marks);
+        const prev = beforeOthers.get(rowKey(r));
+        if (prev === undefined) {
+          Object.keys(now).forEach((k) => touched.add(k));
+        } else {
+          const keys = new Set([...Object.keys(prev), ...Object.keys(now)]);
+          keys.forEach((k) => { if ((prev as any)[k] !== (now as any)[k]) touched.add(k); });
+        }
+      }
+      if (touched.size > 0) {
+        const names = [...touched].slice(0, 3).join(', ');
+        setCoworkerNote(`A colleague updated ${names}${touched.size > 3 ? ` +${touched.size - 3} more` : ''} for this class while you were working — values refreshed.`);
+      }
+    }
     if (failed.length > 0) {
       setSaveStatus('error');
       setSaveError(`${failed.length} of ${clsStudents.length} failed: ${failed.slice(0, 3).join(', ')}${failed.length > 3 ? ` +${failed.length - 3} more` : ''} — fix & retry`);
@@ -139,8 +271,10 @@ export default function EnterBySubject() {
   };
 
   const saveBulkAttendance = async () => {
+    if (lockedForMe) { setSaveStatus('error'); setSaveError('This term is locked — ask an admin to unlock it.'); return; }
     setSaveStatus('saving');
     setSaveError('');
+    setSaveProgress({ done: 0, total: clsStudents.length });
     clearTimeout(statusTimer.current);
     const failed: string[] = [];
     const succeeded: string[] = [];
@@ -158,12 +292,15 @@ export default function EnterBySubject() {
       } catch (e: any) {
         failed.push(s.name);
         console.error('Attendance save failed for', s.name, e?.response?.data || e);
+      } finally {
+        setSaveProgress((p) => (p ? { ...p, done: p.done + 1 } : p));
       }
     }
     setHasUnsavedChanges(failed.length > 0);
     setAllResults((prev: any[]) => mergeSavedAttendance(prev, succeeded, bulkTerm, bulkAtt));
     if (failed.length === 0) buildBasis.current = '';
     await loadResults(cls.id);
+    setSaveProgress(null);
     if (failed.length > 0) {
       setSaveStatus('error');
       setSaveError(`${failed.length} of ${clsStudents.length} failed: ${failed.slice(0, 3).join(', ')}${failed.length > 3 ? ` +${failed.length - 3} more` : ''} — fix & retry`);
@@ -174,8 +311,10 @@ export default function EnterBySubject() {
   };
 
   const saveBulkComments = async () => {
+    if (lockedForMe) { setSaveStatus('error'); setSaveError('This term is locked — ask an admin to unlock it.'); return; }
     setSaveStatus('saving');
     setSaveError('');
+    setSaveProgress({ done: 0, total: clsStudents.length });
     clearTimeout(statusTimer.current);
     const failed: string[] = [];
     const succeeded: string[] = [];
@@ -189,12 +328,15 @@ export default function EnterBySubject() {
       } catch (e: any) {
         failed.push(s.name);
         console.error('Comment save failed for', s.name, e?.response?.data || e);
+      } finally {
+        setSaveProgress((p) => (p ? { ...p, done: p.done + 1 } : p));
       }
     }
     setHasUnsavedChanges(failed.length > 0);
     setAllResults((prev: any[]) => mergeSavedComments(prev, succeeded, bulkTerm, bulkComment));
     if (failed.length === 0) buildBasis.current = '';
     await loadResults(cls.id);
+    setSaveProgress(null);
     if (failed.length > 0) {
       setSaveStatus('error');
       setSaveError(`${failed.length} of ${clsStudents.length} failed: ${failed.slice(0, 3).join(', ')}${failed.length > 3 ? ` +${failed.length - 3} more` : ''} — fix & retry`);
@@ -243,6 +385,34 @@ export default function EnterBySubject() {
       {cls && !bulkSubject && <div className="text-center py-8 text-sm text-school-muted">Select a subject above to begin.</div>}
       {cls && bulkSubject && (
         <div className="space-y-3 animate-in fade-in duration-200">
+          {isMarksMode && blankIds.length > 0 && (
+            <div className="px-4 py-2 rounded-xl text-xs font-bold flex items-center justify-between gap-2 bg-amber-50 border border-amber-300 text-amber-800">
+              <span>{blankIds.length} of {clsStudents.length} blank — not entered yet</span>
+              <button onClick={jumpToFirstBlank} className="px-3 py-1 bg-white border border-amber-300 rounded-lg hover:bg-amber-100">↓ First blank</button>
+            </div>
+          )}
+          {isMarksMode && blankIds.length === 0 && clsStudents.length > 0 && (
+            <div className="px-4 py-2 rounded-xl text-xs font-bold bg-green-50 border border-green-200 text-green-700">
+              ✓ All {clsStudents.length} entered — press Save to store
+            </div>
+          )}
+          {coworkerNote && (
+            <div className="px-4 py-2 rounded-xl text-xs font-bold flex items-center justify-between gap-2 bg-blue-50 border border-blue-200 text-blue-800">
+              <span>👥 {coworkerNote}</span>
+              <button onClick={() => setCoworkerNote('')} className="px-2 py-0.5 bg-white border border-blue-200 rounded-lg hover:bg-blue-100">Dismiss</button>
+            </div>
+          )}
+          {lock && (
+            <div className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center justify-between gap-2 ${isAdmin ? 'bg-amber-50 border border-amber-300 text-amber-800' : 'bg-school-paper border border-school-border text-school-muted'}`}>
+              <span>🔒 {TERM_NAMES[bulkTerm] || `Term ${bulkTerm}`} marks locked{lock.lockedBy ? ` by ${lock.lockedBy}` : ''} — {isAdmin ? 'your saves still work (admin).' : 'ask an admin to unlock for edits.'}</span>
+              {isAdmin && <button onClick={async () => { await unlockResults(lock.id); }} className="px-3 py-1 bg-white border border-amber-300 rounded-lg hover:bg-amber-100">Unlock</button>}
+            </div>
+          )}
+          {isAdmin && !lock && (
+            <div className="flex justify-end">
+              <button onClick={async () => { await lockResults(cls.id, sessionFilter, bulkTerm); }} className="px-3 py-1 border border-school-border rounded-lg text-xs font-bold text-school-muted hover:border-school-accent">🔒 Lock {TERM_NAMES[bulkTerm] || `Term ${bulkTerm}`} marks</button>
+            </div>
+          )}
           <div className="bg-white rounded-2xl border border-school-border overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -268,28 +438,30 @@ export default function EnterBySubject() {
                     const pct = att.days && parseInt(att.days) > 0 ? ((parseInt(att.present) || 0) / parseInt(att.days) * 100).toFixed(1) + '%' : '—';
                     return <tr key={s.id} className={`border-t border-school-border/50 ${i % 2 ? 'bg-school-paper/30' : ''}`}>
                       <td className="px-3 py-2">{i + 1}</td><td className="px-3 py-2 font-medium">{s.name}</td><td className="px-3 py-2">{s.roll || '—'}</td>
-                      <td className="px-3 py-2 text-center"><input type="number" min="0" value={att.days} onChange={(e) => { setHasUnsavedChanges(true); setBulkAtt({ ...bulkAtt, [s.id]: { ...att, days: e.target.value } }); }} className="w-16 px-2 py-1 border border-school-border rounded text-right text-xs focus:outline-none" /></td>
-                      <td className="px-3 py-2 text-center"><input type="number" min="0" value={att.present} onChange={(e) => { setHasUnsavedChanges(true); setBulkAtt({ ...bulkAtt, [s.id]: { ...att, present: e.target.value } }); }} className="w-16 px-2 py-1 border border-school-border rounded text-right text-xs focus:outline-none" /></td>
+                      <td className="px-3 py-2 text-center"><input type="number" inputMode="numeric" min="0" value={att.days} onChange={(e) => { setHasUnsavedChanges(true); setBulkAtt({ ...bulkAtt, [s.id]: { ...att, days: e.target.value } }); }} className="w-16 px-2 py-1 border border-school-border rounded text-right text-xs focus:outline-none" /></td>
+                      <td className="px-3 py-2 text-center"><input type="number" inputMode="numeric" min="0" value={att.present} onChange={(e) => { setHasUnsavedChanges(true); setBulkAtt({ ...bulkAtt, [s.id]: { ...att, present: e.target.value } }); }} className="w-16 px-2 py-1 border border-school-border rounded text-right text-xs focus:outline-none" /></td>
                       <td className="px-3 py-2 text-center text-xs font-bold">{pct}</td>
                     </tr>;
                   }
                   const v = bulkMarks[s.id] ?? '';
                   const g = v !== '' && !isNaN(+v) ? gradeFromMarks(+v, selectedSubj!.fullMarks) : null;
-                  return <tr key={s.id} className={`border-t border-school-border/50 ${i % 2 ? 'bg-school-paper/30' : ''}`}>
-                    <td className="px-3 py-2">{i + 1}</td><td className="px-3 py-2 font-medium">{s.name}</td><td className="px-3 py-2">{s.roll || '—'}</td>
+                  const isBlank = v === '';
+                  const zebra = i % 2 ? 'bg-school-paper/30' : 'bg-white';
+                  return <tr key={s.id} className={`border-t border-school-border/50 ${zebra}`}>
+                    <td className="px-3 py-2">{i + 1}</td><td className={`px-3 py-2 font-medium sticky left-0 ${zebra}`}>{s.name}</td><td className="px-3 py-2">{s.roll || '—'}</td>
                     <td className="px-3 py-2 text-center">{selectedSubj!.fullMarks}</td>
-                    <td className="px-3 py-2 text-center"><input type="number" min="0" max={selectedSubj!.fullMarks} value={v} onChange={(e) => { setHasUnsavedChanges(true); setBulkMarks({ ...bulkMarks, [s.id]: e.target.value }); }} className={`w-16 px-2 py-1 border rounded text-right text-xs focus:outline-none ${v !== '' && !isNaN(parseFloat(v)) && parseFloat(v) > selectedSubj!.fullMarks ? 'border-red-500' : 'border-school-border'}`} /></td>
+                    <td className="px-3 py-2 text-center"><input ref={(el) => { inputRefs.current[String(s.id)] = el; }} type="number" inputMode="numeric" min="0" max={selectedSubj!.fullMarks} value={v} onChange={(e) => { setHasUnsavedChanges(true); setBulkMarks({ ...bulkMarks, [s.id]: e.target.value }); }} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); focusNextStudent(String(s.id)); } }} className={`w-16 px-2 py-1 border rounded text-right text-xs focus:outline-none ${v !== '' && !isNaN(parseFloat(v)) && parseFloat(v) > selectedSubj!.fullMarks ? 'border-red-500' : isBlank ? 'border-amber-400 bg-amber-50' : 'border-school-border'}`} /></td>
                     <td className="px-3 py-2 text-center">{g ? gradeChip(g.grade) : '—'}</td>
                   </tr>;
                 })}
               </tbody>
             </table>
           </div>
-          {canSaveResults && <button onClick={isComment ? saveBulkComments : isAttendance ? saveBulkAttendance : saveBulkMarks} className="w-full py-2 bg-green-600 text-white rounded-xl text-sm font-bold hover:opacity-90 flex items-center justify-center gap-1.5">
+          {canSaveResults && !lockedForMe && <button onClick={isComment ? saveBulkComments : isAttendance ? saveBulkAttendance : saveBulkMarks} className="w-full py-2 bg-green-600 text-white rounded-xl text-sm font-bold hover:opacity-90 flex items-center justify-center gap-1.5">
             <Save size={14} /> Save {isComment ? 'All Comments' : isAttendance ? `${TERM_NAMES[bulkTerm]} Attendance` : 'All Marks'}
           </button>}
           <div className="flex items-center justify-center gap-2 min-h-[1.25rem]">
-            {saveStatus === 'saving' && <span className="text-[11px] text-school-muted animate-pulse">Saving…</span>}
+            {saveStatus === 'saving' && <span className="text-[11px] text-school-muted animate-pulse">Saving…{saveProgress ? ` ${saveProgress.done}/${saveProgress.total}` : ''}</span>}
             {saveStatus === 'saved' && <span className="text-[11px] text-green-600 font-bold flex items-center gap-1"><Save size={12} /> Saved ✓</span>}
             {saveStatus === 'error' && <span className="text-[11px] text-red-500 font-bold flex items-center gap-1"><Save size={12} /> {saveError || 'Saved with errors — check connection & retry'}</span>}
           </div>

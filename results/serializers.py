@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Result
+from .models import Result, ResultLock
 
 
 SUBJECT_KEY_MAP = {
@@ -31,3 +31,14 @@ class ResultSerializer(serializers.ModelSerializer):
             if canonical not in normalized:
                 normalized[canonical] = val
         return normalized
+
+
+class ResultLockSerializer(serializers.ModelSerializer):
+    className = serializers.CharField(source='school_class.name', read_only=True)
+    lockedBy = serializers.CharField(source='locked_by.name', read_only=True)
+
+    class Meta:
+        model = ResultLock
+        fields = ['id', 'school_class', 'className', 'session', 'term',
+                  'locked_by', 'lockedBy', 'locked_at']
+        read_only_fields = ['id', 'locked_by', 'locked_at']

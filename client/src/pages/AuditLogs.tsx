@@ -4,6 +4,7 @@ import Layout from '../components/Layout';
 import { ClipboardList } from 'lucide-react';
 import Skeleton from '../components/Skeleton';
 import Modal from '../components/Modal';
+import Toast, { toast } from '../components/Toast';
 
 const ACTION_LABELS: Record<string, string> = {
   create: 'Create',
@@ -26,6 +27,8 @@ const ACTION_LABELS: Record<string, string> = {
   assign_subject: 'Assign Subject',
   remove_subject: 'Remove Subject',
   delete_class_results: 'Delete Class Results',
+  lock: 'Lock Term',
+  unlock: 'Unlock Term',
   CREATE: 'Create',
   UPDATE: 'Update',
   DELETE: 'Delete',
@@ -70,6 +73,33 @@ interface AuditLog {
   details: string;
   createdAt: string;
 }
+
+const fmtMark = (v: unknown) => (v === null || v === undefined ? '—' : String(v));
+
+// Parse the JSON details blob once; result rows (C2) carry
+// {student_name, term, session, marks_changed: {subj: {from, to}}}.
+const parseDetails = (details: string | null): any => {
+  if (!details) return null;
+  try { return JSON.parse(details); } catch { return details; }
+};
+
+// One-click revert (C4, admin page): re-apply the from-values on top of the
+// current row. Later edits to the same subject get overwritten — the confirm
+// states this, and the revert itself is audited like any other save.
+const revertResultEntry = async (entityId: string, changes: Record<string, { from: unknown }>, onDone: () => void) => {
+  const marks: Record<string, unknown> = {};
+  for (const [subj, ch] of Object.entries(changes)) {
+    marks[subj] = ch.from === undefined ? null : ch.from;
+  }
+  if (!window.confirm(`Re-apply these old values on top of the current marks? Later edits to the same subjects will be overwritten.\n\n${Object.entries(marks).map(([s, v]) => `${s} → ${fmtMark(v)}`).join('\n')}`)) return;
+  try {
+    await api.patch(`/results/${entityId}/`, { marks });
+    toast('Reverted ✓', 'success');
+    onDone();
+  } catch {
+    toast('Revert failed', 'error');
+  }
+};
 
 const AuditLogs = () => {
   const [logs, setLogs] = useState<AuditLog[]>([]);
@@ -214,14 +244,19 @@ const AuditLogs = () => {
                 </thead>
                 <tbody>
                   {logs.map((log: AuditLog) => {
-                    let parsed: any = null;
-                    try { if (log.details) parsed = JSON.parse(log.details); } catch { parsed = log.details; }
-                    const preview = typeof parsed === 'object' && parsed ? (
+                    const parsed: any = parseDetails(log.details);
+                    const changes = parsed && typeof parsed === 'object' ? parsed.marks_changed : null;
+                    const changeList = changes ? Object.entries(changes) : [];
+                    const preview = changeList.length > 0 ? (
+                      `${parsed.student_name || ''} · Term ${parsed.term || ''} · ` +
+                      changeList.slice(0, 3).map(([s, c]: [string, any]) => `${s} ${fmtMark(c.from)}→${fmtMark(c.to)}`).join(', ') +
+                      (changeList.length > 3 ? ` +${changeList.length - 3} more` : '')
+                    ) : (typeof parsed === 'object' && parsed ? (
                       [parsed.destination_account ? `→ ${parsed.destination_account}` : '',
                        parsed.source_account ? `← ${parsed.source_account}` : '',
                        parsed.student ? parsed.student : '',
                        parsed.type ? parsed.type : ''].filter(Boolean).join(' · ') || JSON.stringify(parsed).slice(0, 80) + '…'
-                    ) : (log.details || '—');
+                    ) : (log.details || '—'));
                     return (
                       <tr key={log.id} className="border-b border-school-border/50 hover:bg-school-paper/50 cursor-pointer"
                         onClick={() => setDetailLog(log)}>
@@ -282,17 +317,42 @@ const AuditLogs = () => {
         </div>
         <div className="mt-4">
           <div className="text-[10px] uppercase font-bold text-school-muted mb-1">Changes / Details</div>
-          <pre className="bg-gray-50 p-4 rounded-xl text-xs font-mono whitespace-pre-wrap border border-gray-100 leading-relaxed overflow-x-auto">
-            {(() => {
+          {(() => {
+            const d = detailLog ? parseDetails(detailLog.details) : null;
+            const changes = d && typeof d === 'object' ? d.marks_changed : null;
+            const changeList = changes ? Object.entries(changes) : [];
+            if (changeList.length === 0) {
               if (!detailLog?.details) return 'No details recorded.';
-              try {
-                const d = JSON.parse(detailLog.details);
-                return JSON.stringify(d, null, 2);
-              } catch { return detailLog.details; }
-            })()}
-          </pre>
+              // parseDetails never throws: non-JSON details come back as-is.
+              const raw = typeof d === 'object' ? JSON.stringify(d, null, 2) : String(d ?? detailLog.details);
+              return (<pre className="bg-gray-50 p-4 rounded-xl text-xs font-mono whitespace-pre-wrap border border-gray-100 leading-relaxed overflow-x-auto">{raw}</pre>);
+            }
+            return (
+              <div className="space-y-1.5">
+                <div className="text-xs text-school-muted mb-1">
+                  {d.student_name || ''} · {d.session || ''} · Term {d.term || ''}
+                </div>
+                {changeList.map(([s, c]: [string, any]) => (
+                  <div key={s} className="flex items-center gap-2 text-xs bg-gray-50 border border-gray-100 rounded-lg px-3 py-1.5">
+                    <span className="font-bold text-school-primary">{s}</span>
+                    <span className="font-mono">{fmtMark(c.from)}</span>
+                    <span className="text-school-muted">→</span>
+                    <span className="font-mono font-bold">{fmtMark(c.to)}</span>
+                  </div>
+                ))}
+                {detailLog && detailLog.action === 'update' && detailLog.entityType === 'result' && (
+                  <button
+                    onClick={() => revertResultEntry(detailLog.entityId, changes, () => { setDetailLog(null); fetchLogs(); })}
+                    className="mt-2 px-4 py-2 bg-amber-500 text-white rounded-xl text-xs font-bold hover:opacity-90">
+                    ↩ Revert these changes
+                  </button>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </Modal>
+      <Toast />
     </Layout>
   );
 };

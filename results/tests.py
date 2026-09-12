@@ -153,3 +153,156 @@ class ResultConcurrentMergeTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.result.refresh_from_db()
         self.assertEqual(self.result.marks, {})
+
+
+class ResultMassClearGuardTests(TestCase):
+    """One non-admin save may not wipe many subjects at once (C1)."""
+
+    def setUp(self):
+        from teachers.models import Teacher
+        self.client = APIClient()
+        self.admin_client = APIClient()
+        _auth(self.admin_client)
+        self.klass = SchoolClass.objects.create(name='Class 5', order=1)
+        self.student = Student.objects.create(
+            name='Stu', student_id='S000001', school_class=self.klass, session='2026')
+        user = User.objects.create_user(
+            email='massclear-teacher@test.com', name='MT', password='testpass123', role='teacher')
+        Teacher.objects.create(user=user, designation='Assistant', name='MT')
+        refresh = RefreshToken.for_user(user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
+        self.result = Result.objects.create(
+            student=self.student, term='1', session='2026',
+            marks={'A': 80, 'B': 81, 'C': 82, 'D': 83, 'E': 84})
+
+    def test_teacher_clearing_one_subject_ok(self):
+        res = self.client.patch(
+            f'/api/results/{self.result.id}/',
+            {'marks': {'A': None}}, format='json')
+        self.assertEqual(res.status_code, 200)
+
+    def test_teacher_mass_clear_blocked(self):
+        res = self.client.patch(
+            f'/api/results/{self.result.id}/',
+            {'marks': {'A': None, 'B': None, 'C': None, 'D': None}}, format='json')
+        self.assertEqual(res.status_code, 403)
+        self.result.refresh_from_db()
+        self.assertEqual(len(self.result.marks), 5)
+
+    def test_admin_mass_clear_allowed(self):
+        res = self.admin_client.patch(
+            f'/api/results/{self.result.id}/',
+            {'marks': {'A': None, 'B': None, 'C': None, 'D': None}}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.result.refresh_from_db()
+        self.assertEqual(self.result.marks, {'E': 84})
+
+
+class ResultLockTests(TestCase):
+    """Locked class × session × term rejects non-admin writes (C3)."""
+
+    def setUp(self):
+        from results.models import ResultLock
+        from teachers.models import Teacher
+        self.client = APIClient()
+        self.admin_client = APIClient()
+        _auth(self.admin_client)
+        self.klass = SchoolClass.objects.create(name='Class 5', order=1)
+        self.student = Student.objects.create(
+            name='Stu', student_id='S000001', school_class=self.klass, session='2026')
+        user = User.objects.create_user(
+            email='locked-teacher@test.com', name='LT', password='testpass123', role='teacher')
+        Teacher.objects.create(user=user, designation='Assistant', name='LT')
+        refresh = RefreshToken.for_user(user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
+        self.result = Result.objects.create(
+            student=self.student, term='1', session='2026', marks={'Math': 80})
+        self.lock = ResultLock.objects.create(
+            school_class=self.klass, session='2026', term='1')
+
+    def test_teacher_patch_blocked_when_locked(self):
+        res = self.client.patch(
+            f'/api/results/{self.result.id}/',
+            {'marks': {'Math': 85}}, format='json')
+        self.assertEqual(res.status_code, 403)
+
+    def test_teacher_create_blocked_when_locked(self):
+        Student.objects.create(
+            name='S2', student_id='S000002', school_class=self.klass, session='2026')
+        s2 = Student.objects.get(student_id='S000002')
+        res = self.client.post(
+            f'/api/students/{s2.id}/results/',
+            {'term': '1', 'session': '2026', 'marks': {'Math': 60}}, format='json')
+        self.assertEqual(res.status_code, 403)
+
+    def test_admin_write_allowed_when_locked(self):
+        res = self.admin_client.patch(
+            f'/api/results/{self.result.id}/',
+            {'marks': {'Math': 85}}, format='json')
+        self.assertEqual(res.status_code, 200)
+
+    def test_unlock_restores_teacher_write(self):
+        self.lock.delete()
+        res = self.client.patch(
+            f'/api/results/{self.result.id}/',
+            {'marks': {'Math': 85}}, format='json')
+        self.assertEqual(res.status_code, 200)
+
+    def test_lock_crud_is_admin_only(self):
+        res = self.client.post(
+            '/api/result-locks/',
+            {'school_class': str(self.klass.id), 'session': '2026', 'term': '2'},
+            format='json')
+        self.assertEqual(res.status_code, 403)
+        res = self.admin_client.post(
+            '/api/result-locks/',
+            {'school_class': str(self.klass.id), 'session': '2026', 'term': '2'},
+            format='json')
+        self.assertEqual(res.status_code, 201)
+        lock_id = res.data['id']
+        res = self.admin_client.delete(f'/api/result-locks/{lock_id}/')
+        self.assertEqual(res.status_code, 204)
+
+    def test_lock_list_visible_to_teacher(self):
+        res = self.client.get('/api/result-locks/?session=2026')
+        self.assertEqual(res.status_code, 200)
+
+
+class ResultAuditHistoryTests(TestCase):
+    """Updates log per-subject old→new diffs with actor context (C2)."""
+
+    def setUp(self):
+        from core.models import AuditLog
+        self.AuditLog = AuditLog
+        self.client = APIClient()
+        _auth(self.client)
+        self.klass = SchoolClass.objects.create(name='Class 5', order=1)
+        self.student = Student.objects.create(
+            name='Stu', student_id='S000001', school_class=self.klass, session='2026')
+        self.result = Result.objects.create(
+            student=self.student, term='1', session='2026',
+            marks={'Math': 80, 'English': 70})
+
+    def test_update_logs_field_diff(self):
+        res = self.client.patch(
+            f'/api/results/{self.result.id}/',
+            {'marks': {'Math': 85, 'English': None}}, format='json')
+        self.assertEqual(res.status_code, 200)
+        entry = self.AuditLog.objects.filter(
+            action='update', entity_type='result', entity_id=str(self.result.id)).latest('created_at')
+        import json as _json
+        details = _json.loads(entry.details)
+        self.assertEqual(details['student_name'], 'Stu')
+        self.assertEqual(details['term'], '1')
+        self.assertEqual(details['marks_changed'],
+                         {'Math': {'from': 80, 'to': 85}, 'English': {'from': 70, 'to': None}})
+        self.assertEqual(entry.user_name, 'Admin')
+
+    def test_create_logs_initial_marks(self):
+        res = self.client.post(
+            f'/api/students/{self.student.id}/results/',
+            {'term': '2', 'session': '2026', 'marks': {'Math': 60}}, format='json')
+        self.assertEqual(res.status_code, 201)
+        import json as _json
+        entry = self.AuditLog.objects.filter(action='create', entity_type='result').latest('created_at')
+        self.assertEqual(_json.loads(entry.details)['marks'], {'Math': 60})

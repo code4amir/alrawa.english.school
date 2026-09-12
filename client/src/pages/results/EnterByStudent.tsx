@@ -14,9 +14,10 @@ const SUBJECT_KEY_MAP: Record<string, string> = {
 };
 
 export default function EnterByStudent() {
-  const { students, fetchStudents, subjects, fetchSubjects, saveStudentResult, academicYears, fetchAcademicYears, classResults, fetchClassResults } = useSchoolStore();
+  const { students, fetchStudents, subjects, fetchSubjects, saveStudentResult, academicYears, fetchAcademicYears, classResults, fetchClassResults, resultLocks, fetchResultLocks, lockResults, unlockResults } = useSchoolStore();
   const role = useAuthStore((s) => s.user?.role);
   const canSaveResults = role === 'admin' || role === 'teacher' || role === 'monitor';
+  const isAdmin = role === 'admin';
   const [cls, setCls] = useState<any>(null);
   const [activeStudent, setActiveStudent] = useState<any>(null);
   const [activeTerm, setActiveTerm] = useState('1');
@@ -67,12 +68,19 @@ export default function EnterByStudent() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { if (cls) loadResults(cls.id); }, [sessionFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (sessionFilter) fetchResultLocks(sessionFilter); }, [sessionFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSelectClass = (c: any) => { setCls(c); setActiveStudent(null); setActiveTerm('1'); fetchSubjects(c.id); fetchStudents({ className: c.name }, true); if (sessionFilter) loadResults(c.id); };
 
   const clsStudents = useMemo(() => cls ? students.filter((s: any) => s.class === cls.name).sort((a: any, b: any) => (+a.roll || 999) - (+b.roll || 999) || a.name.localeCompare(b.name)) : [], [students, cls]);
 
   const result = activeStudent ? allResults.find((r: any) => r.studentId === activeStudent.id && r.term === activeTerm) : null;
+  // C3 finalize switch: locked class × term blocks non-admin saves.
+  const lock = cls && sessionFilter ? (resultLocks || []).find((l: any) =>
+    String(l.school_class) === String(cls.id) &&
+    String(l.session) === String(sessionFilter) &&
+    String(l.term) === String(activeTerm)) || null : null;
+  const lockedForMe = !!lock && !isAdmin;
 
   useEffect(() => {
     if (!activeStudent) return;
@@ -98,6 +106,7 @@ export default function EnterByStudent() {
   }, [marks, subjects, attendance]);
 
   const save = async () => {
+    if (lockedForMe) { toast('This term is locked — ask an admin to unlock it.', 'error'); return; }
     setSaveStatus('saving'); clearTimeout(statusTimer.current);
     const m = marksRef.current;
     const marksData: Record<string, number> = {};
@@ -161,6 +170,17 @@ export default function EnterByStudent() {
       )}
       {cls && activeStudent && !reportTerm && (
         <div className="space-y-4">
+          {lock && (
+            <div className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center justify-between gap-2 ${isAdmin ? 'bg-amber-50 border border-amber-300 text-amber-800' : 'bg-school-paper border border-school-border text-school-muted'}`}>
+              <span>🔒 {TERM_NAMES[activeTerm] || `Term ${activeTerm}`} marks locked{lock.lockedBy ? ` by ${lock.lockedBy}` : ''} — {isAdmin ? 'your saves still work (admin).' : 'ask an admin to unlock for edits.'}</span>
+              {isAdmin && <button onClick={async () => { await unlockResults(lock.id); }} className="px-3 py-1 bg-white border border-amber-300 rounded-lg hover:bg-amber-100">Unlock</button>}
+            </div>
+          )}
+          {isAdmin && !lock && (
+            <div className="flex justify-end">
+              <button onClick={async () => { await lockResults(cls.id, sessionFilter, activeTerm); }} className="px-3 py-1 border border-school-border rounded-lg text-xs font-bold text-school-muted hover:border-school-accent">🔒 Lock {TERM_NAMES[activeTerm] || `Term ${activeTerm}`} marks</button>
+            </div>
+          )}
           <div className="flex items-center gap-3">
             <button onClick={() => setActiveStudent(null)} className="text-sm text-school-accent hover:underline">← Students</button>
             {activeStudent.photoUrl ? <img src={activeStudent.photoUrl} alt="" className="w-10 h-10 rounded-full object-cover border border-school-border" /> : activeStudent.hasPhoto ? <img src={`${API_URL}/students/${activeStudent.id}/photo/`} alt="" className="w-10 h-10 rounded-full object-cover border border-school-border" /> : <div className="w-10 h-10 rounded-full bg-school-primary text-white flex items-center justify-center text-sm"><User size={24} className="text-white" /></div>}
@@ -209,7 +229,7 @@ export default function EnterByStudent() {
               <div className="bg-school-paper px-3 py-2 rounded-xl text-center"><div className="text-[10px] text-school-muted uppercase">Grade</div><div className="font-bold text-sm">{termGrade}</div></div>
               <div className="bg-school-paper px-3 py-2 rounded-xl text-center"><div className="text-[10px] text-school-muted uppercase">Rank</div><div className="font-bold text-sm">{myRank}</div></div>
             </div>}
-            {canSaveResults && <button onClick={async () => { try { await save(); loadResults(cls.id); toast('Saved ✓', 'success'); } catch { toast('Save failed', 'error'); } }} className="w-full mt-4 py-2 bg-green-600 text-white rounded-xl text-sm font-bold hover:opacity-90 flex items-center justify-center gap-1.5"><Save size={14} /> Save Marks</button>}
+            {canSaveResults && !lockedForMe && <button onClick={async () => { try { await save(); loadResults(cls.id); toast('Saved ✓', 'success'); } catch { toast('Save failed', 'error'); } }} className="w-full mt-4 py-2 bg-green-600 text-white rounded-xl text-sm font-bold hover:opacity-90 flex items-center justify-center gap-1.5"><Save size={14} /> Save Marks</button>}
           </div>
           <div className="bg-white rounded-2xl border border-school-border p-4">
             <h4 className="font-bold text-sm mb-3 flex items-center gap-1.5"><CalendarDays size={16} /> Attendance</h4>
