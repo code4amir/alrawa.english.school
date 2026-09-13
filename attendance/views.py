@@ -19,7 +19,7 @@ from .serializers import (
 from .permissions import CanMarkAttendance, CanManageHolidays
 from students.models import Student
 from core.models import SchoolClass, SchoolSetting
-from accounts.permissions import require_permission, is_admin_or_superuser
+from accounts.permissions import require_permission, is_admin_or_superuser, can_manage_students
 from core.audit import log_audit
 from parents.services import notify_parents_of_student
 
@@ -103,6 +103,15 @@ class AttendanceViewSet(viewsets.GenericViewSet):
             school_class = SchoolClass.objects.get(id=class_id)
         except SchoolClass.DoesNotExist:
             return Response({'error': 'School class not found'}, status=404)
+
+        # Class-teacher gate (browser-app parity with the PIN path in
+        # teachers/views_mobile.py and students/views.py): monitors/admins may
+        # mark any class; other teachers only their assigned classes.
+        if not can_manage_students(request.user, school_class.id):
+            return Response(
+                {'error': 'You are not assigned to this class'},
+                status=403,
+            )
 
         student_ids = list(records.keys())
         existing = Student.objects.filter(id__in=student_ids, school_class_id=class_id)
@@ -280,9 +289,9 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         # Parent role: verify student is linked to this parent
         if request.user.is_authenticated and request.user.role == 'parent':
             parent_student_ids = set(
-                request.user.parent_links.values_list('student_id', flat=True)
+                map(str, request.user.parent_links.values_list('student_id', flat=True))
             )
-            if student_id not in parent_student_ids:
+            if str(student_id) not in parent_student_ids:
                 return Response({'error': 'Student not found'}, status=404)
 
         try:
@@ -316,6 +325,13 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         for r in records:
             records_by_date[r.date] = r.status
 
+        # Single fetch for the whole month (was one query per holiday day).
+        holiday_names = dict(
+            Holiday.objects.filter(
+                date__year=year, date__month=month,
+            ).values_list('date', 'name')
+        )
+
         _, days_in_month = calendar.monthrange(year, month)
         calendar_data = []
         for day in range(1, days_in_month + 1):
@@ -326,7 +342,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
                 entry['type'] = 'weekend'
             elif d in known_holidays:
                 entry['type'] = 'holiday'
-                entry['holiday_name'] = Holiday.objects.filter(date=d).values_list('name', flat=True).first()
+                entry['holiday_name'] = holiday_names.get(d)
             elif d in all_absent_dates:
                 entry['type'] = 'de_facto_holiday'
             elif d in records_by_date:
@@ -560,16 +576,39 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         else:
             class_qs = SchoolClass.objects.all().order_by('order', 'name')
 
-        for klass in class_qs:
-            roster_ids = Student.objects.filter(
-                school_class=klass, deleted_at__isnull=True,
-            ).values_list('id', flat=True)
-            total = len(roster_ids)
-            qs = AttendanceRecord.objects.filter(
-                school_class=klass, date=date_param, student_id__in=roster_ids,
+        classes = list(class_qs)
+        class_ids = [k.id for k in classes]
+        # One roster count query for all classes (group-by), instead of one
+        # query per class.
+        roster_counts = dict(
+            Student.objects.filter(
+                school_class_id__in=class_ids, deleted_at__isnull=True,
+            ).values('school_class_id').annotate(
+                total=models.Count('id'),
+            ).values_list('school_class_id', 'total')
+        )
+        # One attendance aggregate for all classes (group-by). Roster-scoped:
+        # only count records whose student is still in the record's class,
+        # so students who moved classes don't leak into the old class.
+        att_map = {
+            row['school_class_id']: row
+            for row in AttendanceRecord.objects.filter(
+                school_class_id__in=class_ids,
+                date=date_param,
+                student__school_class_id=models.F('school_class_id'),
+                student__deleted_at__isnull=True,
+            ).values('school_class_id').annotate(
+                present=models.Count('id', filter=models.Q(status='present')),
+                absent=models.Count('id', filter=models.Q(status='absent')),
             )
-            present = qs.filter(status='present').count()
-            absent = qs.filter(status='absent').count()
+        }
+
+        summaries = []
+        for klass in classes:
+            total = roster_counts.get(klass.id, 0)
+            counts = att_map.get(klass.id, {})
+            present = counts.get('present', 0) or 0
+            absent = counts.get('absent', 0) or 0
 
             summaries.append({
                 'class': {'id': str(klass.id), 'name': klass.name},
@@ -647,19 +686,24 @@ class AttendanceViewSet(viewsets.GenericViewSet):
             days_in_range = day_list
         else:
             import calendar as _cal
-            _, days_in_month = _cal.monthrange(int(year), int(month))
+            try:
+                year_int = int(year)
+                month_int = int(month)
+                _, days_in_month = _cal.monthrange(year_int, month_int)
+                days_in_range = [
+                    date(year_int, month_int, day)
+                    for day in range(1, days_in_month + 1)
+                ]
+            except (ValueError, TypeError):
+                return Response({'error': 'Invalid year or month'}, status=400)
             weekend_set = _get_weekend_set()
-            holiday_set = _get_holiday_dates(year=int(year), month=int(month))
-            resp_year, resp_month = int(year), int(month)
+            holiday_set = _get_holiday_dates(year=year_int, month=month_int)
+            resp_year, resp_month = year_int, month_int
             records = AttendanceRecord.objects.filter(
                 school_class=school_class,
-                date__year=int(year),
-                date__month=int(month),
+                date__year=year_int,
+                date__month=month_int,
             ).values('student_id', 'date', 'status')
-            days_in_range = [
-                date(int(year), int(month), day)
-                for day in range(1, days_in_month + 1)
-            ]
 
         students = list(
             Student.objects.filter(

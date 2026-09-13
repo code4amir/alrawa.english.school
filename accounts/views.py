@@ -124,7 +124,15 @@ class CustomTokenRefreshView(APIView):
                 max_age=int(settings.SIMPLE_JWT['ACCESS_TOKEN_LIFETIME'].total_seconds()),
             )
             if settings.SIMPLE_JWT.get('ROTATE_REFRESH_TOKENS'):
-                new_refresh = str(refresh)
+                if settings.SIMPLE_JWT.get('BLACKLIST_AFTER_ROTATION'):
+                    try:
+                        refresh.blacklist()
+                    except Exception:
+                        logger.warning('Refresh blacklist failed during rotation')
+                user = User.objects.filter(pk=user_id, is_active=True).first()
+                new_refresh = str(RefreshToken.for_user(user))
+                data['refresh'] = new_refresh
+                response.data = data
                 response.set_cookie(
                     settings.SIMPLE_JWT['REFRESH_COOKIE'],
                     new_refresh,
@@ -287,7 +295,19 @@ class UpdateUserRoleView(generics.UpdateAPIView):
         instance = self.get_object()
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
-        instance.role = serializer.validated_data['role']
+        new_role = serializer.validated_data['role']
+        if instance == request.user and new_role != instance.role:
+            return Response(
+                {'error': 'Cannot change your own role'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if (instance.role == 'admin' and new_role != 'admin'
+                and not User.objects.filter(role='admin', is_active=True).exclude(pk=instance.pk).exists()):
+            return Response(
+                {'error': 'Cannot demote the last admin account'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        instance.role = new_role
         instance.save(update_fields=['role'])
         return Response(UserSerializer(instance).data)
 

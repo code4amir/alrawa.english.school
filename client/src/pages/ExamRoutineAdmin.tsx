@@ -40,7 +40,7 @@ export default function ExamRoutineAdmin() {
     setFormSubject('');
     if (!classId) { setClassSubjects([]); return; }
     try {
-      const res = await api.get(`/subjects/?class_id=${classId}`);
+      const res = await api.get(`/subjects/?school_class_id=${classId}`);
       setClassSubjects(res.data?.results || res.data || []);
     } catch { setClassSubjects([]); }
   };
@@ -205,7 +205,7 @@ export default function ExamRoutineAdmin() {
                             <div className="group relative">
                               <span className="font-medium">{entry.subject_name || entry.subjectName}</span>
                               <button onClick={() => deleteEntry(entry.id)}
-                                className="absolute -top-1 -right-1 p-0.5 rounded-full bg-red-100 text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                                className="absolute -top-1 -right-1 p-0.5 rounded-full bg-red-100 text-red-600 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
                                 title="Delete">
                                 <Trash2 size={12} />
                               </button>

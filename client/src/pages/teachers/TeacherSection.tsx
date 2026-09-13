@@ -390,7 +390,7 @@ function AssignmentPanel({ teacher, classes, fetchTeachers, onClose }: {
     setSelectedSubject('');
     if (!classId) { setClassSubjects([]); return; }
     try {
-      const res = await api.get(`/subjects/?class_id=${classId}&limit=2000`);
+      const res = await api.get(`/subjects/?school_class_id=${classId}&limit=2000`);
       setClassSubjects(res.data.results || res.data.data || res.data);
     } catch { setClassSubjects([]); }
   };

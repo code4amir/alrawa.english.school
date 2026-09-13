@@ -69,7 +69,7 @@ class ClassViewSet(AuditLogMixin, viewsets.ModelViewSet):
         except Exception as e:
             logger.exception('promote_all failed')
             return Response(
-                {'error': f'Promotion failed: {e}'},
+                {'error': 'Promotion failed due to an internal error.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 

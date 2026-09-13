@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useSchoolStore, useAuthStore } from '../../store';
 import { toast } from '../../components/Toast';
 import ClassSelect from '../../components/ClassSelect';
-import { Plus, Save, Trash2, X } from 'lucide-react';
+import { Plus, Save, Trash2, X, Pencil } from 'lucide-react';
 import Modal from '../../components/Modal';
 
 export default function SubjectManager() {
@@ -118,7 +118,7 @@ export default function SubjectManager() {
                         {isAdmin && (
                           <td className="px-3 py-2 text-center">
                             <div className="flex gap-1 justify-center">
-                              <button onClick={() => startEdit(s)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg" title="Edit" aria-label="Edit"><Save size={14} /></button>
+                              <button onClick={() => startEdit(s)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg" title="Edit" aria-label="Edit"><Pencil size={14} /></button>
                               <button onClick={() => setDeleteId(s.id)} className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg" title="Delete" aria-label="Delete"><Trash2 size={14} /></button>
                             </div>
                           </td>

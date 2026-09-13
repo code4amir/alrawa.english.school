@@ -1,10 +1,10 @@
 import calendar
 import json
 import logging
-import os
 from datetime import date
 from decimal import Decimal
 from django.db.models import Sum, Count, Q
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 from django.conf import settings
@@ -169,33 +169,47 @@ class StudentFeesView(APIView):
         except Student.DoesNotExist:
             return Response({'error': 'Student not found'}, status=404)
 
-        assignments = StudentFeeAssignment.objects.filter(
-            student_id=student_id, active=True
-        ).select_related('fee_schedule')
+        # Single source of truth: reuse DefaulterService (same computation
+        # the dues-reminder pushes use) so the portal balance always matches
+        # what parents were pushed. Totals honour waivers, payment
+        # allocations, assignment windows and exclude cancelled transactions
+        # and future months. `schedules` is kept for backward compat and is
+        # derived from the same per-fee breakdown.
+        from finance.services.defaulter_service import DefaulterService
+        now = timezone.now()
+        month_to = f"{now.year}-{now.month:02d}"
+        prev_year = now.year - 1 if now.month == 1 else now.year
+        prev_month = 12 if now.month == 1 else now.month - 1
+        month_from = f"{prev_year}-{prev_month:02d}"
+        svc = DefaulterService(
+            student_id=student.id,
+            month_from=month_from, month_to=month_to,
+        )
+        svc.resolve_year()
+        computed = svc.compute([student], [student.id])
+        entry = computed[0] if computed else None
+        if entry is None:
+            data = {
+                'totalDue': Decimal('0.00'),
+                'totalPaid': Decimal('0.00'),
+                'balance': Decimal('0.00'),
+                'schedules': [],
+            }
+            return Response(ParentFeeStatusSerializer(data).data)
 
-        schedules = []
-        total_due = Decimal('0.00')
-        for a in assignments:
-            fs = a.fee_schedule
-            schedules.append({
-                'category': fs.category,
-                'amount': fs.amount,
-                'frequency': fs.frequency,
-                'assigned': True,
-            })
-            total_due += fs.amount
-
-        paid_agg = Transaction.objects.filter(
-            student_id=student_id,
-            transaction_type='INCOME',
-            is_cancelled=False,
-        ).aggregate(total=Sum('amount'))
-        total_paid = paid_agg['total'] or Decimal('0.00')
-
+        type_to_frequency = {
+            'onetime': 'ONE_TIME', 'global': 'YEARLY', 'recurring': 'MONTHLY',
+        }
+        schedules = [{
+            'category': fee['name'],
+            'amount': Decimal(str(fee['amount'])),
+            'frequency': type_to_frequency.get(fee['type'], 'ONE_TIME'),
+            'assigned': True,
+        } for fee in entry['fees']]
         data = {
-            'totalDue': total_due,
-            'totalPaid': total_paid,
-            'balance': total_due - total_paid,
+            'totalDue': Decimal(str(entry['totalDue'])),
+            'totalPaid': Decimal(str(entry['totalPaid'])),
+            'balance': Decimal(str(entry['balance'])),
             'schedules': schedules,
         }
         return Response(ParentFeeStatusSerializer(data).data)
@@ -319,15 +333,14 @@ class VapidKeyView(APIView):
     permission_classes = []
 
     def get(self, request):
-        val = os.environ.get('VAPID_PUBLIC_KEY', '')
-        return Response({'publicKey': val})
+        return Response({'publicKey': settings.VAPID_PUBLIC_KEY})
 
 
 class AnnouncementListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        qs = Announcement.objects.select_related('school_class')
+        qs = Announcement.objects.select_related('school_class', 'author').order_by('-created_at')
         # Class scoping: parents see all-school + their linked children's class announcements
         if request.user.role == 'parent':
             class_ids = list(
@@ -358,7 +371,11 @@ class AnnouncementListView(APIView):
             return Response({'error': 'Title required'}, status=400)
         kwargs = {'author': request.user, 'title': title, 'body': body}
         if school_class_id:
-            kwargs['school_class_id'] = school_class_id
+            from core.models import SchoolClass
+            try:
+                kwargs['school_class'] = SchoolClass.objects.get(id=school_class_id)
+            except (SchoolClass.DoesNotExist, ValueError, ValidationError):
+                return Response({'error': 'Class not found'}, status=404)
         announcement = Announcement.objects.create(**kwargs)
         from .services import notify_all_parents, notify_parents_of_class
         if school_class_id:
@@ -433,6 +450,31 @@ class ParentLinkView(APIView):
         link, created = ParentStudentLink.objects.get_or_create(parent=parent, student=student)
         if not created:
             return Response({'error': 'Link already exists'}, status=409)
+        log_audit(
+            'manual_link', 'student', entity_id=str(student.id),
+            details={'parent': parent.email, 'link_id': str(link.id)},
+            request=request,
+        )
+        from .services import notify
+        title = 'Welcome to the Parent Portal'
+        body = f'{student.name} has been linked to your guardian account.'
+        err = None
+        try:
+            sent = notify(parent, title, body, url='/#/parent')
+            if not sent:
+                err = (
+                    'no_subscription'
+                    if not PushSubscription.objects.filter(user=parent).exists()
+                    else 'push_failed'
+                )
+        except Exception as e:
+            logger.warning('Welcome notify failed for %s: %s', parent.email, e)
+            err = str(e)
+        NotificationLog.objects.create(
+            user=parent, event_type='announcement', title=title, body=body,
+            payload={'student_id': str(student.id), 'url': '/#/parent'},
+            error=err,
+        )
         return Response({'id': link.id, 'parentName': parent.name, 'studentName': student.name}, status=201)
 
     def delete(self, request):
@@ -705,8 +747,7 @@ class StudentConnectView(APIView):
             return Response({'error': 'Password must be at least 8 characters.'}, status=400)
         if User.objects.filter(email__iexact=email).exists():
             return Response(
-                {'error': 'This email is already registered. Sign in with it instead.',
-                 'code': 'email_exists'},
+                {'error': 'An account with this email already exists. Sign in instead.'},
                 status=409,
             )
         if not id_facts_match(

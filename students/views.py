@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from django.db import models
+from django.conf import settings
 from django.utils import timezone
 from .models import Student, StudentService
 from .serializers import StudentSerializer, StudentServiceToggleSerializer
@@ -19,7 +20,9 @@ class StudentViewSet(PhotoHandleMixin, viewsets.ModelViewSet):
 
     def list(self, request, *args, **kwargs):
         if request.query_params.get('all') == 'true':
-            qs = self.get_queryset().order_by('name')
+            qs = self.filter_queryset(self.get_queryset().order_by('name'))
+            max_size = settings.REST_FRAMEWORK.get('MAX_PAGE_SIZE', 1000)
+            qs = qs[:max_size]
             serializer = self.get_serializer(qs, many=True)
             return Response(serializer.data)
         return super().list(request, *args, **kwargs)

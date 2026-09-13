@@ -16,7 +16,8 @@ export default function TabulationTab() {
 
   const loadResults = async (clsId: string) => {
     const key = `${clsId}-${sessionFilter}`;
-    if (classResults[key]) { 
+    const invalidated = useSchoolStore.getState()._fetchedAt[`classResults_${key}`] === 0;
+    if (classResults[key] && !invalidated) { 
         setAllResults(classResults[key]); 
         return; 
     }
@@ -34,7 +35,7 @@ export default function TabulationTab() {
 
   useEffect(() => { if (cls) loadResults(cls.id); }, [sessionFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSelectClass = (c: any) => { setCls(c); fetchSubjects(c.id); fetchStudents({ className: c.name }, true); loadResults(c.id); };
+  const handleSelectClass = (c: any) => { if (!c) { setCls(null); setAllResults([]); return; } setCls(c); fetchSubjects(c.id); fetchStudents({ className: c.name }, true); loadResults(c.id); };
 
   // The download buttons used to build the PDF from whatever happened to be
   // in state — clicking right after selecting a class produced a sheet with

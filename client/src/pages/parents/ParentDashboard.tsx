@@ -43,6 +43,7 @@ interface NoticeItem {
   body: string;
   eventType: string;
   sentAt: string;
+  payload?: { url?: string } | null;
 }
 
 export default function ParentDashboard() {
@@ -59,7 +60,8 @@ export default function ParentDashboard() {
   useEffect(() => {
     const dayName = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][new Date().getDay()];
 
-    Promise.all([
+    const labels = ['students', 'announcements', 'homework', 'diary', 'exams', 'routine', 'notices'];
+    Promise.allSettled([
       api.get('/parents/my-students/'),
       api.get('/parents/announcements/'),
       api.get('/parents/homework/'),
@@ -68,21 +70,31 @@ export default function ParentDashboard() {
       api.get('/parents/routine/'),
       api.get('/parents/notifications/'),
     ])
-      .then(([stuRes, annRes, hwRes, diRes, exRes, rtRes, notRes]) => {
-        setStudents(stuRes.data);
-        setAnnouncements(annRes.data.slice(0, 3));
-        setHomeworks(hwRes.data.slice(0, 3));
-        setDiaries(diRes.data.slice(0, 3));
-        setExams(exRes.data.slice(0, 5));
-        setNotices(notRes.data.slice(0, 4));
-        setTodayRoutine(
-          rtRes.data
-            .filter((p: any) => p.day === dayName)
-            .sort((a: any, b: any) => a.period_number - b.period_number)
-            .map((p: any) => p.subject_name)
-        );
+      .then((results) => {
+        const failed: string[] = [];
+        const value = (i: number) => {
+          const r = results[i];
+          if (r.status === 'fulfilled') return (r.value as any).data;
+          failed.push(labels[i]);
+          return null;
+        };
+        const stu = value(0); if (stu) setStudents(stu);
+        const ann = value(1); if (ann) setAnnouncements(ann.slice(0, 3));
+        const hw = value(2); if (hw) setHomeworks(hw.slice(0, 3));
+        const di = value(3); if (di) setDiaries(di.slice(0, 3));
+        const ex = value(4); if (ex) setExams(ex.slice(0, 5));
+        const rt = value(5);
+        if (rt) {
+          setTodayRoutine(
+            rt
+              .filter((p: any) => p.day === dayName)
+              .sort((a: any, b: any) => a.period_number - b.period_number)
+              .map((p: any) => p.subject_name)
+          );
+        }
+        const not = value(6); if (not) setNotices(not.slice(0, 6));
+        if (failed.length > 0) toast(`Couldn't load: ${failed.join(', ')}`, 'error');
       })
-      .catch(() => toast('Failed to load data', 'error'))
       .finally(() => setLoading(false));
   }, []);
 
@@ -280,8 +292,17 @@ export default function ParentDashboard() {
                 <span className="font-bold text-sm text-school-primary">Recent Notices</span>
               </div>
             </div>
-            {notices.map((n) => (
-              <div key={n.id} className="px-4 py-3 border-b border-school-border last:border-0">
+            {notices.map((n) => {
+              const url = (n as any).payload?.url as string | undefined;
+              const openNotice = () => {
+                if (!url) return;
+                if (/^https?:\/\//i.test(url)) { window.open(url, '_blank', 'noopener'); return; }
+                const hashIdx = url.indexOf('#');
+                navigate(hashIdx >= 0 ? url.slice(hashIdx + 1) || '/' : url);
+              };
+              return (
+              <div key={n.id} onClick={url ? openNotice : undefined} className={`px-4 py-3 border-b border-school-border last:border-0 ${url ? 'cursor-pointer hover:bg-school-paper/50' : ''}`} role={url ? 'button' : undefined} tabIndex={url ? 0 : undefined}
+                onKeyDown={url ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openNotice(); } } : undefined}>
                 <div className="flex items-start justify-between gap-3">
                   <h3 className="font-bold text-sm text-school-primary">{n.title || 'Notice'}</h3>
                   <span className="text-[10px] text-school-muted whitespace-nowrap shrink-0">
@@ -300,7 +321,8 @@ export default function ParentDashboard() {
                   </span>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
 

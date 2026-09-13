@@ -3,12 +3,18 @@ import logging
 from django.utils import timezone
 from django.shortcuts import redirect
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError, APIException
 from rest_framework.response import Response
 from rest_framework import status
 from core.supabase_storage import upload_photo, delete_photo, get_signed_url
 
 logger = logging.getLogger(__name__)
+
+
+class PhotoUploadFailed(APIException):
+    status_code = 502
+    default_detail = 'Photo storage upload failed. Please try again.'
+    default_code = 'photo_upload_failed'
 
 
 class PhotoUrlMixin:
@@ -76,21 +82,26 @@ class PhotoHandleMixin:
         mime_prefix = photo_data.split(',', 1)[0].split(';', 1)[0] if ',' in photo_data else ''
         if mime_prefix and mime_prefix not in self.ALLOWED_PHOTO_MIME_PREFIXES:
             logger.error("Rejected photo upload with disallowed MIME type: %s", mime_prefix)
-            return
+            raise ValidationError({'photo': f'Unsupported image type: {mime_prefix}. Allowed: jpeg, png, webp, gif.'})
         path = f"{self.photo_prefix}/{instance.id}.jpg"
         try:
             raw = base64.b64decode(photo_data.split(',', 1)[-1] if ',' in photo_data else photo_data)
-            if len(raw) > self.MAX_PHOTO_SIZE:
-                logger.error("Rejected photo upload of %d bytes (max %d)", len(raw), self.MAX_PHOTO_SIZE)
-                return
-            ok = upload_photo(path, raw)
-            if not ok:
-                logger.error("Supabase upload returned false for %s/%s", self.photo_prefix, instance.id)
-                return
-            instance.photo_path = path
-            instance.save(update_fields=['photo_path'])
         except (ValueError, OSError) as e:
             logger.error("Photo handle failed for %s/%s: %s", self.photo_prefix, instance.id, e)
+            raise ValidationError({'photo': 'Invalid image data.'})
+        if len(raw) > self.MAX_PHOTO_SIZE:
+            logger.error("Rejected photo upload of %d bytes (max %d)", len(raw), self.MAX_PHOTO_SIZE)
+            raise ValidationError({'photo': f'Image too large (max {self.MAX_PHOTO_SIZE} bytes).'})
+        try:
+            ok = upload_photo(path, raw)
+        except Exception as e:
+            logger.error("Supabase upload raised for %s/%s: %s", self.photo_prefix, instance.id, e)
+            raise PhotoUploadFailed()
+        if not ok:
+            logger.error("Supabase upload returned false for %s/%s", self.photo_prefix, instance.id)
+            raise PhotoUploadFailed()
+        instance.photo_path = path
+        instance.save(update_fields=['photo_path'])
 
     @action(detail=True, methods=['get'])
     def photo(self, request, pk=None):
@@ -143,6 +154,14 @@ class PhotoHandleMixin:
             instance = model_class.objects.get(pk=pk)
         except model_class.DoesNotExist:
             raise NotFound(f"{model_class.__name__} not found.")
+        # Mirror perform_destroy class-teacher scoping for student-like models:
+        # non-admin callers may only restore rows in classes they manage.
+        school_class_id = getattr(instance, 'school_class_id', None)
+        if school_class_id:
+            from accounts.permissions import can_manage_students, is_admin_or_superuser
+            if not is_admin_or_superuser(request.user):
+                if not can_manage_students(request.user, school_class_id):
+                    raise PermissionDenied('You are not the class teacher of this class.')
         instance.deleted_at = None
         instance.save(update_fields=['deleted_at'])
         from core.audit import log_audit

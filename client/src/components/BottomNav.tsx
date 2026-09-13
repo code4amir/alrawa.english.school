@@ -23,6 +23,7 @@ export default function BottomNav() {
       navigate('/', { replace: true });
     } else {
       setMode(mode);
+      navigate('/');
     }
   };
 

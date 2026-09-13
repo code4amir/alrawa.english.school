@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { api, useAuthStore } from '../store';
 import Toast, { toast } from '../components/Toast';
 import { Loader2, Search, UserPlus } from 'lucide-react';
@@ -15,8 +15,7 @@ export default function LinkChild() {
   const user = useAuthStore((s) => s.user);
 
   if (!user || user.role !== 'parent') {
-    navigate('/', { replace: true });
-    return null;
+    return <Navigate to="/" replace />;
   }
 
   const handleSubmit = async (e: React.FormEvent) => {

@@ -93,7 +93,7 @@ class AIQueryView(APIView):
             _log_query(user, query, fn_name, resolved, confidence, elapsed, 0, False, str(e))
             return Response({
                 'type': 'error',
-                'explanation': f'Error processing query: {str(e)}',
+                'explanation': 'An error occurred while processing your query. Please try again.',
                 'data': [], 'columns': [], 'confidence': confidence, 'meta': {},
             })
 

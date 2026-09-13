@@ -77,7 +77,7 @@ export default function StaffSection() {
       }
       toast(editingId ? 'Staff updated ✓' : 'Staff added ✓', 'success');
       resetForm();
-      fetchStaff();
+      fetchStaff(undefined, true);
     } catch (e: any) {
       toast(e.response?.data?.error || e.message || 'Error', 'error');
     } finally {

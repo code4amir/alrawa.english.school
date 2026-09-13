@@ -3,7 +3,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, BasePermission, SAFE_METHODS
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, NotFound
 
 from accounts.permissions import (
     require_permission, is_admin_or_superuser,
@@ -86,9 +86,15 @@ def period_settings(request):
 # ─── Admin ViewSets ────────────────────────────────────────────────
 
 class AdminRoutineTemplateViewSet(viewsets.ModelViewSet):
-    queryset = RoutineTemplate.objects.select_related('school_class', 'subject', 'teacher').all()
     serializer_class = RoutineTemplateSerializer
     filterset_fields = ['school_class', 'day', 'teacher']
+
+    def get_queryset(self):
+        qs = RoutineTemplate.objects.select_related('school_class', 'subject', 'teacher').all()
+        if getattr(self.request.user, 'role', None) == 'parent':
+            class_ids = get_parent_student_class_ids(self.request.user)
+            return qs.filter(school_class_id__in=class_ids)
+        return qs
 
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
@@ -120,9 +126,15 @@ class AdminRoutineTemplateViewSet(viewsets.ModelViewSet):
 
 
 class AdminExamRoutineViewSet(viewsets.ModelViewSet):
-    queryset = ExamRoutine.objects.select_related('school_class', 'subject').all()
     serializer_class = ExamRoutineSerializer
     filterset_fields = ['school_class', 'exam_name']
+
+    def get_queryset(self):
+        qs = ExamRoutine.objects.select_related('school_class', 'subject').all()
+        if getattr(self.request.user, 'role', None) == 'parent':
+            class_ids = get_parent_student_class_ids(self.request.user)
+            return qs.filter(school_class_id__in=class_ids)
+        return qs
 
     def get_permissions(self):
         if self.action in ['list', 'retrieve']:
@@ -143,7 +155,10 @@ class TeacherRoutineViewSet(viewsets.GenericViewSet):
 
         week_str = request.query_params.get('week')
         if week_str:
-            wk_start = date.fromisoformat(week_str)
+            try:
+                wk_start = date.fromisoformat(week_str)
+            except (ValueError, TypeError):
+                return Response({'error': 'Invalid week date format, expected YYYY-MM-DD'}, status=400)
         else:
             today = date.today()
             wk_start = today - timedelta(days=today.weekday())
@@ -191,7 +206,10 @@ class TeacherRoutineViewSet(viewsets.GenericViewSet):
             if routine.teacher != teacher:
                 return Response({'error': 'Not your class'}, status=403)
 
-        week_start = date.fromisoformat(week_start_str)
+        try:
+            week_start = date.fromisoformat(week_start_str)
+        except (ValueError, TypeError):
+            return Response({'error': 'Invalid week_start date format, expected YYYY-MM-DD'}, status=400)
         lp, created = LessonPlan.objects.update_or_create(
             routine_template=routine,
             week_start=week_start,
@@ -217,7 +235,7 @@ class TeacherHomeworkViewSet(viewsets.ModelViewSet):
         if is_admin_or_superuser(self.request.user):
             qs = Homework.objects.select_related('school_class', 'subject', 'teacher').all()
         elif teacher:
-            qs = Homework.objects.filter(teacher=teacher)
+            qs = Homework.objects.filter(teacher=teacher).select_related('school_class', 'subject', 'teacher')
         else:
             return Homework.objects.none()
 
@@ -275,7 +293,7 @@ class TeacherDiaryViewSet(viewsets.ModelViewSet):
         if is_admin_or_superuser(self.request.user):
             qs = Diary.objects.select_related('school_class', 'subject', 'teacher').all()
         elif teacher:
-            qs = Diary.objects.filter(teacher=teacher)
+            qs = Diary.objects.filter(teacher=teacher).select_related('school_class', 'subject', 'teacher')
         else:
             return Diary.objects.none()
 
@@ -504,7 +522,26 @@ class ParentLeaveReasonViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return LeaveReason.objects.filter(parent=self.request.user).select_related('student', 'student__school_class').order_by('-start_date')
 
+    def _validate_linked_student(self, student):
+        # Ensure the student belongs to the requesting parent links, else 404.
+        if student is None:
+            raise NotFound('Student not found')
+        student_id = getattr(student, 'id', student)
+        linked = ParentStudentLink.objects.filter(
+            parent=self.request.user, student_id=student_id,
+        ).exists()
+        if not linked:
+            raise NotFound('Student not found')
+
     def perform_create(self, serializer):
+        self._validate_linked_student(serializer.validated_data.get('student'))
+        serializer.save(parent=self.request.user)
+
+    def perform_update(self, serializer):
+        student = serializer.validated_data.get('student')
+        if student is None and serializer.instance is not None:
+            student = serializer.instance.student
+        self._validate_linked_student(student)
         serializer.save(parent=self.request.user)
 
 

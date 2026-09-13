@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { useUIStore, useAuthStore } from '../store';
 import EnterBySubject from './results/EnterBySubject';
@@ -26,7 +26,7 @@ const TABS: { key: Tab; label: string; icon: ReactNode; roles?: string[] }[] = [
 
 const ResultSection = () => {
   const role = useAuthStore((s) => s.user?.role);
-  const visibleTabs = TABS.filter((t) => !t.roles || (role && t.roles.includes(role)));
+  const visibleTabs = useMemo(() => TABS.filter((t) => !t.roles || (role && t.roles.includes(role))), [role]);
   const [activeTab, setActiveTab] = useState<Tab>('subject');
   useEffect(() => { document.title = 'Results - AL RAWA English School'; }, []);
   useEffect(() => { useUIStore.getState().registerSwipeBack(() => setActiveTab('subject')); }, []);
@@ -37,7 +37,7 @@ const ResultSection = () => {
     };
     window.addEventListener('alrawa-results-tab', handler);
     return () => window.removeEventListener('alrawa-results-tab', handler);
-  });
+  }, [visibleTabs]);
 
   return (
     <div className="space-y-4">

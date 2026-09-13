@@ -298,3 +298,27 @@ if not DEBUG:
     SECURE_CONTENT_TYPE_NOSNIFF = True
     SECURE_BROWSER_XSS_FILTER = True
     X_FRAME_OPTIONS = 'DENY'
+
+# ── Content-Security-Policy + Permissions-Policy ──
+# No dedicated header mechanism (e.g. django-csp) is installed, so headers are
+# set by the tiny middleware defined below (no new dependency needed). The API
+# is JSON-only: lock down everything by default. If serving behind Alwaysdata /
+# nginx, these may alternatively be set at the proxy layer — keep values in sync.
+CONTENT_SECURITY_POLICY = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), fullscreen=(self)"
+
+
+class SecurityHeadersMiddleware:
+    """Attach CSP + Permissions-Policy to every response."""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        response.setdefault('Content-Security-Policy', CONTENT_SECURITY_POLICY)
+        response.setdefault('Permissions-Policy', PERMISSIONS_POLICY)
+        return response
+
+
+MIDDLEWARE.append('school_management.settings.SecurityHeadersMiddleware')

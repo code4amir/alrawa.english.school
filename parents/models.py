@@ -138,6 +138,12 @@ class PushSubscription(models.Model):
     class Meta:
         verbose_name = 'push subscription'
         verbose_name_plural = 'push subscriptions'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'endpoint'],
+                name='unique_push_user_endpoint',
+            ),
+        ]
         indexes = [
             models.Index(fields=['user']),
         ]

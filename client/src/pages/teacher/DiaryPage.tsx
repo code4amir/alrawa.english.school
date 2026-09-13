@@ -35,13 +35,15 @@ export default function DiaryPage() {
   const [activities, setActivities] = useState('');
   const [remarks, setRemarks] = useState('');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
+    setError('');
     try {
       const res = await api.get('/teacher/diary/');
       setItems(res.data.results || res.data);
-    } catch { /* ignore */ }
+    } catch { setError('Failed to load diary entries'); }
     setLoading(false);
   }, []);
 
@@ -150,6 +152,11 @@ export default function DiaryPage() {
 
       {loading ? (
         <div className="flex justify-center py-12"><Loader2 size={28} className="animate-spin text-school-muted" /></div>
+      ) : error ? (
+        <div className="text-center py-12 space-y-3">
+          <p className="text-school-muted text-sm">{error}</p>
+          <button onClick={fetchItems} className="px-4 py-2 bg-school-accent text-white rounded-xl text-xs font-bold hover:opacity-90">Retry</button>
+        </div>
       ) : items.length === 0 ? (
         <div className="text-center py-12 text-school-muted text-sm">No diary entries yet</div>
       ) : (

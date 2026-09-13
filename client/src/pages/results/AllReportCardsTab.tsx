@@ -20,7 +20,8 @@ export default function AllReportCardsTab() {
 
   const loadResults = async (clsId: string) => {
     const key = `${clsId}-${sessionFilter}`;
-    if (classResults[key]) { setAllResults(classResults[key]); return; }
+    const invalidated = useSchoolStore.getState()._fetchedAt[`classResults_${key}`] === 0;
+    if (classResults[key] && !invalidated) { setAllResults(classResults[key]); return; }
     await fetchClassResults(clsId, sessionFilter);
     setAllResults(useSchoolStore.getState().classResults[key] || []);
   };
@@ -34,7 +35,7 @@ export default function AllReportCardsTab() {
 
   useEffect(() => { if (cls) loadResults(cls.id); }, [sessionFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSelectClass = (c: any) => { setCls(c); fetchSubjects(c.id); fetchStudents({ className: c.name }, true); loadResults(c.id); };
+  const handleSelectClass = (c: any) => { if (!c) { setCls(null); setAllResults([]); return; } setCls(c); fetchSubjects(c.id); fetchStudents({ className: c.name }, true); loadResults(c.id); };
   const clsStudents = cls ? students.filter((s: any) => s.class === cls.name).sort((a: any, b: any) => (+a.roll || 999) - (+b.roll || 999) || a.name.localeCompare(b.name)) : [];
 
   const downloadAll = async (term: string) => {

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useSchoolStore, useAuthStore } from '../../store';
+import { toast } from '../../components/Toast';
 import ClassSelect from '../../components/ClassSelect';
 import { gradeFromMarks, gradeChip } from '../../lib/grading';
 import { mergeSavedAttendance, mergeSavedComments, mergeSavedMarks, rebuildBulkValues } from '../../lib/resultsMerge';
@@ -52,7 +53,7 @@ export default function EnterBySubject() {
     setAllResults(useSchoolStore.getState().classResults[key] || []);
   };
 
-  const handleSelectClass = (c: any) => { setCls(c); setBulkSubject(''); fetchSubjects(c.id); if (sessionFilter) loadResults(c.id); fetchStudents({ className: c.name }, true); };
+  const handleSelectClass = (c: any) => { if (!c) { setCls(null); setBulkSubject(''); return; } setCls(c); setBulkSubject(''); fetchSubjects(c.id); if (sessionFilter) loadResults(c.id); fetchStudents({ className: c.name }, true); };
 
   useEffect(() => {
     fetchAcademicYears().then(() => {
@@ -293,9 +294,11 @@ export default function EnterBySubject() {
       const att = bulkAtt[s.id] || { days: '', present: '' };
       const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
       const days = parseInt(att.days) || 0;
+      const present = parseInt(att.present) || 0;
+      if (days < 0 || present < 0) { setSaveStatus('error'); setSaveError('Attendance values cannot be negative'); toast('Attendance values cannot be negative', 'error'); setSaveProgress(null); return; }
+      if (days > 0 && present > days) { setSaveStatus('error'); setSaveError(`Days present cannot exceed total days (${s.name})`); toast(`Days present cannot exceed total days (${s.name})`, 'error'); setSaveProgress(null); return; }
       // No-op skip: blank attendance + none stored = nothing to write.
       if (days <= 0 && !existing?.attendance) continue;
-      const present = parseInt(att.present) || 0;
       items.push({ student: String(s.id), attendance: days > 0 ? { days, present } : null });
     }
     let succeeded: string[] = [];

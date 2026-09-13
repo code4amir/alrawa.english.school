@@ -37,13 +37,15 @@ export default function HomeworkPage() {
   const [dueDate, setDueDate] = useState(todayStr());
   const [published, setPublished] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
+    setError('');
     try {
       const res = await api.get('/teacher/homework/');
       setItems(res.data.results || res.data);
-    } catch { /* ignore */ }
+    } catch { setError('Failed to load homework'); }
     setLoading(false);
   }, []);
 
@@ -102,7 +104,8 @@ export default function HomeworkPage() {
 
   const togglePublish = async (item: HomeworkItem) => {
     try {
-      await api.put(`/teacher/homework/${item.id}/`, { ...item, published: !item.published });
+      await api.patch(`/teacher/homework/${item.id}/`, { published: !item.published });
+      toast(item.published ? 'Unpublished' : 'Published ✓', 'success');
       fetchItems();
     } catch { toast('Failed to update', 'error'); }
   };
@@ -169,6 +172,11 @@ export default function HomeworkPage() {
 
       {loading ? (
         <div className="flex justify-center py-12"><Loader2 size={28} className="animate-spin text-school-muted" /></div>
+      ) : error ? (
+        <div className="text-center py-12 space-y-3">
+          <p className="text-school-muted text-sm">{error}</p>
+          <button onClick={fetchItems} className="px-4 py-2 bg-school-accent text-white rounded-xl text-xs font-bold hover:opacity-90">Retry</button>
+        </div>
       ) : items.length === 0 ? (
         <div className="text-center py-12 text-school-muted text-sm">No homework yet</div>
       ) : (

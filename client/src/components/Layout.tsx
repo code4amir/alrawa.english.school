@@ -6,6 +6,7 @@ import { useAuthStore, useUIStore, useDarkMode, useSchoolStore } from '../store'
 import { ChevronLeft, Lock, Users, Sun, Moon, ClipboardList, Sparkles, KeyRound, Link2, CalendarDays } from 'lucide-react';
 import { useAIQueryStore } from '../store';
 import { SCHOOL_LOGO } from '../lib/logo';
+import { API_URL } from '../lib/config';
 import BottomNav from './BottomNav';
 
 const ROLE_DISPLAY: Record<string, string> = {
@@ -38,8 +39,8 @@ const Layout = ({ children }: LayoutProps) => {
 
   const checkHealth = useCallback(async () => {
     try {
-      // Use direct fetch to the root backend health endpoint, not the /api base URL
-      const res = await fetch('https://ares.alwaysdata.net/health/', { signal: AbortSignal.timeout(5000) });
+      // Derive the root backend health endpoint from the /api base URL
+      const res = await fetch(`${API_URL.replace(/\/api\/?$/, '')}/health/`, { signal: AbortSignal.timeout(5000) });
       if (res.ok) setConnState('connected');
       else setConnState('disconnected');
     } catch { setConnState('disconnected'); }

@@ -24,6 +24,17 @@ def _is_teacher_or_admin(user):
     return user.is_superuser or getattr(user, 'role', None) in ('admin', 'teacher')
 
 
+def _parse_days_param(raw, default):
+    """Parse a days query param; return None when invalid."""
+    try:
+        days = int(raw if raw is not None else default)
+    except (TypeError, ValueError):
+        return None
+    if days < 1 or days > 365:
+        return None
+    return days
+
+
 def _update_streak(user):
     today = date.today()
     streak, _ = TeacherStreak.objects.get_or_create(user=user)
@@ -99,7 +110,9 @@ class QuizViewSet(viewsets.GenericViewSet):
 
     @action(detail=False, methods=['get'])
     def leaderboard(self, request):
-        days = int(request.query_params.get('days', 7))
+        days = _parse_days_param(request.query_params.get('days'), 7)
+        if days is None:
+            return Response({'error': 'Invalid days parameter'}, status=400)
         since = date.today() - timedelta(days=days)
 
         leaders = (
@@ -289,7 +302,9 @@ class MoodViewSet(viewsets.GenericViewSet):
 
     @action(detail=False, methods=['get'])
     def history(self, request):
-        days = int(request.query_params.get('days', 30))
+        days = _parse_days_param(request.query_params.get('days'), 30)
+        if days is None:
+            return Response({'error': 'Invalid days parameter'}, status=400)
         since = date.today() - timedelta(days=days)
         moods = MoodCheckin.objects.filter(
             user=request.user, checkin_date__gte=since,
@@ -302,7 +317,9 @@ class MoodViewSet(viewsets.GenericViewSet):
         if not is_admin_or_superuser(request.user):
             return Response({'error': 'Admin only'}, status=403)
 
-        days = int(request.query_params.get('days', 7))
+        days = _parse_days_param(request.query_params.get('days'), 7)
+        if days is None:
+            return Response({'error': 'Invalid days parameter'}, status=400)
         since = date.today() - timedelta(days=days)
 
         from django.db.models import Avg

@@ -18,18 +18,34 @@ export default function TeacherDashboard() {
   const navigate = useNavigate();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
+    setError('');
     api.get('/teacher/dashboard/')
       .then((res) => setData(res.data))
-      .catch(() => {})
+      .catch(() => setError('Failed to load dashboard'))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
   }, []);
 
   if (loading) {
     return (
       <div className="flex justify-center py-20">
         <Loader2 size={28} className="animate-spin text-school-muted" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-20 space-y-3">
+        <p className="text-school-muted text-sm">{error}</p>
+        <button onClick={load} className="px-4 py-2 bg-school-accent text-white rounded-xl text-xs font-bold hover:opacity-90">Retry</button>
       </div>
     );
   }

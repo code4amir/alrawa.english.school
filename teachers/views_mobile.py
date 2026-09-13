@@ -2,14 +2,15 @@ import logging
 from datetime import timedelta
 
 from django.contrib.auth.hashers import make_password, check_password
+from django.db import models
 from django.db import transaction as db_transaction
 from rest_framework.decorators import api_view, permission_classes, authentication_classes, throttle_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from accounts.throttles import PinLoginRateThrottle
 from rest_framework_simplejwt.tokens import AccessToken
 
-from accounts.authentication import PinAuthentication
+from accounts.authentication import PinAuthentication, CookieJWTAuthentication
 
 from .models import Teacher, ClassTeacher
 from students.models import Student
@@ -157,7 +158,8 @@ def set_pin(request):
 
 
 @api_view(['GET'])
-@permission_classes([AllowAny])
+@authentication_classes([PinAuthentication, CookieJWTAuthentication])
+@permission_classes([IsAuthenticated])
 def mobile_teachers(request):
     teachers = Teacher.objects.filter(
         deleted_at__isnull=True,
@@ -562,16 +564,36 @@ def mobile_all_classes_daily(request):
         return Response({'error': 'date query param is required'}, status=400)
 
     summaries = []
-    for klass in SchoolClass.objects.all().order_by('order', 'name'):
-        roster_ids = Student.objects.filter(
-            school_class=klass, deleted_at__isnull=True,
-        ).values_list('id', flat=True)
-        total = len(roster_ids)
-        qs = AttendanceRecord.objects.filter(
-            school_class=klass, date=date_param, student_id__in=roster_ids,
+    classes = list(SchoolClass.objects.all().order_by('order', 'name'))
+    class_ids = [k.id for k in classes]
+    # One roster count query for all classes (group-by), instead of one query
+    # per class.
+    roster_counts = dict(
+        Student.objects.filter(
+            school_class_id__in=class_ids, deleted_at__isnull=True,
+        ).values('school_class_id').annotate(
+            total=models.Count('id'),
+        ).values_list('school_class_id', 'total')
+    )
+    # One attendance aggregate for all classes (group-by). Roster-scoped:
+    # only count records whose student is still in the record's class.
+    att_map = {
+        row['school_class_id']: row
+        for row in AttendanceRecord.objects.filter(
+            school_class_id__in=class_ids,
+            date=date_param,
+            student__school_class_id=models.F('school_class_id'),
+            student__deleted_at__isnull=True,
+        ).values('school_class_id').annotate(
+            present=models.Count('id', filter=models.Q(status='present')),
+            absent=models.Count('id', filter=models.Q(status='absent')),
         )
-        present = qs.filter(status='present').count()
-        absent = qs.filter(status='absent').count()
+    }
+    for klass in classes:
+        total = roster_counts.get(klass.id, 0)
+        counts = att_map.get(klass.id, {})
+        present = counts.get('present', 0) or 0
+        absent = counts.get('absent', 0) or 0
         summaries.append({
             'class': {'id': str(klass.id), 'name': klass.name},
             'total_students': total,

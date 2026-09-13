@@ -70,7 +70,7 @@ export default function EnterByStudent() {
   useEffect(() => { if (cls) loadResults(cls.id); }, [sessionFilter]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (sessionFilter) fetchResultLocks(sessionFilter); }, [sessionFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSelectClass = (c: any) => { setCls(c); setActiveStudent(null); setActiveTerm('1'); fetchSubjects(c.id); fetchStudents({ className: c.name }, true); if (sessionFilter) loadResults(c.id); };
+  const handleSelectClass = (c: any) => { if (!c) { setCls(null); setActiveStudent(null); return; } setCls(c); setActiveStudent(null); setActiveTerm('1'); fetchSubjects(c.id); fetchStudents({ className: c.name }, true); if (sessionFilter) loadResults(c.id); };
 
   const clsStudents = useMemo(() => cls ? students.filter((s: any) => s.class === cls.name).sort((a: any, b: any) => (+a.roll || 999) - (+b.roll || 999) || a.name.localeCompare(b.name)) : [], [students, cls]);
 
@@ -113,6 +113,8 @@ export default function EnterByStudent() {
     subjects.forEach((sub: any) => { const v = m[sub.name]; if (v !== '' && v !== undefined && !isNaN(+v)) marksData[sub.name] = Math.min(+v, sub.fullMarks); });
     const days = parseInt(attendanceRef.current.days) || 0;
     const present = parseInt(attendanceRef.current.present) || 0;
+    if (days < 0 || present < 0) { toast('Attendance values cannot be negative', 'error'); setSaveStatus(''); return; }
+    if (days > 0 && present > days) { toast('Days present cannot exceed total days', 'error'); setSaveStatus(''); return; }
     const attendanceData = days > 0 ? { days, present } : undefined;
     await saveStudentResult(activeStudent.id, activeTerm, marksData, attendanceData, commentRef.current, sessionRef.current);
     setHasUnsavedChanges(false);

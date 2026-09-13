@@ -282,7 +282,9 @@ class AIQueryAPITests(TestCase):
                 res = self.client.post('/api/ai/query/', {'query': 'find John'})
             self.assertEqual(res.status_code, 200)
             self.assertEqual(res.json()['type'], 'error')
-            self.assertIn('DB error', res.json()['explanation'])
+            # Internal details must NOT leak to clients (generic message only).
+            self.assertNotIn('DB error', res.json()['explanation'])
+            self.assertTrue(res.json()['explanation'])
         finally:
             REGISTRY['search_student']['handler'] = orig
 
