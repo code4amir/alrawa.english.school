@@ -78,15 +78,6 @@ def has_permission(user, permission):
     return permission in perms
 
 
-class HasPermission(BasePermission):
-    def __init__(self, permission):
-        self.permission = permission
-        super().__init__()
-
-    def has_permission(self, request, view):
-        return has_permission(request.user, self.permission)
-
-
 def require_permission(permission):
     class CheckPermission(BasePermission):
         def has_permission(self, request, view):

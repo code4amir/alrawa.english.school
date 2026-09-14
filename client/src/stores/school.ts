@@ -37,6 +37,7 @@ interface SchoolState {
   lastFetched: number | null;
   _fetchedAt: Record<string, number>;
   loading: Record<string, boolean>;
+  loadError: Record<string, boolean>;
 
   fetchDashboardCounts: () => Promise<void>;
   fetchClasses: (force?: boolean) => Promise<void>;
@@ -118,6 +119,7 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
   expenseCategories: [],
   dashboardSummary: { totalIncome: 0, totalDepositedToBank: 0, depositRemaining: 0 },
   loading: {},
+  loadError: {},
 
   invalidateCache: (key) => set((s) => ({ _fetchedAt: { ...s._fetchedAt, [key]: 0 } })),
   invalidatePattern: (prefix) => set((s) => {
@@ -146,11 +148,14 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
 
   fetchClasses: async (force) => {
     if (!force && get().classes.length > 0) return;
-    set((s) => ({ loading: { ...s.loading, classes: true } }));
+    set((s) => ({ loading: { ...s.loading, classes: true }, loadError: { ...s.loadError, classes: false } }));
     try {
       const res = await api.get('/classes/');
       set({ classes: res.data.results || res.data.data || res.data, lastFetched: Date.now() });
-    } catch (e) { if (import.meta.env.DEV) console.warn("[store]", e); }
+    } catch (e) {
+      if (import.meta.env.DEV) console.warn("[store]", e);
+      set((s) => ({ loadError: { ...s.loadError, classes: true } }));
+    }
     finally { set((s) => ({ loading: { ...s.loading, classes: false } })); }
   },
   fetchStudents: async (params, force) => {
@@ -182,7 +187,7 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
   },
   fetchTeachers: async (params, force) => {
     if (!force && get().teachers.length > 0 && !params) return;
-    set((s) => ({ loading: { ...s.loading, teachers: true } }));
+    set((s) => ({ loading: { ...s.loading, teachers: true }, loadError: { ...s.loadError, teachers: false } }));
     try {
       const res = await api.get('/teachers/', { params: { limit: '2000', ...params } });
       set({
@@ -190,7 +195,10 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
         teacherTotal: res.data.count ?? res.data.total ?? 0,
         lastFetched: Date.now()
       });
-    } catch (e) { if (import.meta.env.DEV) console.warn("[store]", e); }
+    } catch (e) {
+      if (import.meta.env.DEV) console.warn("[store]", e);
+      set((s) => ({ loadError: { ...s.loadError, teachers: true } }));
+    }
     finally { set((s) => ({ loading: { ...s.loading, teachers: false } })); }
   },
   fetchStaff: async (params, force) => {

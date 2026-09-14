@@ -933,6 +933,10 @@ class FinanceTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertGreaterEqual(len(res.data), 1)
 
+    def test_opening_balance_history_bad_fiscal_year_400(self):
+        res = self.client.get('/api/finance/opening-balances/history/?fiscal_year=abc')
+        self.assertEqual(res.status_code, 400)
+
     # ── Transaction Create via POST (camelCase body) ──
 
     def test_create_transaction_with_camelcase_body(self):

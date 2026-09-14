@@ -22,6 +22,26 @@ async function loadJsPDF() {
   return _jsPDF;
 }
 
+function apiError(e: any, fallback = 'Error') {
+  const data = (e as any)?.response?.data;
+  if (typeof data === 'string' && data) return data;
+  const fieldErrors =
+    data && typeof data === 'object'
+      ? Object.entries(data)
+          .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : (v !== null && typeof v === 'object' ? JSON.stringify(v) : (v ?? ''))}`)
+          .join(' | ')
+      : '';
+  const err = (data as any)?.error;
+  const detail = (data as any)?.detail;
+  const msg =
+    (typeof err === 'string' && err) ||
+    (typeof detail === 'string' && detail) ||
+    fieldErrors ||
+    (e as any)?.message ||
+    fallback;
+  return typeof msg === 'string' ? msg : String(msg);
+}
+
 export default function StudentSection() {
   const { classes, students, fetchClasses, fetchStudents, academicYears, fetchAcademicYears, loading } = useSchoolStore();
   const role = useAuthStore((s) => s.user?.role);
@@ -143,7 +163,7 @@ export default function StudentSection() {
       // which left newly-added students invisible until a reload.
       fetchStudents(undefined, true);
     } catch (e: any) {
-      toast(e.response?.data?.error || e.response?.data?.detail || e.message || 'Error', 'error');
+      toast(apiError(e), 'error');
     } finally {
       setSubmitting(false);
     }
@@ -169,7 +189,7 @@ export default function StudentSection() {
           fetchStudents(undefined, true);
         } catch { toast('Could not undo', 'error'); }
       }});
-    } catch (e: any) { toast(e.response?.data?.error || e.response?.data?.detail || e.message || 'Error', 'error'); }
+    } catch (e: any) { toast(apiError(e), 'error'); }
     setDeleteId(null);
     setDeleteLoading(false);
     fetchStudents(undefined, true);
@@ -181,7 +201,7 @@ export default function StudentSection() {
     try {
       const d = (await api.post(`/classes/${archiveId}/graduate/`)).data;
       toast(d.message, 'success'); fetchStudents(undefined, true); fetchClasses(true);
-    } catch (e: any) { toast(e.response?.data?.error || e.message || 'Error', 'error'); }
+    } catch (e: any) { toast(apiError(e), 'error'); }
     setArchiveId(null);
     setArchiveName('');
     setArchiveLoading(false);
@@ -285,7 +305,7 @@ export default function StudentSection() {
                 await api.post(`/students/${s.id}/ungraduate/`);
                 toast('Student unarchived ✓', 'success');
                 fetchStudents(showGraduated ? { archived: 'true' } : undefined, true);
-              } catch (e: any) { toast(e.response?.data?.error || e.message || 'Error', 'error'); }
+              } catch (e: any) { toast(apiError(e), 'error'); }
             }} className="flex-1 py-1.5 bg-amber-50 text-amber-600 rounded-lg text-xs font-medium hover:bg-amber-100 flex items-center justify-center gap-1"><Archive size={14} /> Unarchive</button>
           ) : (
             <button onClick={async () => {
@@ -293,7 +313,7 @@ export default function StudentSection() {
                 await api.post(`/students/${s.id}/graduate/`);
                 toast('Student archived ✓', 'success');
                 fetchStudents(showGraduated ? { archived: 'true' } : undefined, true);
-              } catch (e: any) { toast(e.response?.data?.error || e.message || 'Error', 'error'); }
+              } catch (e: any) { toast(apiError(e), 'error'); }
             }} className="flex-1 py-1.5 bg-amber-50 text-amber-600 rounded-lg text-xs font-medium hover:bg-amber-100 flex items-center justify-center gap-1"><Archive size={14} /> Archive</button>
           )}
           <button onClick={() => setDeleteId(s.id)} className="flex-1 py-1.5 bg-red-50 text-red-500 rounded-lg text-xs font-medium hover:bg-red-100 flex items-center justify-center gap-1"><Trash2 size={14} /> Delete</button>
@@ -455,7 +475,7 @@ export default function StudentSection() {
                     <div className="text-[11px] text-school-muted mt-1">{cls.studentCount} student{cls.studentCount !== 1 ? 's' : ''}</div>
                   </button>
                   {isAdmin && (
-                    <button onClick={() => { setArchiveId(cls.id); setArchiveName(cls.name); }} className="absolute top-2 right-2 p-1.5 bg-school-paper rounded-lg opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50" title="Archive all students in this class" aria-label="Archive class">
+                    <button onClick={() => { setArchiveId(cls.id); setArchiveName(cls.name); }} className="absolute top-2 right-2 p-1.5 bg-school-paper rounded-lg opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity hover:bg-red-50" title="Archive all students in this class" aria-label="Archive class">
                       <Archive size={14} className="text-school-muted hover:text-red-500" />
                     </button>
                   )}

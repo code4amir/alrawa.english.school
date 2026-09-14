@@ -17,6 +17,26 @@ async function loadJsPDF() {
   return _jsPDF;
 }
 
+function apiError(e: any, fallback = 'Error') {
+  const data = (e as any)?.response?.data;
+  if (typeof data === 'string' && data) return data;
+  const fieldErrors =
+    data && typeof data === 'object'
+      ? Object.entries(data)
+          .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : (v !== null && typeof v === 'object' ? JSON.stringify(v) : (v ?? ''))}`)
+          .join(' | ')
+      : '';
+  const err = (data as any)?.error;
+  const detail = (data as any)?.detail;
+  const msg =
+    (typeof err === 'string' && err) ||
+    (typeof detail === 'string' && detail) ||
+    fieldErrors ||
+    (e as any)?.message ||
+    fallback;
+  return typeof msg === 'string' ? msg : String(msg);
+}
+
 export default function StaffSection() {
   const { staff, fetchStaff, loading } = useSchoolStore();
   const role = useAuthStore((s) => s.user?.role);
@@ -79,7 +99,7 @@ export default function StaffSection() {
       resetForm();
       fetchStaff(undefined, true);
     } catch (e: any) {
-      toast(e.response?.data?.error || e.message || 'Error', 'error');
+      toast(apiError(e), 'error');
     } finally {
       setSubmitting(false);
     }
@@ -101,7 +121,7 @@ export default function StaffSection() {
           fetchStaff(undefined, true);
         } catch { toast('Could not undo', 'error'); }
       }});
-    } catch (e: any) { toast(e.response?.data?.error || e.message || 'Error', 'error'); }
+    } catch (e: any) { toast(apiError(e), 'error'); }
     setDeleteId(null);
     setDeleteLoading(false);
     fetchStaff(undefined, true);

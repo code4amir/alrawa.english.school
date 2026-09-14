@@ -102,8 +102,13 @@ class StudentAttendanceView(APIView):
         year = request.query_params.get('year')
         month = request.query_params.get('month')
         today = timezone.now().date()
-        year = int(year) if year else today.year
-        month = int(month) if month else today.month
+        try:
+            year = int(year) if year else today.year
+            month = int(month) if month else today.month
+        except (ValueError, TypeError):
+            return Response({'error': 'Invalid year or month'}, status=400)
+        if not (1 <= month <= 12 and 1 <= year <= 9999):
+            return Response({'error': 'Invalid year or month'}, status=400)
 
         records = AttendanceRecord.objects.filter(
             student_id=student_id,
@@ -316,6 +321,10 @@ class PushSubscribeView(APIView):
         if not endpoint or not p256dh or not auth:
             return Response({'error': 'Missing subscription data'}, status=400)
 
+        # ponytail: endpoint identifies the browser sub — drop rows other
+        # users hold for it (shared device / account switch) so one push
+        # never notifies two accounts.
+        PushSubscription.objects.filter(endpoint=endpoint).exclude(user=request.user).delete()
         sub, created = PushSubscription.objects.update_or_create(
             user=request.user,
             endpoint=endpoint,

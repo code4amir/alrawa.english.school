@@ -287,3 +287,93 @@ class StudentFeesDuesParityTests(HardeningAuthMixin, TestCase):
         portal_cats = {s['category'] for s in res.data['schedules']}
         service_names = {f['name'] for f in expected['fees']}
         self.assertEqual(portal_cats, service_names)
+
+
+class BackendHardeningBatchTests(HardeningAuthMixin, TestCase):
+    """Regression tests for the uncommitted backend hardening batch.
+
+    Covers: attendance year/month 400 guard, push shared-device delete,
+    connect-link is_active multi-guardian count, NotificationLog new
+    event-type choices.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.parent = self._make_user('hard-a@test.com')
+        self.parent2 = self._make_user('hard-b@test.com')
+        self.klass = SchoolClass.objects.create(name='Hardening Class')
+        self.student = Student.objects.create(
+            student_id='S-HARD-1', name='Hard One', contact='01710000001',
+            school_class=self.klass,
+        )
+        ParentStudentLink.objects.create(parent=self.parent, student=self.student)
+
+    def test_attendance_rejects_bad_year_month(self):
+        self._auth(self.parent)
+        base = f'/api/parents/attendance/{self.student.id}/'
+        for qs in ('?month=13', '?month=0', '?month=abc', '?year=abc',
+                   '?year=0', '?year=10000'):
+            res = self.client.get(base + qs)
+            self.assertEqual(res.status_code, 400, qs)
+
+    def test_attendance_accepts_valid_year_month(self):
+        self._auth(self.parent)
+        res = self.client.get(f'/api/parents/attendance/{self.student.id}/?year=2024&month=1')
+        self.assertEqual(res.status_code, 200)
+
+    def test_push_subscribe_drops_other_users_same_endpoint(self):
+        from parents.models import PushSubscription
+        ep = 'https://push.example.com/sub/shared-device'
+        PushSubscription.objects.create(
+            user=self.parent2, endpoint=ep,
+            p256dh_key='k1', auth_key='a1',
+        )
+        self._auth(self.parent)
+        res = self.client.post('/api/parents/push/subscribe/', {
+            'endpoint': ep, 'keys': {'p256dh': 'k2', 'auth': 'a2'},
+        }, format='json')
+        self.assertIn(res.status_code, (200, 201), res.data)
+        self.assertFalse(
+            PushSubscription.objects.filter(user=self.parent2, endpoint=ep).exists()
+        )
+        self.assertTrue(
+            PushSubscription.objects.filter(user=self.parent, endpoint=ep).exists()
+        )
+
+    def test_connect_link_is_active_multi_guardian(self):
+        import datetime
+        from django.utils import timezone
+        from parents.models import ConnectClaim, StudentConnectLink
+        link = StudentConnectLink.objects.create(
+            student=self.student, token='tok-hardening-1',
+            expires_at=timezone.now() + datetime.timedelta(days=30),
+        )
+        self.assertTrue(link.is_active())
+        # legacy claimed_by alone counts as one claim — still active
+        link.claimed_by = self.parent
+        link.claimed_at = timezone.now()
+        link.save(update_fields=['claimed_by', 'claimed_at'])
+        link.refresh_from_db()
+        self.assertTrue(link.is_active())
+        # +2 ConnectClaim rows (one duplicating legacy user) -> 3 distinct -> inactive
+        ConnectClaim.objects.create(link=link, user=self.parent)
+        u3 = self._make_user('hard-c@test.com')
+        u4 = self._make_user('hard-d@test.com')
+        ConnectClaim.objects.create(link=link, user=u3)
+        link.refresh_from_db()
+        self.assertTrue(link.is_active())
+        ConnectClaim.objects.create(link=link, user=u4)
+        link.refresh_from_db()
+        self.assertFalse(link.is_active())
+
+    def test_notification_log_new_event_types(self):
+        log = NotificationLog.objects.create(
+            user=self.parent, event_type='homework_published',
+            title='HW', body='Do page 5',
+        )
+        log.full_clean()  # must not raise — choice must exist
+        log2 = NotificationLog.objects.create(
+            user=self.parent, event_type='diary_created',
+            title='Diary', body='Today we...',
+        )
+        log2.full_clean()

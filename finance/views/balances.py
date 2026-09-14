@@ -138,8 +138,8 @@ class OpeningBalanceViewSet(viewsets.ModelViewSet):
         if fiscal_year is not None:
             try:
                 qs = qs.filter(fiscal_year=int(fiscal_year))
-            except ValueError:
-                pass
+            except (ValueError, TypeError):
+                return Response({'error': 'Invalid fiscal_year'}, status=400)
         if account:
             qs = qs.filter(account__name=account)
         serializer = OpeningBalanceHistorySerializer(qs, many=True)

@@ -85,7 +85,7 @@ const FeeScheduleTab = () => {
         targetAcademicYearId: activeYear.id,
       });
       toast(`${res.data.copied} schedules copied from ${previousYear.name} to ${activeYear.name}${res.data.skipped ? ` (${res.data.skipped} skipped)` : ''}`, 'success');
-      fetchFeeSchedules();
+      fetchFeeSchedules(true);
     } catch { toast('Failed to copy schedules', 'error'); }
   };
 

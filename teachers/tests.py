@@ -1,8 +1,10 @@
 from django.test import TestCase
 from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
-from rest_framework_simplejwt.tokens import RefreshToken
-from .models import Teacher
+from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
+from datetime import timedelta
+from core.models import SchoolClass
+from .models import Teacher, ClassTeacher
 
 User = get_user_model()
 
@@ -108,3 +110,38 @@ class MonitorTeacherAccessTests(TestCase):
         res = self.client.post(
             f'/api/teachers/{self.teacher.id}/class_teacher/', {'classId': str(klass.id)})
         self.assertEqual(res.status_code, 403)
+
+
+class MobileMonthlyReportGuardTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.klass = SchoolClass.objects.create(name='Class 5', order=1)
+        self.teacher = Teacher.objects.create(name='PIN Teacher', designation='T')
+        ClassTeacher.objects.create(teacher=self.teacher, school_class=self.klass)
+
+    def _pin_token(self):
+        tok = AccessToken()
+        tok['teacher_id'] = str(self.teacher.id)
+        tok['pin_auth'] = True
+        tok.set_exp('exp', lifetime=timedelta(hours=1))
+        return str(tok)
+
+    def _get(self, params):
+        return self.client.get(
+            '/api/m/attendance/monthly-report/', params,
+            HTTP_AUTHORIZATION=f'Bearer {self._pin_token()}')
+
+    def test_bad_year_month_400(self):
+        res = self._get({
+            'class_id': str(self.klass.id), 'year': 'abc', 'month': 'xyz'})
+        self.assertEqual(res.status_code, 400)
+
+    def test_month_out_of_range_400(self):
+        res = self._get({
+            'class_id': str(self.klass.id), 'year': '2026', 'month': '13'})
+        self.assertEqual(res.status_code, 400)
+
+    def test_valid_month_200(self):
+        res = self._get({
+            'class_id': str(self.klass.id), 'year': '2026', 'month': '9'})
+        self.assertEqual(res.status_code, 200)

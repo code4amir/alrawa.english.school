@@ -482,7 +482,12 @@ def mobile_monthly_report(request):
     else:
         import calendar as _cal
         from datetime import date as _date
-        year, month = int(year), int(month)
+        try:
+            year, month = int(year), int(month)
+        except (ValueError, TypeError):
+            return Response({'error': 'Invalid year or month'}, status=400)
+        if not 1 <= month <= 12:
+            return Response({'error': 'Invalid year or month'}, status=400)
         _, days_in_month = _cal.monthrange(year, month)
         weekend_set = _get_weekend_set()
         holiday_set = _get_holiday_dates(year=year, month=month)

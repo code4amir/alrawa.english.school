@@ -17,8 +17,28 @@ async function loadJsPDF() {
   return _jsPDF;
 }
 
+function apiError(e: any, fallback = 'Error') {
+  const data = (e as any)?.response?.data;
+  if (typeof data === 'string' && data) return data;
+  const fieldErrors =
+    data && typeof data === 'object'
+      ? Object.entries(data)
+          .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : (v !== null && typeof v === 'object' ? JSON.stringify(v) : (v ?? ''))}`)
+          .join(' | ')
+      : '';
+  const err = (data as any)?.error;
+  const detail = (data as any)?.detail;
+  const msg =
+    (typeof err === 'string' && err) ||
+    (typeof detail === 'string' && detail) ||
+    fieldErrors ||
+    (e as any)?.message ||
+    fallback;
+  return typeof msg === 'string' ? msg : String(msg);
+}
+
 export default function TeacherSection() {
-  const { teachers, fetchTeachers, loading, classes, fetchClasses } = useSchoolStore();
+  const { teachers, fetchTeachers, loading, loadError, classes, fetchClasses } = useSchoolStore();
   const role = useAuthStore((s) => s.user?.role);
   const isAdmin = role === 'admin';
   // Monitor manages teacher records (add/edit/delete/import); Assign + PIN
@@ -85,7 +105,7 @@ export default function TeacherSection() {
       resetForm();
       fetchTeachers(undefined, true);
     } catch (e: any) {
-      toast(e.response?.data?.error || e.message || 'Error', 'error');
+      toast(apiError(e), 'error');
     } finally {
       setSubmitting(false);
     }
@@ -107,7 +127,7 @@ export default function TeacherSection() {
           fetchTeachers(undefined, true);
         } catch { toast('Could not undo', 'error'); }
       }});
-    } catch (e: any) { toast(e.response?.data?.error || e.message || 'Error', 'error'); }
+    } catch (e: any) { toast(apiError(e), 'error'); }
     setDeleteId(null);
     setDeleteLoading(false);
     fetchTeachers(undefined, true);
@@ -219,7 +239,7 @@ export default function TeacherSection() {
       setPinTeacherId(null);
       setPinValue('');
     } catch (e: any) {
-      toast(e.response?.data?.error || e.message || 'Error', 'error');
+      toast(apiError(e), 'error');
     } finally { setPinSubmitting(false); }
   };
 
@@ -329,7 +349,13 @@ export default function TeacherSection() {
         {!loading.teachers && filtered.map((t: any) => editingId === t.id ? <div key={t.id}>{renderEditCard(false)}</div> : <div key={t.id}>{renderViewCard(t)}</div>)}
       </div>
 
-      {filtered.length === 0 && !showAddNew && (
+      {filtered.length === 0 && !showAddNew && !loading.teachers && loadError?.teachers && (
+        <div className="text-center py-12 text-school-muted">
+          <p className="text-sm font-semibold">Couldn't load teachers.</p>
+          <button onClick={() => fetchTeachers(undefined, true)} className="mt-2 text-sm text-school-accent hover:underline">Retry</button>
+        </div>
+      )}
+      {filtered.length === 0 && !showAddNew && !loading.teachers && !loadError?.teachers && (
         <div className="text-center py-12 text-school-muted">
           <div className="text-4xl mb-2"><GraduationCap size={48} className="text-school-muted mx-auto mb-2" /></div>
           <p className="text-sm">No teachers found.</p>
@@ -406,7 +432,7 @@ function AssignmentPanel({ teacher, classes, fetchTeachers, onClose }: {
       setSelectedClass('');
       fetchTeachers(undefined, true);
     } catch (e: any) {
-      toast(e.response?.data?.error || 'Error', 'error');
+      toast(apiError(e), 'error');
     } finally { setLoading(false); }
   };
 
@@ -420,7 +446,7 @@ function AssignmentPanel({ teacher, classes, fetchTeachers, onClose }: {
       ));
       fetchTeachers(undefined, true);
     } catch (e: any) {
-      toast(e.response?.data?.error || 'Error', 'error');
+      toast(apiError(e), 'error');
     } finally { setLoading(false); }
   };
 
@@ -432,7 +458,7 @@ function AssignmentPanel({ teacher, classes, fetchTeachers, onClose }: {
       setClassTeacherClasses(classTeacherClasses.filter((c: any) => c.classId !== classId));
       fetchTeachers(undefined, true);
     } catch (e: any) {
-      toast(e.response?.data?.error || 'Error', 'error');
+      toast(apiError(e), 'error');
     } finally { setLoading(false); }
   };
 
@@ -453,7 +479,7 @@ function AssignmentPanel({ teacher, classes, fetchTeachers, onClose }: {
       setSelectedSubject('');
       fetchTeachers(undefined, true);
     } catch (e: any) {
-      toast(e.response?.data?.error || 'Error', 'error');
+      toast(apiError(e), 'error');
     } finally { setLoading(false); }
   };
 
@@ -465,7 +491,7 @@ function AssignmentPanel({ teacher, classes, fetchTeachers, onClose }: {
       setSubjectAssignments(subjectAssignments.filter((s: any) => !(s.subjectId === subjectId && s.classId === classId)));
       fetchTeachers(undefined, true);
     } catch (e: any) {
-      toast(e.response?.data?.error || 'Error', 'error');
+      toast(apiError(e), 'error');
     } finally { setLoading(false); }
   };
 

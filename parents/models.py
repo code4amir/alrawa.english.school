@@ -76,10 +76,21 @@ class StudentConnectLink(models.Model):
     def is_active(self, at=None):
         if self.revoked_at:
             return False
-        if self.claimed_at:
-            return False
         at = at or timezone.now()
         if self.expires_at <= at:
+            return False
+        # ponytail: multi-guardian — active until 3 distinct claims; per-link count if fan-out needed
+        from parents.models import ConnectClaim
+        try:
+            from parents.connect import MAX_CONNECT_CLAIMS
+        except ImportError:
+            MAX_CONNECT_CLAIMS = 3
+        count = ConnectClaim.objects.filter(link=self).count()
+        if self.claimed_by_id and not ConnectClaim.objects.filter(
+            link=self, user_id=self.claimed_by_id
+        ).exists():
+            count += 1
+        if count >= MAX_CONNECT_CLAIMS:
             return False
         return True
 
@@ -162,6 +173,8 @@ class NotificationLog(models.Model):
         ('dues_reminder', 'Dues Reminder'),
         ('agent_digest', 'Agent Digest'),
         ('routine_published', 'Routine Published'),
+        ('homework_published', 'Homework Published'),
+        ('diary_created', 'Diary Created'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

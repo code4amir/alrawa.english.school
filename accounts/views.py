@@ -566,15 +566,14 @@ class LinkChildView(APIView):
         if ParentStudentLink.objects.filter(parent=request.user, student=student).exists():
             return Response({'error': 'Already linked'}, status=409)
 
-        contact = (student.contact or '').strip()
-        if contact:
-            siblings = Student.objects.filter(
-                contact=student.contact, deleted_at__isnull=True,
-            )
-            for sib in siblings:
-                ParentStudentLink.objects.get_or_create(parent=request.user, student=sib)
+        from parents.connect import sibling_students  # ponytail: local import, avoids circular import
+        sibs = sibling_students(student)
+        if sibs is None:
+            ParentStudentLink.objects.get_or_create(parent=request.user, student=student)
         else:
             ParentStudentLink.objects.get_or_create(parent=request.user, student=student)
+            for sib in sibs:
+                ParentStudentLink.objects.get_or_create(parent=request.user, student=sib)
 
         return Response({
             'status': 'linked',

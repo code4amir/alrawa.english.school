@@ -280,7 +280,7 @@ const AccessoriesSection = () => {
                         <>
                           <span className="text-sm font-bold font-mono text-school-primary">৳ {fmt(f.amount)}</span>
                           {isAdmin && (
-                            <button onClick={() => setEditFee({ category: f.category, amount: String(f.amount) })} className="p-1 text-school-muted opacity-0 group-hover:opacity-100 hover:bg-school-paper rounded transition-all">
+                            <button onClick={() => setEditFee({ category: f.category, amount: String(f.amount) })} className="p-1 text-school-muted opacity-100 sm:opacity-0 sm:group-hover:opacity-100 hover:bg-school-paper rounded transition-all">
                               <Pencil size={12} />
                             </button>
                           )}
@@ -317,7 +317,7 @@ const AccessoriesSection = () => {
                           <>
                             <span className="text-sm font-bold font-mono text-school-primary">৳ {fmt(f.amount)}</span>
                             {isAdmin && (
-                              <button onClick={() => setEditFee({ category: f.category, amount: String(f.amount) })} className="p-1 text-school-muted opacity-0 group-hover:opacity-100 hover:bg-school-paper rounded transition-all" aria-label="Edit">
+                              <button onClick={() => setEditFee({ category: f.category, amount: String(f.amount) })} className="p-1 text-school-muted opacity-100 sm:opacity-0 sm:group-hover:opacity-100 hover:bg-school-paper rounded transition-all" aria-label="Edit">
                                 <Pencil size={12} />
                               </button>
                             )}
