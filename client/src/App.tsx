@@ -24,6 +24,7 @@ const ParentHomework = lazy(() => import('./pages/parents/ParentHomework'));
 const ParentDiary = lazy(() => import('./pages/parents/ParentDiary'));
 const ParentRoutine = lazy(() => import('./pages/parents/ParentRoutine'));
 const ParentExamRoutine = lazy(() => import('./pages/parents/ParentExamRoutine'));
+const ParentNotifications = lazy(() => import('./pages/parents/ParentNotifications'));
 const TeacherLayout = lazy(() => import('./pages/teacher/TeacherLayout'));
 const TeacherDashboard = lazy(() => import('./pages/teacher/TeacherDashboard'));
 const WeeklyRoutine = lazy(() => import('./pages/teacher/WeeklyRoutine'));
@@ -129,6 +130,7 @@ const App: React.FC = () => {
           <Route path="/parent/routine" element={user?.role === 'parent' || user?.role === 'admin' ? <ParentRoutine /> : <Navigate to="/" />} />
           <Route path="/parent/exam-routine" element={user?.role === 'parent' || user?.role === 'admin' ? <ParentExamRoutine /> : <Navigate to="/" />} />
           <Route path="/parent/announcements" element={user?.role === 'parent' || user?.role === 'admin' ? <ParentAnnouncements /> : <Navigate to="/" />} />
+          <Route path="/parent/notifications" element={user?.role === 'parent' || user?.role === 'admin' ? <ParentNotifications /> : <Navigate to="/" />} />
 
           <Route path="/teacher" element={user?.role === 'teacher' || user?.role === 'admin' || user?.role === 'monitor' ? <TeacherLayout><TeacherDashboard /></TeacherLayout> : <Navigate to="/" />} />
           <Route path="/teacher/routine" element={user?.role === 'teacher' || user?.role === 'admin' || user?.role === 'monitor' ? <TeacherLayout><WeeklyRoutine /></TeacherLayout> : <Navigate to="/" />} />

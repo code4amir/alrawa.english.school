@@ -38,6 +38,13 @@ logger = logging.getLogger(__name__)
 
 WEEKEND_DAYS_DEFAULT = '4,5'
 
+#: Notification retention: query window shown to parents and the prune
+#: command's default horizon. Rows older than this become invisible and
+#: are deleted by the monthly prune (hygiene, never correctness).
+NOTIFICATION_TTL_DAYS = 90
+#: Hard cap of rows returned per parent (≈ two terms of history).
+NOTIFICATION_RETENTION_CAP = 100
+
 
 def _get_weekend_set():
     try:
@@ -395,7 +402,9 @@ class ParentNotificationsView(APIView):
     """A parent's own notification history (dues reminders, fee receipts, ...).
 
     Read-only, scoped to the requesting user — a parent can never see another
-    parent's notifications. Newest first, capped at the 50 most recent rows.
+    parent's notifications. Newest first. Retention: only rows sent within
+    the last NOTIFICATION_TTL_DAYS days, capped at NOTIFICATION_RETENTION_CAP
+    most recent rows (the (user, -sent_at) index makes the slice cheap).
     """
 
     permission_classes = [IsAuthenticated]
@@ -403,7 +412,11 @@ class ParentNotificationsView(APIView):
     def get(self, request):
         if request.user.role != 'parent':
             return Response({'error': 'Parents only'}, status=403)
-        rows = NotificationLog.objects.filter(user=request.user).order_by('-sent_at')[:50]
+        cutoff = timezone.now() - timezone.timedelta(days=NOTIFICATION_TTL_DAYS)
+        rows = (
+            NotificationLog.objects.filter(user=request.user, sent_at__gte=cutoff)
+            .order_by('-sent_at')[:NOTIFICATION_RETENTION_CAP]
+        )
         data = [{
             'id': n.id,
             'eventType': n.event_type,
@@ -413,6 +426,101 @@ class ParentNotificationsView(APIView):
             'sentAt': n.sent_at.isoformat(),
         } for n in rows]
         return Response(data)
+
+
+class FamilySiblingsView(APIView):
+    """Other children in this parent's family that are NOT linked yet.
+
+    Discovery for the one-tap sibling claim in the portal: for each linked
+    child, find siblings via the same tolerant family matching as the
+    connect flow (contact / father / mother). Siblings the parent already
+    links to are excluded. Read-only — the claim itself goes through
+    FamilyClaimView, which re-verifies family overlap server-side.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if request.user.role != 'parent':
+            return Response({'error': 'Parents only'}, status=403)
+        linked = list(request.user.parent_links.select_related(
+            'student', 'student__school_class',
+        ).filter(student__deleted_at__isnull=True))
+        linked_ids = {l.student_id for l in linked}
+        seen = {}  # student_id -> row (dedupe across multiple linked children)
+        for l in linked:
+            sibs = sibling_students(l.student)
+            if sibs is None:
+                continue
+            for s in sibs.select_related('school_class'):
+                if s.id in linked_ids or s.id in seen:
+                    continue
+                seen[s.id] = {
+                    'id': str(s.id),
+                    'studentId': s.student_id,
+                    'name': s.name,
+                    'roll': s.roll,
+                    'className': s.school_class.name if s.school_class else '',
+                }
+        return Response(list(seen.values()))
+
+
+class FamilyClaimView(APIView):
+    """One-tap claim of a discovered sibling — with server-side proof.
+
+    The parent asks to link `studentId`. Unlike the admin link endpoint,
+    this is self-service, so the family relationship must be verified:
+    the student must be a sibling (tolerant contact/name match) of a child
+    the parent ALREADY links to. That's the same evidence the connect
+    magic-link flow accepts (sibling overlap authorizes a claim).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if request.user.role != 'parent':
+            return Response({'error': 'Parents only'}, status=403)
+        student_uuid = request.data.get('studentId')
+        if not student_uuid:
+            return Response({'error': 'studentId required'}, status=400)
+        try:
+            student = Student.objects.get(id=student_uuid, deleted_at__isnull=True)
+        except (Student.DoesNotExist, ValueError, TypeError, ValidationError):
+            return Response({'error': 'Student not found'}, status=404)
+
+        if ParentStudentLink.objects.filter(parent=request.user, student=student).exists():
+            return Response({'status': 'already_linked', 'studentName': student.name})
+
+        linked_ids = set(
+            request.user.parent_links.values_list('student_id', flat=True)
+        )
+        if not linked_ids:
+            return Response(
+                {'error': 'Link your first child via the school before claiming others.'},
+                status=403,
+            )
+
+        sibs = sibling_students(student)
+        overlap_ids = set(sibs.values_list('id', flat=True)) if sibs is not None else set()
+        if not (overlap_ids & linked_ids):
+            return Response(
+                {'error': 'This student is not in your family. Use the connect link from the school.'},
+                status=403,
+            )
+
+        link, created = ParentStudentLink.objects.get_or_create(
+            parent=request.user, student=student,
+        )
+        if not created:
+            return Response({'status': 'already_linked', 'studentName': student.name})
+        log_audit(
+            'family_claim', 'student', entity_id=str(student.id),
+            details={'parent': request.user.email, 'via': 'portal one-tap'},
+            request=request,
+        )
+        return Response(
+            {'status': 'linked', 'studentName': student.name}, status=201,
+        )
 
 
 class ParentLinkView(APIView):

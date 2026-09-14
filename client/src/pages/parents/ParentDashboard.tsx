@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../../store';
 import {
   ChevronRight, GraduationCap, Megaphone, BookOpen, BookText,
-  ClipboardList, Calendar, Wallet, Bell,
+  ClipboardList, Calendar, Wallet, Bell, Users,
 } from 'lucide-react';
 import ParentLayout from './ParentLayout';
 import Toast, { toast } from '../../components/Toast';
@@ -46,6 +46,14 @@ interface NoticeItem {
   payload?: { url?: string } | null;
 }
 
+interface Sibling {
+  id: string;
+  studentId: string;
+  name: string;
+  roll: string;
+  className: string;
+}
+
 export default function ParentDashboard() {
   const navigate = useNavigate();
   const [students, setStudents] = useState<Student[]>([]);
@@ -55,12 +63,15 @@ export default function ParentDashboard() {
   const [exams, setExams] = useState<ExamItem[]>([]);
   const [todayRoutine, setTodayRoutine] = useState<string[]>([]);
   const [notices, setNotices] = useState<NoticeItem[]>([]);
+  const [siblings, setSiblings] = useState<Sibling[]>([]);
+  const [linking, setLinking] = useState<string | null>(null);
+  const [linked, setLinked] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const dayName = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][new Date().getDay()];
 
-    const labels = ['students', 'announcements', 'homework', 'diary', 'exams', 'routine', 'notices'];
+    const labels = ['students', 'announcements', 'homework', 'diary', 'exams', 'routine', 'notices', 'family'];
     Promise.allSettled([
       api.get('/parents/my-students/'),
       api.get('/parents/announcements/'),
@@ -69,6 +80,7 @@ export default function ParentDashboard() {
       api.get('/parents/exam-routine/'),
       api.get('/parents/routine/'),
       api.get('/parents/notifications/'),
+      api.get('/parents/family-siblings/'),
     ])
       .then((results) => {
         const failed: string[] = [];
@@ -93,10 +105,29 @@ export default function ParentDashboard() {
           );
         }
         const not = value(6); if (not) setNotices(not.slice(0, 6));
+        const fam = value(7); if (fam) setSiblings(fam);
         if (failed.length > 0) toast(`Couldn't load: ${failed.join(', ')}`, 'error');
       })
       .finally(() => setLoading(false));
   }, []);
+
+  const claimSibling = async (s: Sibling) => {
+    if (linking) return;
+    setLinking(s.id);
+    try {
+      const res = await api.post('/parents/family-claim/', { studentId: s.id });
+      if (res.data?.status === 'linked' || res.data?.status === 'already_linked') {
+        setLinked((l) => [...l, s.id]);
+        toast(`${s.name} linked to your account`, 'success');
+      } else {
+        toast(res.data?.error || 'Could not link this child', 'error');
+      }
+    } catch (e: any) {
+      toast(e?.response?.data?.error || 'Could not link this child', 'error');
+    } finally {
+      setLinking(null);
+    }
+  };
 
   if (loading) {
     return (
@@ -150,6 +181,40 @@ export default function ParentDashboard() {
             </div>
           </div>
         ))}
+
+        {siblings.filter((s) => !linked.includes(s.id)).length > 0 && (
+          <div className="bg-white rounded-xl border border-school-border overflow-hidden card-shadow">
+            <div className="px-4 py-3 bg-gray-50 border-b border-school-border flex items-center gap-2">
+              <Users size={16} className="text-school-accent" />
+              <span className="font-bold text-sm text-school-primary">Other Children in Your Family</span>
+            </div>
+            {siblings.filter((s) => !linked.includes(s.id)).map((s) => (
+              <div key={s.id} className="px-4 py-3 border-b border-school-border last:border-0 flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-school-paper dark:bg-white/10 flex items-center justify-center text-school-primary font-bold text-sm flex-shrink-0">
+                  {s.name.charAt(0).toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-sm text-school-primary truncate">{s.name}</p>
+                  <p className="text-[10px] text-school-muted mt-0.5">
+                    {s.className} · Roll: {s.roll} · ID: {s.studentId}
+                  </p>
+                </div>
+                <button
+                  onClick={() => claimSibling(s)}
+                  disabled={linking !== null}
+                  className="text-[11px] font-bold text-white bg-school-accent hover:bg-school-accent/90 disabled:opacity-50 px-3 py-1.5 rounded-full transition-colors flex-shrink-0"
+                >
+                  {linking === s.id ? 'Linking…' : 'Link'}
+                </button>
+              </div>
+            ))}
+            <div className="px-4 py-2 bg-gray-50 border-t border-school-border">
+              <p className="text-[10px] text-school-muted">
+                Matched by family contact or guardian name. Not your child? Ignore this.
+              </p>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-2">
           <button onClick={() => navigate('/parent/homework')}
@@ -291,6 +356,7 @@ export default function ParentDashboard() {
                 <Bell size={16} className="text-school-accent" />
                 <span className="font-bold text-sm text-school-primary">Recent Notices</span>
               </div>
+              <button onClick={() => navigate('/parent/notifications')} className="text-[11px] font-semibold text-school-accent hover:underline">See all</button>
             </div>
             {notices.map((n) => {
               const url = (n as any).payload?.url as string | undefined;

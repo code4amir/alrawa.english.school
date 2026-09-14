@@ -4,11 +4,12 @@ import { SCHOOL_LOGO } from '../../lib/logo';
 import { usePushSubscription } from '../../lib/usePushSubscription';
 import {
   Home, CalendarCheck, Wallet, BarChart3, Megaphone,
-  BookOpen, BookText, ClipboardList, Calendar, LogOut, ArrowLeft,
+  BookOpen, BookText, ClipboardList, Calendar, LogOut, ArrowLeft, Bell,
 } from 'lucide-react';
 
 const tabs = [
   { path: '/parent', label: 'Home', icon: Home },
+  { path: '/parent/notifications', label: 'Alerts', icon: Bell },
   { path: '/parent/homework', label: 'Homework', icon: BookOpen },
   { path: '/parent/diary', label: 'Diary', icon: BookText },
   { path: '/parent/routine', label: 'Routine', icon: ClipboardList },
