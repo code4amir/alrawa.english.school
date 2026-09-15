@@ -49,7 +49,7 @@ interface SchoolState {
   fetchSubjects: (classId: string) => Promise<void>;
   fetchFinance: (force?: boolean) => Promise<void>;
   fetchTransactions: (params?: Record<string, string>) => Promise<void>;
-  dashboardSummary: { totalIncome: number; totalDepositedToBank: number; depositRemaining: number };
+  dashboardSummary: { totalIncome: number; totalDepositedToBank: number; depositRemaining: number; totalExpense?: number; net?: number; voids?: { count: number; amount: number }; refunds?: { count: number; amount: number } };
   fetchDashboardSummary: (fiscalYear?: string, force?: boolean) => Promise<void>;
   fetchFeeSchedules: (force?: boolean) => Promise<void>;
   fetchOpeningBalances: (year?: string) => Promise<void>;

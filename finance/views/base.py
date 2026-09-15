@@ -107,6 +107,59 @@ CROSS_BANK_EXPENSE = Q(transaction_type='EXPENSE') | (
       destination_account__name=SECONDARY_BANK)
 )
 
+# ── Void-vs-refund reporting ──────────────────────────────────────────
+# A cancel marks the original is_cancelled=True and mints a reversal row.
+# Voids (is_refund=False, the default — including every historical
+# reversal) mean "never happened": they are excluded from ALL
+# income/expense sums and activity counts. Refunds (is_refund=True) are
+# real money movement back out and DO count, landing in expense sums via
+# their flipped EXPENSE type.
+ACTIVE_TXNS = Q(is_cancelled=False, reversal_of_id__isnull=True)
+REFUND_TXNS = Q(is_cancelled=False, reversal_of_id__isnull=False, is_refund=True)
+
+
+def report_filter():
+    # Rows that count in income/expense sums and activity counts:
+    # live rows, refund reversals (real money back out), AND the cancelled
+    # originals those refunds reverse (money genuinely arrived, so the
+    # income leg stays: income 5000 + expense 5000, net 0). Void reversals
+    # and their originals never count anywhere (memo-only).
+    from django.db.models import Subquery
+    refunded_originals = Transaction.objects.filter(
+        is_cancelled=False, reversal_of_id__isnull=False, is_refund=True,
+    ).values('reversal_of_id')
+    return (
+        ACTIVE_TXNS
+        | REFUND_TXNS
+        | Q(reversal_of_id__isnull=True, id__in=Subquery(refunded_originals))
+    )
+
+
+def _void_refund_memo(fy):
+    # Memo figures for one fiscal year: voids and refunds (count+amount each).
+
+    # Memo only: reversals never enter the main income/expense totals
+    # (voids) or enter only via report_filter() (refunds).
+    from django.db.models import Count
+    agg = Transaction.objects.filter(
+        fiscal_year=fy, is_cancelled=False, reversal_of_id__isnull=False,
+    ).aggregate(
+        void_count=Count('id', filter=Q(is_refund=False)),
+        void_amount=Sum('amount', filter=Q(is_refund=False)),
+        refund_count=Count('id', filter=Q(is_refund=True)),
+        refund_amount=Sum('amount', filter=Q(is_refund=True)),
+    )
+    return {
+        'voids': {
+            'count': agg['void_count'] or 0,
+            'amount': agg['void_amount'] or Decimal('0'),
+        },
+        'refunds': {
+            'count': agg['refund_count'] or 0,
+            'amount': agg['refund_amount'] or Decimal('0'),
+        },
+    }
+
 def _internal_accounts():
     """Get active bank account names, cached for performance."""
     cache_key = 'active_bank_account_names'

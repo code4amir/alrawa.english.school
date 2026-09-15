@@ -4,9 +4,12 @@ interface BalanceSummaryProps {
   totalIncome: number;
   totalDepositedToBank: number;
   depositRemaining: number;
+  voids?: { count: number; amount: number };
+  refunds?: { count: number; amount: number };
 }
 
-export default function BalanceSummary({ totalIncome, totalDepositedToBank, depositRemaining }: BalanceSummaryProps) {
+export default function BalanceSummary({ totalIncome, totalDepositedToBank, depositRemaining, voids, refunds }: BalanceSummaryProps) {
+  const memoCount = (voids?.count || 0) + (refunds?.count || 0);
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3 sm:gap-4">
@@ -34,6 +37,12 @@ export default function BalanceSummary({ totalIncome, totalDepositedToBank, depo
             <strong>৳ {depositRemaining.toLocaleString('en-BD')}</strong> in cash not yet deposited to AL RAWA Bank.
           </p>
         </div>
+      )}
+
+      {memoCount > 0 && (
+        <p className="text-[11px] text-school-muted px-1">
+          Voids: {voids?.count || 0} (৳ {(voids?.amount || 0).toLocaleString('en-BD')}) · Refunds: {refunds?.count || 0} (৳ {(refunds?.amount || 0).toLocaleString('en-BD')}) — memo only
+        </p>
       )}
     </div>
   );

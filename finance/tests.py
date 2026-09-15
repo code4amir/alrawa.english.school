@@ -1555,3 +1555,95 @@ class FinanceAuditFixTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertTrue(OpeningBalanceHistory.objects.filter(
             fiscal_year=fy, account=self.bank_ar, old_amount=5000, new_amount=6000).exists())
+
+
+class VoidRefundCancelTests(TestCase):
+    # Void-vs-refund cancel: voids are memo-only (net 0, absent from every
+    # total); refunds are real money-out (income AND expense stay).
+    def setUp(self):
+        self.client = APIClient()
+        _auth(self.client)
+        self.klass = SchoolClass.objects.create(name='Class 5', order=1)
+        self.year = AcademicYear.objects.create(name='2026', start_date='2026-01-01', end_date='2026-12-31', is_active=True)
+        self.student = Student.objects.create(name='Stu', student_id='S000001', school_class=self.klass, session='2026')
+        self.bank_ar, _ = BankAccount.objects.get_or_create(name='AL_RAWA_BANK', display_name='AL RAWA Bank')
+
+    def _income_5000(self):
+        return Transaction.objects.create(
+            transaction_date='2026-06-01', transaction_type='INCOME',
+            amount=5000, description='Fee', student=self.student,
+            destination_account=self.bank_ar, fiscal_year=2026,
+            category='Tuition', fee_month='2026-06',
+        )
+
+    def test_void_cancel_nets_to_zero_and_memo(self):
+        tx = self._income_5000()
+        res = self.client.post(
+            f'/api/finance/transactions/{tx.id}/cancel/',
+            {'reason': 'duplicate entry'}, format='json')
+        self.assertEqual(res.status_code, 200)
+        reversal = Transaction.objects.get(reversal_of_id=tx.id)
+        self.assertFalse(reversal.is_refund)
+
+        dash = self.client.get('/api/finance/dashboard-summary/?fiscal_year=2026')
+        self.assertEqual(dash.status_code, 200)
+        self.assertEqual(float(dash.data['totalIncome']), 0.0)
+        self.assertEqual(float(dash.data['totalExpense']), 0.0)
+        self.assertEqual(float(dash.data['net']), 0.0)
+        self.assertEqual(dash.data['voids']['count'], 1)
+        self.assertEqual(float(dash.data['voids']['amount']), 5000.0)
+        self.assertEqual(dash.data['refunds']['count'], 0)
+
+        ledger = self.client.get('/api/finance/ledger/?account=AL_RAWA_BANK')
+        self.assertEqual(ledger.status_code, 200)
+        self.assertEqual(float(ledger.data['totalDebit']), 0.0)
+        self.assertEqual(float(ledger.data['totalCredit']), 0.0)
+        # dashboard agrees with ledger: nothing live remains
+        self.assertEqual(float(dash.data['totalIncome']), float(ledger.data['totalDebit']))
+
+        agm = self.client.get('/api/finance/reports/agm/?fiscal_year=2026')
+        self.assertEqual(agm.status_code, 200)
+        self.assertEqual(float(agm.data['totalIncome']), 0.0)
+        self.assertEqual(float(agm.data['totalExpense']), 0.0)
+        self.assertEqual(agm.data['voids']['count'], 1)
+        self.assertEqual(float(agm.data['voids']['amount']), 5000.0)
+
+    def test_refund_cancel_keeps_income_and_books_expense(self):
+        tx = self._income_5000()
+        res = self.client.post(
+            f'/api/finance/transactions/{tx.id}/cancel/',
+            {'reason': 'fee returned to parent', 'cancel_type': 'refund'}, format='json')
+        self.assertEqual(res.status_code, 200)
+        reversal = Transaction.objects.get(reversal_of_id=tx.id)
+        self.assertTrue(reversal.is_refund)
+        self.assertEqual(reversal.transaction_type, 'EXPENSE')
+
+        dash = self.client.get('/api/finance/dashboard-summary/?fiscal_year=2026')
+        self.assertEqual(float(dash.data['totalIncome']), 5000.0)
+        self.assertEqual(float(dash.data['totalExpense']), 5000.0)
+        self.assertEqual(float(dash.data['net']), 0.0)
+        self.assertEqual(dash.data['refunds']['count'], 1)
+        self.assertEqual(float(dash.data['refunds']['amount']), 5000.0)
+        self.assertEqual(dash.data['voids']['count'], 0)
+
+        agm = self.client.get('/api/finance/reports/agm/?fiscal_year=2026')
+        self.assertEqual(float(agm.data['totalIncome']), 5000.0)
+        self.assertEqual(float(agm.data['totalExpense']), 5000.0)
+        self.assertEqual(agm.data['refunds']['count'], 1)
+        self.assertEqual(float(agm.data['refunds']['amount']), 5000.0)
+
+    def test_bare_refund_reason_is_honoured(self):
+        tx = self._income_5000()
+        res = self.client.post(
+            f'/api/finance/transactions/{tx.id}/cancel/',
+            {'reason': 'refund'}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(Transaction.objects.get(reversal_of_id=tx.id).is_refund)
+
+    def test_malformed_cancel_type_is_400(self):
+        tx = self._income_5000()
+        res = self.client.post(
+            f'/api/finance/transactions/{tx.id}/cancel/',
+            {'reason': 'x', 'cancel_type': 'bogus'}, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertFalse(Transaction.objects.filter(reversal_of_id=tx.id).exists())

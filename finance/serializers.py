@@ -41,9 +41,10 @@ class TransactionSerializer(CamelCaseModelSerializer):
                   'affects_expense_ledger', 'created_by', 'approved_by', 'reference_id',
                   'token_number', 'fee_month', 'feeMonth', 'fiscal_year', 'receipt_sequence',
                   'is_cancelled', 'cancelled_at', 'cancelled_by', 'cancel_reason',
-                  'reversal_of_id', 'created_at', 'updated_by', 'updated_at']
+                  'reversal_of_id', 'is_refund', 'created_at', 'updated_by', 'updated_at']
         read_only_fields = ['id', 'created_at', 'is_cancelled', 'cancelled_at',
                             'cancelled_by', 'cancel_reason', 'reversal_of_id',
+                            'is_refund',
                             'receipt_sequence', 'reference_id', 'token_number',
                             'affects_income_ledger', 'affects_expense_ledger',
                             'approved_by']
@@ -56,6 +57,11 @@ class TransactionSerializer(CamelCaseModelSerializer):
 
 class TransactionCancelSerializer(serializers.Serializer):
     reason = serializers.CharField(required=True)
+    # Void (default) = entry never happened, excluded from all report
+    # totals. Refund = real money returned, counted in expense sums.
+    cancel_type = serializers.ChoiceField(
+        choices=['void', 'refund'], required=False, default='void',
+    )
 
 
 class FeeScheduleSerializer(CamelCaseModelSerializer):

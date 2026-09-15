@@ -61,6 +61,11 @@ class Transaction(models.Model):
     cancelled_by = models.CharField(max_length=100, blank=True, null=True)
     cancel_reason = models.TextField(blank=True, null=True)
     reversal_of_id = models.UUIDField(blank=True, null=True)
+    is_refund = models.BooleanField(
+        default=False,
+        help_text='True when this reversal row records a real money-out refund; '
+                  'False means a void (as if the original never happened).',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_by = models.CharField(max_length=100, blank=True, null=True)
     updated_at = models.DateTimeField(auto_now=True)

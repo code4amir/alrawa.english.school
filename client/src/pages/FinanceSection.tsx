@@ -61,6 +61,7 @@ function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, r
   const [page, setPage] = useState(1);
   const [cancelId, setCancelId] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState('');
+  const [cancelType, setCancelType] = useState<'void' | 'refund'>('void');
   const [cancelling, setCancelling] = useState(false);
   const cancelRef = useFocusTrap(!!cancelId);
 
@@ -108,10 +109,10 @@ function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, r
     if (!cancelId || !canWrite) return;
     setCancelling(true);
     try {
-      await api.post(`/finance/transactions/${cancelId}/cancel/`, { reason: cancelReason });
-      toast('Transaction cancelled', 'success');
+      await api.post(`/finance/transactions/${cancelId}/cancel/`, { reason: cancelReason, cancel_type: cancelType });
+      toast(cancelType === 'refund' ? 'Transaction refunded' : 'Transaction voided', 'success');
       setCancelId(null);
-      setCancelReason('');
+      setCancelReason(''); setCancelType('void');
       fetchData(page);
       const store = useSchoolStore.getState();
       if (store._fetchedAt) {
@@ -352,17 +353,30 @@ function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, r
 
       {/* Cancel Modal */}
       {cancelId && (
-          <div ref={cancelRef} role="dialog" aria-modal="true" aria-label="Cancel Transaction" className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setCancelId(null)} onKeyDown={e => { if (e.key === 'Escape') { setCancelId(null); setCancelReason(''); } }}>
+          <div ref={cancelRef} role="dialog" aria-modal="true" aria-label="Cancel Transaction" className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => { setCancelId(null); setCancelType('void'); }} onKeyDown={e => { if (e.key === 'Escape') { setCancelId(null); setCancelReason(''); setCancelType('void'); } }}>
           <div className="bg-white rounded-xl border border-school-border p-6 w-full max-w-md space-y-4" onClick={e => e.stopPropagation()}>
             <h4 className="font-serif text-sm text-school-primary">Cancel Transaction</h4>
             <p className="text-xs text-school-muted">This will cancel the transaction and create a reversal. The cancelled row will remain in the ledger with a strikethrough.</p>
+            <div>
+              <span className="text-[10px] font-bold uppercase text-school-muted mb-1 block">Cancel as</span>
+              <div className="space-y-2">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input type="radio" name="cancelType" value="void" checked={cancelType === 'void'} onChange={() => setCancelType('void')} className="mt-0.5" />
+                  <span className="text-xs"><strong>Void</strong> — entry never happened; removed from all totals, kept only as a memo.</span>
+                </label>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input type="radio" name="cancelType" value="refund" checked={cancelType === 'refund'} onChange={() => setCancelType('refund')} className="mt-0.5" />
+                  <span className="text-xs"><strong>Refund</strong> — money was returned; the original income stays and the repayment counts as an expense.</span>
+                </label>
+              </div>
+            </div>
             <div>
               <label className="text-[10px] font-bold uppercase text-school-muted mb-1 block">Reason (required)</label>
               <textarea value={cancelReason} onChange={e => setCancelReason(e.target.value)} rows={3} required placeholder="Why is this being cancelled?" className="w-full border border-school-border rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-school-accent resize-none" />
               {!cancelReason.trim() && <p className="text-[10px] text-red-500 mt-1">Reason is required to cancel a transaction</p>}
             </div>
             <div className="flex gap-2 justify-end">
-              <button onClick={() => { setCancelId(null); setCancelReason(''); }} className="px-4 py-2 border border-school-border rounded-xl text-xs hover:bg-school-paper">Keep</button>
+              <button onClick={() => { setCancelId(null); setCancelReason(''); setCancelType('void'); }} className="px-4 py-2 border border-school-border rounded-xl text-xs hover:bg-school-paper">Keep</button>
               <button onClick={handleCancel} disabled={cancelling || !cancelReason.trim()} className="px-4 py-2 bg-red-600 text-white rounded-xl text-xs font-bold hover:opacity-90 disabled:opacity-50">
                 {cancelling ? 'Cancelling...' : 'Cancel Transaction'}
               </button>
@@ -514,7 +528,7 @@ const FinanceSection = () => {
     }
   }, [availableStudents, selectedStudent]);
 
-  const { totalIncome, depositRemaining } = dashboardSummary;
+  const { totalIncome, depositRemaining, voids, refunds } = dashboardSummary;
 
   const resetForm = () => {
     setAmount(''); setCategory(''); setDesc('');
@@ -679,6 +693,13 @@ const FinanceSection = () => {
             <strong>৳ {fmt(depositRemaining)}</strong> in cash not yet deposited to AL RAWA Bank.
           </p>
         </div>
+      )}
+
+      {/* Voids / refunds memo (memo only — voids never enter totals, refunds count as expense) */}
+      {((voids?.count || 0) + (refunds?.count || 0)) > 0 && (
+        <p className="text-[11px] text-school-muted px-1">
+          Voids: {voids?.count || 0} (৳ {fmt(voids?.amount || 0)}) · Refunds: {refunds?.count || 0} (৳ {fmt(refunds?.amount || 0)}) — memo only
+        </p>
       )}
 
       {/* Main Tab Bar */}

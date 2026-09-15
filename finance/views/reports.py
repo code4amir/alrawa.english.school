@@ -10,7 +10,8 @@ from finance.models import Transaction, OpeningBalance
 from finance.serializers import TransactionSerializer
 from accounts.permissions import require_permission
 from .base import (
-    PRIMARY_BANK, SECONDARY_BANK, CROSS_BANK_INCOME, CROSS_BANK_EXPENSE, _internal_accounts
+    PRIMARY_BANK, SECONDARY_BANK, CROSS_BANK_INCOME, CROSS_BANK_EXPENSE, _internal_accounts,
+    report_filter, _void_refund_memo,
 )
 
 class ReportView(generics.GenericAPIView):
@@ -38,15 +39,17 @@ class ReportView(generics.GenericAPIView):
         return handler(fy, request)
 
     def _report_headwise(self, fy, request):
+        # report_filter(): voids (incl. all historical reversals) excluded from
+        # every sum/count; refunds included via their flipped type.
         income = Transaction.objects.filter(
-            fiscal_year=fy, is_cancelled=False,
-        ).filter(CROSS_BANK_INCOME).values('category').annotate(
+            fiscal_year=fy,
+        ).filter(report_filter()).filter(CROSS_BANK_INCOME).values('category').annotate(
             total=Sum('amount'), count=Count('id')
         ).order_by('category')
 
         expense = Transaction.objects.filter(
-            fiscal_year=fy, is_cancelled=False,
-        ).filter(CROSS_BANK_EXPENSE).values('category').annotate(
+            fiscal_year=fy,
+        ).filter(report_filter()).filter(CROSS_BANK_EXPENSE).values('category').annotate(
             total=Sum('amount'), count=Count('id')
         ).order_by('category')
 
@@ -58,14 +61,14 @@ class ReportView(generics.GenericAPIView):
 
     def _report_monthly(self, fy, request):
         income = Transaction.objects.filter(
-            fiscal_year=fy, is_cancelled=False,
-        ).filter(CROSS_BANK_INCOME).annotate(
+            fiscal_year=fy,
+        ).filter(report_filter()).filter(CROSS_BANK_INCOME).annotate(
             month=self._month_extract('transaction_date')
         ).values('month', 'category').annotate(total=Sum('amount'))
 
         expense = Transaction.objects.filter(
-            fiscal_year=fy, is_cancelled=False,
-        ).filter(CROSS_BANK_EXPENSE).annotate(
+            fiscal_year=fy,
+        ).filter(report_filter()).filter(CROSS_BANK_EXPENSE).annotate(
             month=self._month_extract('transaction_date')
         ).values('month', 'category').annotate(total=Sum('amount'))
 
@@ -89,7 +92,7 @@ class ReportView(generics.GenericAPIView):
         return Response(serializer.data)
 
     def _report_agm(self, fy, request):
-        qs = Transaction.objects.filter(fiscal_year=fy, is_cancelled=False)
+        qs = Transaction.objects.filter(fiscal_year=fy).filter(report_filter())
 
         cross_bank_q = Q(
             transaction_type='INTERNAL_TRANSFER',
@@ -171,6 +174,7 @@ class ReportView(generics.GenericAPIView):
 
         total_assets = sum(closing.values())
 
+        memo = _void_refund_memo(fy)
         return Response({
             'fiscal_year': fy,
             'totalIncome': income,
@@ -184,6 +188,14 @@ class ReportView(generics.GenericAPIView):
             'totalTransfers': total_transfers,
             'transferCount': transfer_count,
             'transactionCount': income_count + expense_count + transfer_count,
+            'voids': {
+                'count': memo['voids']['count'],
+                'amount': float(memo['voids']['amount']),
+            },
+            'refunds': {
+                'count': memo['refunds']['count'],
+                'amount': float(memo['refunds']['amount']),
+            },
         })
 
     def _report_defaulter(self, fy, request):

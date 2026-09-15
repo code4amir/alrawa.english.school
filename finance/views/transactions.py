@@ -20,6 +20,7 @@ from finance.serializers import (
 from accounts.permissions import require_permission
 from .base import (
     PRIMARY_BANK, PeriodClosedMixin, CROSS_BANK_INCOME, CROSS_BANK_EXPENSE,
+    report_filter, _void_refund_memo,
     _internal_accounts, _account_balances_update, _param,
     _check_period_open, _fiscal_year_from_date, _next_receipt_sequence,
     _waiver_expected_amount, _invalidate_dashboard_cache,
@@ -160,6 +161,19 @@ class TransactionViewSet(AuditLogMixin, LedgerActionsMixin, PeriodClosedMixin, v
             tx.save(update_fields=['is_cancelled', 'cancelled_at', 'cancelled_by', 'cancel_reason'])
             _account_balances_update(tx)
 
+            # Void (default) = entry never happened: the reversal is memo-only
+            # and excluded from every report total. Refund = money really went
+            # back out: the reversal counts in expense sums. Historical
+            # reversals predate the flag, so they stay is_refund=False (void).
+            # Compatibility: a bare reason of exactly 'void'/'refund' is also
+            # honoured as the kind (kept as the free-text reason too).
+            kind = serializer.validated_data.get('cancel_type') or 'void'
+            if 'cancel_type' not in request.data:
+                bare = (serializer.validated_data['reason'] or '').strip().lower()
+                if bare in ('void', 'refund'):
+                    kind = bare
+            is_refund = (kind == 'refund')
+
             reversal = Transaction.objects.create(
                 transaction_date=tx.transaction_date,
                 entry_date=date.today(),
@@ -174,6 +188,7 @@ class TransactionViewSet(AuditLogMixin, LedgerActionsMixin, PeriodClosedMixin, v
                 created_by=str(request.user.id),
                 fiscal_year=tx.fiscal_year,
                 reversal_of_id=tx.id,
+                is_refund=is_refund,
             )
             if tx.transaction_type == 'INCOME':
                 reversal.transaction_type = 'EXPENSE'
@@ -194,7 +209,8 @@ class TransactionViewSet(AuditLogMixin, LedgerActionsMixin, PeriodClosedMixin, v
 
         _invalidate_dashboard_cache(tx.fiscal_year)
         log_audit('cancel', 'transaction', entity_id=tx.pk,
-                  details={'reason': tx.cancel_reason, 'amount': str(tx.amount),
+                  details={'reason': tx.cancel_reason, 'cancel_type': kind,
+                           'is_refund': is_refund, 'amount': str(tx.amount),
                            'source_account': tx.source_account.name if tx.source_account else None,
                            'destination_account': tx.destination_account.name if tx.destination_account else None}, request=request)
 
@@ -280,15 +296,19 @@ class TransactionViewSet(AuditLogMixin, LedgerActionsMixin, PeriodClosedMixin, v
         cache_key = f'finance_dashboard_{fy}'
         data = cache.get(cache_key)
         if data is None:
+            # report_filter(): live rows plus refund reversals plus refunded
+            # originals; void reversals (including all historical ones)
+            # are memo-only, never totals.
             agg = Transaction.objects.filter(
-                fiscal_year=fy, is_cancelled=False,
-            ).aggregate(
+                fiscal_year=fy,
+            ).filter(report_filter()).aggregate(
                 income=Sum('amount', filter=CROSS_BANK_INCOME),
                 expense=Sum('amount', filter=CROSS_BANK_EXPENSE),
                 deposited=Sum('amount', filter=Q(
                     destination_account__name=PRIMARY_BANK,
                 )),
             )
+            memo = _void_refund_memo(fy)
             data = {
                 'fiscalYear': fy,
                 'totalIncome': agg['income'] or Decimal('0'),
@@ -296,6 +316,8 @@ class TransactionViewSet(AuditLogMixin, LedgerActionsMixin, PeriodClosedMixin, v
                 'totalDepositedToBank': agg['deposited'] or Decimal('0'),
                 'depositRemaining': (agg['income'] or Decimal('0')) - (agg['deposited'] or Decimal('0')),
                 'net': (agg['income'] or Decimal('0')) - (agg['expense'] or Decimal('0')),
+                'voids': memo['voids'],
+                'refunds': memo['refunds'],
             }
             cache.set(cache_key, data, 60)
         return Response(data)
