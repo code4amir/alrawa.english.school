@@ -1,19 +1,10 @@
 import jsPDF from 'jspdf';
 import { FISCAL_START_LABEL, FISCAL_END_LABEL } from './config';
 import { SCHOOL_LOGO } from './logo';
+import { getMonthName, getMonthNameShort, fmt, headwise } from './reportFormat';
 
-
-export function getMonthName(m: number) {
-  return ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][m];
-}
-
-export function getMonthNameShort(m: number) {
-  return ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][m];
-}
-
-export function fmt(n: number) {
-  return n.toLocaleString('en-BD');
-}
+// Re-exported for backward compat (tests + any lingering static imports).
+export { getMonthName, getMonthNameShort, fmt, headwise };
 
 export function addLogo(doc: jsPDF, y: number) {
   try {
@@ -33,12 +24,6 @@ export function addHeader(doc: jsPDF, title: string, subtitle: string, y: number
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(130, 124, 114);
   doc.text(subtitle, 12, y + 31);
   return y + 38;
-}
-
-export function headwise(data: any[]) {
-  const map: Record<string, number> = {};
-  data.forEach(t => { const cat = t.category || 'Uncategorized'; map[cat] = (map[cat] || 0) + Number(t.amount); });
-  return Object.entries(map).sort((a, b) => b[1] - a[1]);
 }
 
 function subtitleForRange(dateFrom: string, dateTo: string) {

@@ -10,7 +10,6 @@ import { toast } from '../components/Toast';
 import DatePicker from '../components/DatePicker';
 import FinanceReports from './FinanceReports';
 import DefaulterTab from './DefaulterTab';
-import { pdfPaymentReceipt } from '../lib/parentReceiptPdf';
 import ExcelImportTab from './ExcelImportTab';
 import FeeScheduleTab from './FeeScheduleTab';
 import StudentWaiversTab from './StudentWaiversTab';
@@ -96,9 +95,8 @@ function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, r
     finally { setLoading(false); }
   }, [ledgerAccount, dateFrom, dateTo, debouncedSearch]);
 
-  useEffect(() => { 
-    fetchFinance(); 
-    fetchFeeSchedules();
+  useEffect(() => {
+    void Promise.all([fetchFinance(), fetchFeeSchedules()]);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   
   useEffect(() => { if (page === 1) fetchData(1); else setPage(1); }, [ledgerAccount, dateFrom, dateTo, debouncedSearch, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -113,7 +111,6 @@ function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, r
       toast(cancelType === 'refund' ? 'Transaction refunded' : 'Transaction voided', 'success');
       setCancelId(null);
       setCancelReason(''); setCancelType('void');
-      fetchData(page);
       const store = useSchoolStore.getState();
       if (store._fetchedAt) {
         store._fetchedAt['finance'] = 0;
@@ -122,8 +119,7 @@ function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, r
       const now = new Date();
       const fy = now.getMonth() >= FISCAL_YEAR_START_MONTH ? now.getFullYear() + 1 : now.getFullYear();
       if (store._fetchedAt) store._fetchedAt[`dashboardSummary_${fy}`] = 0;
-      fetchFinance(true);
-      fetchDashboardSummary(String(fy), true);
+      await Promise.all([fetchData(page), fetchFinance(true), fetchDashboardSummary(String(fy), true)]);
     } catch {
       toast('Failed to cancel', 'error');
     } finally {
@@ -282,7 +278,9 @@ function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, r
                   <div className="flex items-center justify-center gap-1.5">
                   {entry.status === 'Active' && entry.transactionType === 'INCOME' && entry.studentName ? (
                     <button
-                      onClick={() => pdfPaymentReceipt(
+                      onClick={async () => {
+                        const { pdfPaymentReceipt } = await import('../lib/parentReceiptPdf');
+                        pdfPaymentReceipt(
                         {
                           reference: entry.voucher || entry.referenceId || '—',
                           amount: String(entry.amount ?? entry.debit ?? entry.credit ?? 0),
@@ -292,7 +290,8 @@ function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, r
                           isCancelled: false,
                         },
                         { name: entry.studentName, className: entry.className || '' },
-                      )}
+                        );
+                      }}
                       aria-label="Print receipt"
                       title="Print receipt (office + parent copy)"
                       className="p-1 rounded-lg text-school-accent hover:text-emerald-600 hover:bg-emerald-50 transition-all"
@@ -1105,7 +1104,8 @@ const FinanceSection = () => {
             </div>
             <div className="flex gap-2 justify-end">
               <button
-                onClick={() => {
+                onClick={async () => {
+                  const { pdfPaymentReceipt } = await import('../lib/parentReceiptPdf');
                   pdfPaymentReceipt(
                     { reference: confirmData.reference, amount: String(confirmData.amount), category: confirmData.category, method: confirmData.method, date: confirmData.date, isCancelled: false },
                     { name: confirmData.studentName, className: confirmData.className },

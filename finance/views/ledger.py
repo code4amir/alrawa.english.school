@@ -99,11 +99,10 @@ class LedgerActionsMixin:
         svc.compute_opening_balance()
 
         base_qs = svc.build_base_queryset()
-        total_rows = base_qs.count()
+        total_rows, total_debit, total_credit = svc.get_totals(base_qs)
 
         page_txs = svc.get_page(base_qs, page_num, page_size)
         cancelled_by_names = svc.get_cancelled_by_names(page_txs)
-        total_debit, total_credit = svc.get_totals(base_qs)
 
         closing_balance = svc.opening_balance + total_debit - total_credit
         total_pages = max(1, (total_rows + page_size - 1) // page_size)
@@ -128,8 +127,9 @@ class LedgerActionsMixin:
 
         fee_month = request.query_params.get('fee_month') or request.query_params.get('feeMonth')
         fee_month_to = request.query_params.get('fee_month_to') or request.query_params.get('feeMonthTo')
+        academic_year = request.query_params.get('academic_year') or request.query_params.get('academicYear')
 
-        svc = FeeStatusService(student_id, fee_month, fee_month_to)
+        svc = FeeStatusService(student_id, fee_month, fee_month_to, academic_year=academic_year)
         result = svc.get_status()
         if result is None:
             return Response({'error': 'Student not found'}, status=404)
@@ -169,13 +169,14 @@ class LedgerActionsMixin:
 
         # Grand totals across the FULL filtered set (not just this page) so the
         # UI footer can show authoritative totals regardless of pagination.
-        grand_total_due = 0
-        grand_total_paid = 0
+        # Totals-only path: same batched fetches, no per-month dicts.
         if total_rows > len(students):
-            all_students, _ = svc.paginate_students(students_qs, 1, 100000)
-            all_result = svc.compute(all_students, [s.id for s in all_students])
-            grand_total_due = sum(r['totalDue'] for r in all_result)
-            grand_total_paid = sum(r['totalPaid'] for r in all_result)
+            all_students = list(
+                students_qs.select_related('school_class').only('id', 'name', 'school_class__name')
+            )
+            grand_total_due, grand_total_paid = svc.compute_totals(
+                all_students, [s.id for s in all_students]
+            )
         else:
             grand_total_due = sum(r['totalDue'] for r in result)
             grand_total_paid = sum(r['totalPaid'] for r in result)

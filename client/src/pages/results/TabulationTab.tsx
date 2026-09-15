@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useSchoolStore } from '../../store';
 import ClassSelect from '../../components/ClassSelect';
-import { tabulationPDF } from '../../lib/tabulationPdf';
 import { ClipboardList, Download } from 'lucide-react';
 import { TERM_NAMES } from '../../lib/config';
 
@@ -62,6 +61,7 @@ export default function TabulationTab() {
       const results = (session && st.classResults[`${cls.id}-${session}`]) || allResults;
       setAllResults(results);
       const list = st.students.filter((s: any) => s.class === cls.name).sort((a: any, b: any) => (+a.roll || 999) - (+b.roll || 999) || a.name.localeCompare(b.name));
+      const { tabulationPDF } = await import('../../lib/tabulationPdf');
       tabulationPDF({ clsName: cls.name, subjects: st.subjects, clsStudents: list, allResults: results, term });
     } finally {
       setDownloading(null);

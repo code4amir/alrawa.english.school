@@ -27,7 +27,8 @@ class DefaulterService:
                 self.year_str = match.name if match else self.year_str
         else:
             from django.utils import timezone
-            active_year = AcademicYear.objects.filter(is_active=True).first()
+            from core.request_cache import get_active_year
+            active_year = get_active_year()
             self.year_str = active_year.name if active_year else str(timezone.now().year)
         return self.year_str
 
@@ -66,6 +67,34 @@ class DefaulterService:
 
         return self._build_result(students, yearly_schedules, monthly_schedules,
                                   assigned, yearly_assigned, paid_map, waiver_map)
+
+    def compute_totals(self, students, student_ids):
+        """Totals-only path: same batched fetches as compute(), but skips
+        building the per-fee/per-month dicts — only (total_due, total_paid).
+
+        Used for grand totals over the full filtered set so pagination
+        footers don't pay for a second full per-month structure.
+        """
+        fee_schedules = FeeSchedule.objects.filter(
+            academic_year__name=self.year_str,
+        ).select_related('academic_year', 'school_class')
+        if self.fee_category:
+            fee_schedules = fee_schedules.filter(category=self.fee_category)
+
+        yearly_schedules = [fs for fs in fee_schedules if fs.frequency in ('YEARLY', 'ONE_TIME')]
+        monthly_schedules = [fs for fs in fee_schedules if fs.frequency == 'MONTHLY']
+
+        assigned = self._fetch_monthly_assignments(student_ids, monthly_schedules)
+        yearly_assigned = self._fetch_yearly_assignments(student_ids, yearly_schedules)
+        paid_map = self._fetch_paid_map(student_ids)
+        waiver_map = self._fetch_waiver_map(student_ids)
+
+        rows = self._build_result(students, yearly_schedules, monthly_schedules,
+                                  assigned, yearly_assigned, paid_map, waiver_map,
+                                  totals_only=True)
+        grand_due = sum(r['totalDue'] for r in rows)
+        grand_paid = sum(r['totalPaid'] for r in rows)
+        return grand_due, grand_paid
 
     def _fetch_monthly_assignments(self, student_ids, monthly_schedules):
         if not monthly_schedules or not student_ids:
@@ -119,13 +148,14 @@ class DefaulterService:
         }
 
     def _build_result(self, students, yearly_schedules, monthly_schedules,
-                      assigned, yearly_assigned, paid_map, waiver_map):
+                      assigned, yearly_assigned, paid_map, waiver_map,
+                      totals_only=False):
         result = []
         for student in students:
             sid = student.id
             class_name_str = student.school_class.name if student.school_class else ''
 
-            fees = []
+            fees = [] if not totals_only else None
             total_due = 0
             total_paid = 0
 
@@ -139,12 +169,13 @@ class DefaulterService:
                 amt = float(_waiver_expected_amount(waiver_entry, fs.amount))
                 paid_amt = paid_map.get((sid, fs.id, ''), 0)
 
-                fees.append({
-                    'name': fs.category,
-                    'amount': amt,
-                    'paid': paid_amt >= amt,
-                    'type': 'onetime' if fs.frequency == 'ONE_TIME' else 'global',
-                })
+                if not totals_only:
+                    fees.append({
+                        'name': fs.category,
+                        'amount': amt,
+                        'paid': paid_amt >= amt,
+                        'type': 'onetime' if fs.frequency == 'ONE_TIME' else 'global',
+                    })
                 total_due += amt
                 total_paid += paid_amt
 
@@ -154,7 +185,7 @@ class DefaulterService:
                 if fs.applicability == 'ASSIGNED_ONLY' and (sid, fs.id) not in assigned:
                     continue
 
-                months_list = []
+                months_list = [] if not totals_only else None
                 months_to_check = []
                 if self.month_from and self.month_to:
                     y, m = _parse_month(self.month_from, 'month_from')
@@ -175,23 +206,25 @@ class DefaulterService:
                     w = waiver_entry if _waiver_covers_month(waiver_entry, month_label) else None
                     month_amt = float(_waiver_expected_amount(w, fs.amount))
                     paid_amt = paid_map.get((sid, fs.id, month_label), 0)
-                    months_list.append({
-                        'month': month_label,
-                        'amount': month_amt,
-                        'paid': paid_amt >= month_amt,
-                    })
+                    if not totals_only:
+                        months_list.append({
+                            'month': month_label,
+                            'amount': month_amt,
+                            'paid': paid_amt >= month_amt,
+                        })
                     fee_due += month_amt
                     fee_paid += paid_amt
                     total_due += month_amt
                     total_paid += paid_amt
 
-                fees.append({
-                    'name': fs.category,
-                    'amount': amt,
-                    'paid': fee_paid >= fee_due and len(months_to_check) > 0,
-                    'type': 'recurring',
-                    'months': months_list,
-                })
+                if not totals_only:
+                    fees.append({
+                        'name': fs.category,
+                        'amount': amt,
+                        'paid': fee_paid >= fee_due and len(months_to_check) > 0,
+                        'type': 'recurring',
+                        'months': months_list,
+                    })
 
             result.append({
                 'studentId': str(sid),
@@ -200,6 +233,6 @@ class DefaulterService:
                 'totalDue': total_due,
                 'totalPaid': total_paid,
                 'balance': total_due - total_paid,
-                'fees': fees,
+                'fees': fees if not totals_only else [],
             })
         return result

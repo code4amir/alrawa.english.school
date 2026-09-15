@@ -14,7 +14,7 @@ from accounts.authentication import PinAuthentication, CookieJWTAuthentication
 
 from .models import Teacher, ClassTeacher
 from students.models import Student
-from core.models import SchoolClass, SchoolSetting
+from core.models import SchoolClass
 from attendance.models import AttendanceRecord, Holiday
 from attendance.serializers import HolidaySerializer, BulkHolidaySerializer
 from core.audit import log_audit
@@ -42,12 +42,10 @@ def _make_pin_token(teacher):
     return str(token)
 
 
-def _get_weekend_set():
-    try:
-        raw = SchoolSetting.objects.get(key='weekend_days').value
-        return {int(x.strip()) for x in raw.split(',') if x.strip().isdigit()}
-    except SchoolSetting.DoesNotExist:
-        return {int(x) for x in WEEKEND_DAYS_DEFAULT.split(',')}
+def _get_weekend_set(request=None):
+    """Thin wrapper over the shared request-scoped helper (core.request_cache)."""
+    from core.request_cache import get_weekend_set as _shared_weekend_set
+    return _shared_weekend_set(request)
 
 
 def _get_holiday_dates(year=None, month=None):
@@ -270,7 +268,7 @@ def mobile_batch_attendance(request):
         return Response({'error': 'One or more students not found in this class'}, status=400)
 
     # Validate date is not weekend
-    weekend_set = _get_weekend_set()
+    weekend_set = _get_weekend_set(request)
     if att_date.weekday() in weekend_set:
         return Response({'error': 'Cannot mark attendance on a weekend day'}, status=400)
 
@@ -341,6 +339,9 @@ def mobile_class_daily_report(request):
             return Response({'error': 'Invalid from/to date (use YYYY-MM-DD)'}, status=400)
         if from_date > to_date:
             return Response({'error': 'from must be on or before to'}, status=400)
+        # Perf guard: range grid walks every calendar day; cap at 62 days.
+        if (to_date - from_date).days + 1 > 62:
+            return Response({'error': 'Date range too large: max 62 days'}, status=400)
 
         records = AttendanceRecord.objects.filter(
             school_class=school_class, date__gte=from_date, date__lte=to_date,
@@ -445,6 +446,10 @@ def mobile_monthly_report(request):
             return Response({'error': 'Invalid from_date or to_date'}, status=400)
         if d_from > d_to:
             return Response({'error': 'from_date must be <= to_date'}, status=400)
+        # Perf guard: range mode walks every calendar day; cap at 62 days.
+        # Legacy year/month mode is unaffected.
+        if (d_to - d_from).days + 1 > 62:
+            return Response({'error': 'Date range too large: max 62 days'}, status=400)
     elif year and month:
         d_from = d_to = None
     else:
@@ -472,7 +477,7 @@ def mobile_monthly_report(request):
         while cur <= d_to:
             day_list.append(cur)
             cur += timedelta(days=1)
-        weekend_set = _get_weekend_set()
+        weekend_set = _get_weekend_set(request)
         holiday_set = {h for h in _get_holiday_dates(year=None, month=None) if d_from <= h <= d_to}
         resp_year, resp_month = d_from.year, d_from.month
         records = AttendanceRecord.objects.filter(
@@ -489,7 +494,7 @@ def mobile_monthly_report(request):
         if not 1 <= month <= 12:
             return Response({'error': 'Invalid year or month'}, status=400)
         _, days_in_month = _cal.monthrange(year, month)
-        weekend_set = _get_weekend_set()
+        weekend_set = _get_weekend_set(request)
         holiday_set = _get_holiday_dates(year=year, month=month)
         resp_year, resp_month = year, month
         records = AttendanceRecord.objects.filter(

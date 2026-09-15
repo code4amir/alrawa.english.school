@@ -78,6 +78,8 @@ class Transaction(models.Model):
             models.Index(fields=['is_cancelled', 'fiscal_year', 'transaction_type'], name='tx_report_idx'),
             models.Index(fields=['fee_month', 'fiscal_year']),
             models.Index(fields=['transaction_date', 'transaction_type']),
+            models.Index(fields=['source_account', 'transaction_date']),
+            models.Index(fields=['destination_account', 'transaction_date']),
         ]
         verbose_name = 'transaction'
         verbose_name_plural = 'transactions'
@@ -174,6 +176,10 @@ class FeeWaiver(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['student', 'fee_schedule'], name='unique_waiver_per_student_schedule'),
         ]
+        indexes = [
+            models.Index(fields=['student', 'active']),
+            models.Index(fields=['active', 'approval_status']),
+        ]
         verbose_name = 'fee waiver'
         verbose_name_plural = 'fee waivers'
 
@@ -200,6 +206,7 @@ class StudentFeeAssignment(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=['student', 'fee_schedule']),
+            models.Index(fields=['fee_schedule', 'active']),
         ]
         constraints = [
             models.UniqueConstraint(fields=['student', 'fee_schedule'], name='unique_student_fee_assignment'),
@@ -235,6 +242,7 @@ class PaymentAllocation(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=['student', 'period']),
+            models.Index(fields=['student', 'fee_schedule', 'period']),
         ]
         verbose_name = 'payment allocation'
         verbose_name_plural = 'payment allocations'

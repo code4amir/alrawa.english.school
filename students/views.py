@@ -23,6 +23,17 @@ class StudentViewSet(PhotoHandleMixin, viewsets.ModelViewSet):
         if request.query_params.get('all') == 'true':
             qs = self.filter_queryset(self.get_queryset().order_by('name'))
             max_size = settings.REST_FRAMEWORK.get('MAX_PAGE_SIZE', 1000)
+            if request.query_params.get('fields') == 'minimal':
+                # Opt-in dropdown shape: id/name/roll/classId only. Default
+                # shape and cap unchanged until callers are audited.
+                # (values() before slicing: Django forbids filtering after a slice.)
+                rows = qs.values('id', 'name', 'roll', 'school_class_id')[:max_size]
+                return Response([{
+                    'id': str(r['id']),
+                    'name': r['name'],
+                    'roll': r['roll'],
+                    'classId': str(r['school_class_id']) if r['school_class_id'] else None,
+                } for r in rows])
             qs = qs[:max_size]
             serializer = self.get_serializer(qs, many=True)
             return Response(serializer.data)

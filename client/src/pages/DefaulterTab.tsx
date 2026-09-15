@@ -3,8 +3,7 @@ import DOMPurify from 'dompurify';
 import { useSchoolStore, api } from '../store';
 import { toast } from '../components/Toast';
 import { AlertTriangle, Download, Printer, Check, X, Send, Bell } from 'lucide-react';
-import { defaulterPDF } from '../lib/defaulterPdf';
-import { getMonthNameShort, fmt } from '../lib/financeReportPdf';
+import { getMonthNameShort, fmt } from '../lib/reportFormat';
 import DatePicker from '../components/DatePicker';
 import type { DefaulterStudent, DefaulterFee } from '../lib/types';
 
@@ -64,7 +63,7 @@ export default function DefaulterTab() {
   const [grandTotalDue, setGrandTotalDue] = useState(0);
   const [grandTotalPaid, setGrandTotalPaid] = useState(0);
 
-  useEffect(() => { fetchClasses(); fetchStudents(undefined, true); fetchFeeSchedules(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchClasses(); fetchStudents(); fetchFeeSchedules(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const controller = new AbortController();
@@ -122,6 +121,10 @@ export default function DefaulterTab() {
 
   // Fetch EVERY matching defaulter (paginated server-side), ignoring the
   // on-screen page, so PDF/Print always contain the complete report.
+  // Page 1 is fetched first to learn totalPages; remaining pages are
+  // crawled 3-at-a-time with progress, falling back to sequential fetch
+  // if a concurrent batch fails. Limit (200) unchanged.
+  const [crawlProgress, setCrawlProgress] = useState<string | null>(null);
   async function fetchAllDefaulters(_ctx: 'print' | 'pdf') {
     const params: Record<string, string> = {};
     if (filterClass) params.className = filterClass;
@@ -132,17 +135,51 @@ export default function DefaulterTab() {
     params.year = monthTo.split('-')[0];
     params.limit = '200';
     const rows: DefaulterStudent[] = [];
-    for (let page = 1; ; page++) {
-      try {
-        const res = await api.get('/finance/defaulter', { params: { ...params, page: String(page) } });
-        const batch = res.data.results || res.data.data || res.data || [];
-        rows.push(...batch);
-        const totalPages = res.data.totalPages || 1;
-        if (page >= totalPages || batch.length === 0) break;
-      } catch {
-        toast('Failed to load full defaulter report', 'error');
-        return null;
+    const getPage = async (page: number) => {
+      const res = await api.get('/finance/defaulter', { params: { ...params, page: String(page) } });
+      return { batch: (res.data.results || res.data.data || res.data || []) as DefaulterStudent[], totalPages: (res.data.totalPages || 1) as number };
+    };
+    setCrawlProgress('Loading page 1…');
+    try {
+      const first = await getPage(1);
+      rows.push(...first.batch);
+      const totalPages = first.totalPages;
+      if (first.batch.length === 0 || totalPages <= 1) {
+        setCrawlProgress(null);
+      } else {
+        const rest = Array.from({ length: totalPages - 1 }, (_, i) => i + 2);
+        const CONCURRENCY = 3;
+        let done = 1;
+        const pageBuckets: DefaulterStudent[][] = new Array(rest.length);
+        let failed = false;
+        for (let i = 0; i < rest.length; i += CONCURRENCY) {
+          const chunk = rest.slice(i, i + CONCURRENCY);
+          try {
+            const results = await Promise.all(chunk.map((p) => getPage(p)));
+            results.forEach((r, j) => { pageBuckets[i + j] = r.batch; });
+          } catch {
+            failed = true;
+            break;
+          }
+          done += chunk.length;
+          setCrawlProgress(`Loading page ${Math.min(done, totalPages)} of ${totalPages}…`);
+        }
+        if (failed) {
+          // Sequential fallback: one page at a time for the remainder.
+          for (let i = 0; i < rest.length; i++) {
+            if (pageBuckets[i]) continue;
+            const r = await getPage(rest[i]);
+            pageBuckets[i] = r.batch;
+            setCrawlProgress(`Loading page ${i + 2} of ${totalPages}…`);
+          }
+        }
+        pageBuckets.forEach((b) => { if (b) rows.push(...b); });
+        setCrawlProgress(null);
       }
+    } catch {
+      setCrawlProgress(null);
+      toast('Failed to load full defaulter report', 'error');
+      return null;
     }
     const yearlyFeeNames = [...new Set(rows.flatMap(r => r.fees.filter(f => f.type === 'onetime' || f.type === 'global').map(f => f.name)))];
     const monthlyFeeNames = [...new Set(rows.flatMap(r => r.fees.filter(f => f.type === 'recurring' || f.type === 'special').map(f => f.name)))];
@@ -231,6 +268,7 @@ export default function DefaulterTab() {
       const all = await fetchAllDefaulters('pdf');
       if (!all) return;
       try {
+        const { defaulterPDF } = await import('../lib/defaulterPdf');
         defaulterPDF({
           displayData: all.rows,
           monthRange,
@@ -359,12 +397,14 @@ export default function DefaulterTab() {
               <Bell size={14} /> Send to All
             </button>
             <button onClick={handlePdf}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-school-primary text-white rounded-xl text-xs font-bold hover:opacity-90">
-              <Download size={14} /> PDF
+              disabled={!!crawlProgress}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-school-primary text-white rounded-xl text-xs font-bold hover:opacity-90 disabled:opacity-60">
+              <Download size={14} /> {crawlProgress || 'PDF'}
             </button>
             <button onClick={handlePrint}
-              className="flex items-center gap-1.5 px-3 py-1.5 border border-school-border rounded-xl text-xs font-bold hover:border-school-accent">
-              <Printer size={14} /> Print
+              disabled={!!crawlProgress}
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-school-border rounded-xl text-xs font-bold hover:border-school-accent disabled:opacity-60">
+              <Printer size={14} /> {crawlProgress || 'Print'}
             </button>
           </div>
         </div>

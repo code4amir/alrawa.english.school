@@ -33,6 +33,7 @@ from attendance.models import AttendanceRecord, Holiday
 from results.models import Result
 from finance.models import FeeSchedule, StudentFeeAssignment, Transaction, BankAccount
 from core.models import SchoolSetting
+from core.request_cache import get_weekend_set as _get_weekend_set
 
 logger = logging.getLogger(__name__)
 
@@ -44,14 +45,6 @@ WEEKEND_DAYS_DEFAULT = '4,5'
 NOTIFICATION_TTL_DAYS = 90
 #: Hard cap of rows returned per parent (≈ two terms of history).
 NOTIFICATION_RETENTION_CAP = 100
-
-
-def _get_weekend_set():
-    try:
-        raw = SchoolSetting.objects.get(key='weekend_days').value
-        return {int(x.strip()) for x in raw.split(',') if x.strip().isdigit()}
-    except SchoolSetting.DoesNotExist:
-        return {int(x) for x in WEEKEND_DAYS_DEFAULT.split(',')}
 
 
 def _get_holiday_dates(year=None, month=None):
@@ -116,7 +109,7 @@ class StudentAttendanceView(APIView):
             date__month=month,
         ).order_by('date')
 
-        weekend_set = _get_weekend_set()
+        weekend_set = _get_weekend_set(request)
         known_holidays = _get_holiday_dates(year=year, month=month)
 
         class_date_records = AttendanceRecord.objects.filter(

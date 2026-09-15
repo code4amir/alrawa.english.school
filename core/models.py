@@ -49,6 +49,9 @@ class AcademicYear(models.Model):
 
     class Meta:
         ordering = ['-start_date']
+        indexes = [
+            models.Index(fields=['is_active']),
+        ]
         verbose_name = 'academic year'
         verbose_name_plural = 'academic years'
 

@@ -59,10 +59,8 @@ export default function ServiceTypeManager() {
   };
 
   useEffect(() => {
-    fetchServiceTypes(true).then(() => setLoading(false));
-    fetchClasses();
-    fetchAcademicYears();
-    loadSummary();
+    void Promise.all([fetchServiceTypes(true), fetchClasses(), fetchAcademicYears(), loadSummary()])
+      .finally(() => setLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Default the bulk window to the active academic year.

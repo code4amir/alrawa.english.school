@@ -324,8 +324,9 @@ export default function AttendanceSection() {
     setRptLoading(false);
   };
 
-  /* load monthly report */
-  var loadMonthlyReport = async function () {
+  /* load monthly report (accepts an AbortSignal so stale in-flight
+     fetches are cancelled when inputs keep changing) */
+  var loadMonthlyReport = async function (signal?: AbortSignal) {
     if (!monthlyClassId) { toast('Select a class', 'error'); return; }
     if (rptRangeMode === 'range' && rptFrom > rptTo) { setMonthlyError('From date must be before To date'); return; }
     setMonthlyLoading(true); setMonthlyError('');
@@ -336,13 +337,20 @@ export default function AttendanceSection() {
       } else {
         params = { class_id: monthlyClassId, year: String(monthYear.year), month: String(monthYear.month) };
       }
-      var res = await api.get('/attendance/monthly-report/', { params });
+      var res = await api.get('/attendance/monthly-report/', { params, signal });
       setMonthlyData(res.data);
-    } catch (_) { setMonthlyError('Failed to load report'); }
-    setMonthlyLoading(false);
+    } catch (_) { if (!signal || !(signal as AbortSignal).aborted) setMonthlyError('Failed to load report'); }
+    if (!signal || !(signal as AbortSignal).aborted) setMonthlyLoading(false);
   };
 
-  useEffect(function () { if (monthlyClassId) loadMonthlyReport(); }, [monthlyClassId, monthYear, rptRangeMode, rptFrom, rptTo]);
+  // Debounce monthly-report inputs (400ms) + abort the previous in-flight
+  // fetch so rapid class/month/date changes issue a single request.
+  useEffect(function () {
+    if (!monthlyClassId) return;
+    var controller = new AbortController();
+    var t = setTimeout(function () { loadMonthlyReport(controller.signal); }, 400);
+    return function () { clearTimeout(t); controller.abort(); };
+  }, [monthlyClassId, monthYear, rptRangeMode, rptFrom, rptTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="space-y-4 animate-fade-in max-w-2xl mx-auto">

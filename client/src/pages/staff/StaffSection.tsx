@@ -174,9 +174,9 @@ export default function StaffSection() {
     <div className="bg-white p-4 rounded-2xl border border-school-border card-shadow text-center">
       <div className="flex flex-col items-center gap-2">
         {s.photoUrl ? (
-          <img src={s.photoUrl} alt="" loading="lazy" decoding="async" className="w-14 h-14 rounded-full object-cover border-2 border-school-border shadow-sm" />
+          <img src={s.photoUrl} alt="" loading="lazy" decoding="async" width={56} height={56} className="w-14 h-14 rounded-full object-cover border-2 border-school-border shadow-sm" />
         ) : s.hasPhoto ? (
-          <img src={`${API_URL}/staff/${s.id}/photo/`} alt="" loading="lazy" decoding="async" className="w-14 h-14 rounded-full object-cover border-2 border-school-border shadow-sm" />
+          <img src={`${API_URL}/staff/${s.id}/photo/`} alt="" loading="lazy" decoding="async" width={56} height={56} className="w-14 h-14 rounded-full object-cover border-2 border-school-border shadow-sm" />
         ) : (
           <div className="w-14 h-14 rounded-full bg-gradient-to-br from-indigo-500 to-indigo-700 text-white flex items-center justify-center shadow-sm"><Building2 size={24} className="text-white" /></div>
         )}

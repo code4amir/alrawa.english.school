@@ -15,6 +15,7 @@ const REF_PATHS = [
   '/api/classes/', '/api/subjects', '/api/academic-years/',
   '/api/service-types/', '/api/settings/', '/api/finance/fee-schedules/',
   '/api/books/', '/api/categories/',
+  '/api/bootstrap/', '/api/dashboard-summary/',
 ];
 const isRefRequest = (url) => REF_PATHS.some((p) => url.includes(p));
 const PRECACHE_URLS = ['manifest.json'];

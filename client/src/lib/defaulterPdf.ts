@@ -1,5 +1,5 @@
 import jsPDF from 'jspdf';
-import { getMonthNameShort, fmt } from './financeReportPdf';
+import { getMonthNameShort, fmt } from './reportFormat';
 
 function shortName(s: string) { const p = s.trim().split(/\s+/); return p.length > 2 ? p.slice(0, 2).join(' ') : s; }
 

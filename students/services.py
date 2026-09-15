@@ -1,7 +1,7 @@
 import logging
 from django.db import transaction as db_transaction
 from students.models import Student, StudentService
-from core.models import ServiceType, AcademicYear
+from core.models import ServiceType
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +23,14 @@ def toggle_student_service(student_id, service_type_id, active, starts_at=None, 
     # fee engine can never match (NULL never satisfies starts_at__lte /
     # ends_at__gte) — the student looks enrolled but is never billed.
     # Default missing ends of the window to the active academic year.
+    # Perf: fetch the active year ONCE per toggle call and reuse it below
+    # for both the window default and the fee-schedule lookup.
+    from core.request_cache import get_active_year
+    active_year = get_active_year()
     if active and (not starts_at or not ends_at):
-        active_year_for_window = AcademicYear.objects.filter(is_active=True).first()
-        if active_year_for_window:
-            starts_at = starts_at or active_year_for_window.start_date.strftime('%Y-%m')
-            ends_at = ends_at or active_year_for_window.end_date.strftime('%Y-%m')
+        if active_year:
+            starts_at = starts_at or active_year.start_date.strftime('%Y-%m')
+            ends_at = ends_at or active_year.end_date.strftime('%Y-%m')
 
     # Find or create the StudentService record
     student_service, created = StudentService.objects.select_for_update().get_or_create(
@@ -62,7 +65,7 @@ def toggle_student_service(student_id, service_type_id, active, starts_at=None, 
     }
 
     # Find the matching FeeSchedule (category = service_type.name, active academic year)
-    active_year = AcademicYear.objects.filter(is_active=True).first()
+    # (active_year fetched once above and reused here.)
     if not active_year:
         logger.warning('No active academic year found for fee auto-assignment')
         return result

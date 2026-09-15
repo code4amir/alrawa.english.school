@@ -1,3 +1,5 @@
+import { memo } from 'react';
+
 interface LedgerEntry {
   id: string;
   transactionDate: string;
@@ -28,6 +30,44 @@ interface LedgerTableProps {
   fmt?: (n: number) => string;
 }
 
+const defaultFmt = (n: number) => n.toLocaleString('en-BD');
+
+const LedgerRow = memo(function LedgerRow({ entry, canCancel, onCancel, fmt }: { entry: LedgerEntry; canCancel: boolean; onCancel?: (id: string) => void; fmt: (n: number) => string }) {
+  return (
+    <tr className={`hover:bg-school-paper/30 text-xs ${entry.isCancelled || entry.reversalOfId ? 'line-through opacity-50 bg-rose-50/30' : ''}`}>
+      <td className="px-4 py-2.5 whitespace-nowrap font-mono font-bold">
+        {new Date(entry.transactionDate).toLocaleDateString()}
+      </td>
+      <td className="px-4 py-2.5">
+        <span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${entry.transactionType === 'INCOME' ? 'bg-emerald-50 text-emerald-700' : entry.transactionType === 'EXPENSE' ? 'bg-rose-50 text-rose-700' : 'bg-blue-50 text-blue-700'}`}>
+          {entry.transactionType === 'INTERNAL_TRANSFER' ? 'Transfer' : entry.transactionType}
+        </span>
+      </td>
+      <td className="px-4 py-2.5 max-w-[200px] truncate text-school-muted">
+        {entry.description || '—'}
+      </td>
+      <td className="px-4 py-2.5 text-right font-bold text-emerald-600">
+        {entry.debit ? fmt(entry.debit) : '—'}
+      </td>
+      <td className="px-4 py-2.5 text-right font-bold text-rose-600">
+        {entry.credit ? fmt(entry.credit) : '—'}
+      </td>
+      <td className="px-4 py-2.5 text-right font-bold font-mono">
+        {fmt(entry.runningBalance)}
+      </td>
+      {canCancel && (
+        <td className="px-4 py-2.5 text-center">
+          {!entry.isCancelled && !entry.reversalOfId && onCancel && (
+            <button onClick={() => onCancel(entry.id)} title="Cancel transaction" className="p-1 rounded-lg text-school-muted hover:text-red-600 hover:bg-red-50 transition-all">
+              ✕
+            </button>
+          )}
+        </td>
+      )}
+    </tr>
+  );
+});
+
 export default function LedgerTable({
   entries,
   accountLabel,
@@ -41,7 +81,7 @@ export default function LedgerTable({
   totalPages = 1,
   canCancel = false,
   onCancel,
-  fmt = (n) => n.toLocaleString('en-BD'),
+  fmt = defaultFmt,
 }: LedgerTableProps) {
   return (
     <div className="bg-white rounded-xl border border-school-border overflow-hidden">
@@ -79,37 +119,7 @@ export default function LedgerTable({
               </tr>
             ) : entries.length > 0 ? (
               entries.map((entry) => (
-                <tr key={entry.id} className={`hover:bg-school-paper/30 text-xs ${entry.isCancelled || entry.reversalOfId ? 'line-through opacity-50 bg-rose-50/30' : ''}`}>
-                  <td className="px-4 py-2.5 whitespace-nowrap font-mono font-bold">
-                    {new Date(entry.transactionDate).toLocaleDateString()}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${entry.transactionType === 'INCOME' ? 'bg-emerald-50 text-emerald-700' : entry.transactionType === 'EXPENSE' ? 'bg-rose-50 text-rose-700' : 'bg-blue-50 text-blue-700'}`}>
-                      {entry.transactionType === 'INTERNAL_TRANSFER' ? 'Transfer' : entry.transactionType}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 max-w-[200px] truncate text-school-muted">
-                    {entry.description || '—'}
-                  </td>
-                  <td className="px-4 py-2.5 text-right font-bold text-emerald-600">
-                    {entry.debit ? fmt(entry.debit) : '—'}
-                  </td>
-                  <td className="px-4 py-2.5 text-right font-bold text-rose-600">
-                    {entry.credit ? fmt(entry.credit) : '—'}
-                  </td>
-                  <td className="px-4 py-2.5 text-right font-bold font-mono">
-                    {fmt(entry.runningBalance)}
-                  </td>
-                  {canCancel && (
-                    <td className="px-4 py-2.5 text-center">
-                      {!entry.isCancelled && !entry.reversalOfId && onCancel && (
-                        <button onClick={() => onCancel(entry.id)} title="Cancel transaction" className="p-1 rounded-lg text-school-muted hover:text-red-600 hover:bg-red-50 transition-all">
-                          ✕
-                        </button>
-                      )}
-                    </td>
-                  )}
-                </tr>
+                <LedgerRow key={entry.id} entry={entry} canCancel={canCancel} onCancel={onCancel} fmt={fmt} />
               ))
             ) : (
               <tr>

@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from django.db.models import Sum, Q, F, Case, When, Value, Window, DecimalField
+from django.db.models import Sum, Q, F, Case, When, Value, Window, DecimalField, Count
 from rest_framework.exceptions import ValidationError
 from finance.models import Transaction, OpeningBalance
 from finance.views.base import _fiscal_year_from_date
@@ -105,7 +105,11 @@ class LedgerService:
         }
 
     def get_totals(self, qs):
+        """Count + debit/credit totals in ONE aggregate query (was .count()
+        plus a second aggregate). Page query with running balances untouched.
+        """
         agg = qs.aggregate(
+            total_rows=Count('pk'),
             total_debit=Sum('amount', filter=Q(
                 is_cancelled=False, reversal_of_id__isnull=True,
                 destination_account__name=self.account_name,
@@ -115,4 +119,8 @@ class LedgerService:
                 source_account__name=self.account_name,
             )),
         )
-        return agg['total_debit'] or Decimal('0'), agg['total_credit'] or Decimal('0')
+        return (
+            agg['total_rows'] or 0,
+            agg['total_debit'] or Decimal('0'),
+            agg['total_credit'] or Decimal('0'),
+        )

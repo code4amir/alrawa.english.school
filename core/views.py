@@ -29,6 +29,9 @@ def _scheduler_job_id(pk):
 
 
 class ClassViewSet(PrivateRefDataCacheMixin, AuditLogMixin, viewsets.ModelViewSet):
+    # Perf: student + book counts only (both rendered: class cards show
+    # studentCount, AccessoriesSection shows bookCount). subject_count was a
+    # third correlated subquery no screen reads, so it stays dropped.
     queryset = SchoolClass.objects.annotate(
         student_count=Subquery(
             Student.objects.filter(school_class=OuterRef('pk'), deleted_at__isnull=True)
@@ -36,10 +39,6 @@ class ClassViewSet(PrivateRefDataCacheMixin, AuditLogMixin, viewsets.ModelViewSe
         ),
         book_count=Subquery(
             Book.objects.filter(school_class=OuterRef('pk'))
-            .order_by().values('school_class').annotate(c=Count('pk')).values('c')
-        ),
-        subject_count=Subquery(
-            Subject.objects.filter(school_class=OuterRef('pk'))
             .order_by().values('school_class').annotate(c=Count('pk')).values('c')
         ),
     )
@@ -300,6 +299,7 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['action', 'entity_type', 'user_id']
     search_fields = ['entity_id', 'details']
     ordering_fields = ['created_at']
+    ordering = ['-created_at']
 
 
 class AgentFindingViewSet(viewsets.ModelViewSet):

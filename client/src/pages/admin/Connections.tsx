@@ -77,7 +77,7 @@ export default function Connections() {
     } catch { /* noop */ }
   };
 
-  useEffect(() => { fetchAll(); fetchBlocked(); }, []);
+  useEffect(() => { void Promise.all([fetchAll(), fetchBlocked()]); }, []);
 
   const classes = [...new Set(students.map(s => s.className).filter(Boolean))].sort();
 

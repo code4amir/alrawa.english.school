@@ -126,7 +126,7 @@ const Login = () => {
               </div>
             </button>
             <div className="relative">
-              <img src={SCHOOL_LOGO} alt="AL RAWA" className="w-16 h-16 rounded-full mx-auto mb-3 border-2 border-white/20 shadow-lg object-cover" />
+              <img src={SCHOOL_LOGO} alt="AL RAWA" width={64} height={64} fetchPriority="high" className="w-16 h-16 rounded-full mx-auto mb-3 border-2 border-white/20 shadow-lg object-cover" />
               <h1 className="font-serif text-2xl">AL RAWA</h1>
               <p className="text-[10px] uppercase tracking-[0.3em] opacity-60 mt-1">English School</p>
             </div>

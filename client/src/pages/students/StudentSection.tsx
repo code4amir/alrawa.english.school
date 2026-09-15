@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useSchoolStore, useAuthStore } from '../../store';
 import { api } from '../../store';
 import { toast } from '../../components/Toast';
@@ -15,6 +15,7 @@ import ShareLinkModal from '../../components/ShareLinkModal';
 import { API_URL } from '../../lib/config';
 import { canManageClassStudents } from '../../lib/permissions';
 import { useNativeCamera } from '../../hooks/useNativeCamera';
+import { blobToSquareDataUrl } from '../../lib/imageCrop';
 
 let _jsPDF: any = null;
 async function loadJsPDF() {
@@ -68,11 +69,11 @@ export default function StudentSection() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const searchTimer = useRef<any>(null);
 
-  const handleSearchChange = (value: string) => {
+  const handleSearchChange = useCallback((value: string) => {
     setSearch(value);
     clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => setDebouncedSearch(value), 200);
-  };
+  }, []);
 
   useEffect(() => { document.title = 'Students - AL RAWA English School'; }, []);
   useEffect(() => { return () => clearTimeout(searchTimer.current); }, []);
@@ -103,22 +104,33 @@ export default function StudentSection() {
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const sorted = [...classes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-  const sessionStudents = students.filter((s) => !s.session || s.session === sessionFilter || s.session.replace(/^FY/, '') === sessionFilter);
-  const classStudents = sessionStudents.filter((s) => activeClass && s.class === activeClass);
-  const filtered = classStudents.filter((s) =>
-    !debouncedSearch || s.name.toLowerCase().includes(debouncedSearch.toLowerCase()) || s.roll?.includes(debouncedSearch)
-  );
-  const searchResults = sessionStudents.filter((s) =>
+  const sorted = useMemo(() => [...classes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)), [classes]);
+  const sessionStudents = useMemo(() => students.filter((s) => !s.session || s.session === sessionFilter || s.session.replace(/^FY/, '') === sessionFilter), [students, sessionFilter]);
+  const classStudents = useMemo(() => sessionStudents.filter((s) => activeClass && s.class === activeClass), [sessionStudents, activeClass]);
+  const filtered = useMemo(() => {
+    const list = classStudents.filter((s) =>
+      !debouncedSearch || s.name.toLowerCase().includes(debouncedSearch.toLowerCase()) || s.roll?.includes(debouncedSearch)
+    );
+    return [...list].sort((a: any, b: any) => String(a.roll || '').localeCompare(String(b.roll || ''), undefined, { numeric: true }) || a.name.localeCompare(b.name));
+  }, [classStudents, debouncedSearch]);
+  const searchResults = useMemo(() => sessionStudents.filter((s) =>
     debouncedSearch && (s.name.toLowerCase().includes(debouncedSearch.toLowerCase()) || s.roll?.includes(debouncedSearch) || (s.class || '').toLowerCase().includes(debouncedSearch.toLowerCase()))
-  );
+  ), [sessionStudents, debouncedSearch]);
 
-  const resetForm = () => {
+  const resetForm = useCallback(() => {
     setForm({ className: '', roll: '', name: '', fatherName: '', motherName: '', contact: '' });
     setPhoto(null);
     setEditingId(null);
     setShowAddNew(false);
-  };
+  }, []);
+
+  const handleSelectClass = useCallback((name: string) => {
+    setActiveClass(name);
+    setForm((f) => ({ ...f, className: name }));
+  }, []);
+
+  const handleClearClass = useCallback(() => { setActiveClass(null); resetForm(); }, [resetForm]);
+  const handleClearSearch = useCallback(() => { setSearch(''); setDebouncedSearch(''); }, []);
 
   const handleEdit = (s: any) => {
     setForm({
@@ -268,9 +280,9 @@ export default function StudentSection() {
     <div className={`bg-white p-4 rounded-2xl border card-shadow text-center ${s.hasGraduated ? 'border-amber-300 bg-amber-50/30' : 'border-school-border'}`}>
       <div className="flex flex-col items-center gap-2">
         {s.photoUrl ? (
-          <img src={s.photoUrl} alt="" loading="lazy" decoding="async" className="w-14 h-14 rounded-full object-cover border-2 border-school-border shadow-sm" />
+          <img src={s.photoUrl} alt="" loading="lazy" decoding="async" width={56} height={56} className="w-14 h-14 rounded-full object-cover border-2 border-school-border shadow-sm" />
         ) : s.hasPhoto ? (
-          <img src={`${API_URL}/students/${s.id}/photo/`} alt="" loading="lazy" decoding="async" className="w-14 h-14 rounded-full object-cover border-2 border-school-border shadow-sm" />
+          <img src={`${API_URL}/students/${s.id}/photo/`} alt="" loading="lazy" decoding="async" width={56} height={56} className="w-14 h-14 rounded-full object-cover border-2 border-school-border shadow-sm" />
         ) : (
           <div className="w-14 h-14 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-white flex items-center justify-center shadow-sm"><User size={24} className="text-white" /></div>
         )}
@@ -362,16 +374,21 @@ export default function StudentSection() {
             onClick={async () => {
               const list = activeClass ? (filtered.length > 0 ? filtered : classStudents) : students;
               const photoCache: Record<string, string> = {};
-              await Promise.all(list.filter((s: any) => s.photoUrl || s.hasPhoto).map(async (s: any) => {
+              // Bounded concurrency (~6) + downscale to 200px squares via
+              // createImageBitmap+canvas: photos render at 22x22mm so
+              // full-res uploads would bloat the PDF and jank the tab.
+              const withPhoto = list.filter((s: any) => s.photoUrl || s.hasPhoto);
+              const CONCURRENCY = 6;
+              await Promise.all(Array.from({ length: CONCURRENCY }, async (_, w) => {
+                for (let i = w; i < withPhoto.length; i += CONCURRENCY) {
+                  const s: any = withPhoto[i];
                   try {
-                    const r = await fetch(s.photoUrl, { credentials: 'omit' });
-                    const blob = await r.blob();
-                    photoCache[s.id] = await new Promise<string>(res => {
-                        const reader = new FileReader();
-                        reader.onload = () => res(reader.result as string);
-                        reader.readAsDataURL(blob);
-                    });
+                    const url = s.photoUrl || `${API_URL}/students/${s.id}/photo/`;
+                    const r = await fetch(url, { credentials: 'omit' });
+                    if (!r.ok) continue;
+                    photoCache[s.id] = await blobToSquareDataUrl(await r.blob(), 200);
                   } catch { console.warn('Photo fetch failed for', s.id); }
+                }
               }));
               const doc = new (await loadJsPDF())();
               const title = activeClass ? activeClass + ' — Students' : 'All Students';
@@ -436,7 +453,7 @@ export default function StudentSection() {
             <div>
               <div className="flex items-center gap-2 mb-3">
                 <span className="text-sm text-school-muted">Search results for "<span className="text-school-primary font-medium">{debouncedSearch}</span>"</span>
-                <button onClick={() => { setSearch(''); setDebouncedSearch(''); }} className="text-xs text-school-accent hover:underline">Clear</button>
+                <button onClick={handleClearSearch} className="text-xs text-school-accent hover:underline">Clear</button>
               </div>
               {loading.students ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -466,7 +483,7 @@ export default function StudentSection() {
               const ic = iconMap[cls.name] || { icon: <BookOpen size={28} className="mx-auto" />, bg: 'from-blue-400 to-indigo-600' };
               return (
                 <div key={cls.id} className="bg-white p-5 rounded-2xl border border-school-border text-center card-shadow relative group">
-                  <button onClick={() => { setActiveClass(cls.name); setForm({ ...form, className: cls.name }); }}
+                  <button onClick={() => handleSelectClass(cls.name)}
                     className="w-full text-center">
                     <div className={`w-14 h-14 bg-gradient-to-br ${ic.bg} text-white rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-md`}>
                       {ic.icon}
@@ -488,7 +505,7 @@ export default function StudentSection() {
       ) : (
         <div>
           <div className="flex items-center gap-2 mb-3">
-            <button onClick={() => { setActiveClass(null); resetForm(); }} className="text-sm text-school-accent hover:underline">← All Classes</button>
+            <button onClick={handleClearClass} className="text-sm text-school-accent hover:underline">← All Classes</button>
             <span className="font-serif text-sm text-school-primary">{activeClass}</span>
           </div>
 

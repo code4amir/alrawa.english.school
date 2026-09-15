@@ -26,6 +26,35 @@ export async function fileToSquareDataUrl(file: File, max = 400): Promise<string
   return canvas.toDataURL('image/jpeg', 0.6);
 }
 
+/**
+ * Downscale an already-fetched image blob to a centered square data-URL
+ * (max `max` px, JPEG) for embedding in PDFs. Uses createImageBitmap +
+ * canvas when available (fast, no full-size data-URL in memory);
+ * falls back to FileReader + <img> decode otherwise.
+ */
+export async function blobToSquareDataUrl(blob: Blob, max = 200): Promise<string> {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bmp = await createImageBitmap(blob);
+      const side = Math.min(bmp.width, bmp.height);
+      const scale = Math.min(1, max / side);
+      const out = Math.max(1, Math.round(side * scale));
+      const sx = Math.round((bmp.width - side) / 2);
+      const sy = Math.round((bmp.height - side) / 2);
+      const canvas = document.createElement('canvas');
+      canvas.width = out;
+      canvas.height = out;
+      canvas.getContext('2d')?.drawImage(bmp, sx, sy, side, side, 0, 0, out, out);
+      if (typeof bmp.close === 'function') bmp.close();
+      return canvas.toDataURL('image/jpeg', 0.6);
+    } catch {
+      // fall through to the FileReader path below
+    }
+  }
+  const file = blob instanceof File ? blob : new File([blob], 'photo', { type: blob.type || 'image/jpeg' });
+  return fileToSquareDataUrl(file, max);
+}
+
 /** True on phones/tablets where opening the native camera app beats getUserMedia
  *  (full sensor quality, flash, HDR) and avoids permission prompts. */
 export function isMobileDevice(): boolean {

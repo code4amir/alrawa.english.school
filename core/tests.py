@@ -582,3 +582,18 @@ class DigestTests(TestCase):
         self.assertIn('admins_notified=1', out.getvalue())
         self.assertEqual(
             NotificationLog.objects.filter(event_type='agent_digest').count(), 1)
+
+
+class AuditLogOrderingTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        _auth(self.client)
+
+    def test_default_ordering_newest_first(self):
+        from .models import AuditLog
+        AuditLog.objects.create(action='older_action', entity_type='t')
+        AuditLog.objects.create(action='newer_action', entity_type='t')
+        res = self.client.get('/api/audit/')
+        self.assertEqual(res.status_code, 200)
+        actions = [r['action'] for r in res.data['results']]
+        self.assertEqual(actions[0], 'newer_action')

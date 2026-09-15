@@ -741,6 +741,56 @@ class FinanceTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertIn('data', res.data)
 
+    def test_defaulter_compute_totals_matches_compute(self):
+        """Totals-only path must equal full compute() sums (same fixtures)."""
+        from finance.services.defaulter_service import DefaulterService
+        s2 = Student.objects.create(
+            name='Stu2', student_id='S000002',
+            school_class=self.klass, session='2026',
+        )
+        FeeSchedule.objects.create(
+            academic_year=self.year, school_class=self.klass,
+            category='Admission', amount=5000,
+            frequency='YEARLY', applicability='AUTO',
+        )
+        FeeWaiver.objects.create(
+            student=self.student, fee_schedule=self.fs,
+            type='PERCENTAGE', value=10,
+            approval_status='approved', active=True,
+        )
+        tx = Transaction.objects.create(
+            transaction_date='2026-06-01', transaction_type='INCOME',
+            amount=400, student=self.student,
+            destination_account=self.bank_ar, fiscal_year=2026,
+            category='Tuition', fee_month='2026-06',
+        )
+        PaymentAllocation.objects.create(
+            transaction=tx, fee_schedule=self.fs,
+            student=self.student, period='2026-06', amount=400,
+        )
+        svc = DefaulterService(month_from='2026-01', month_to='2026-06')
+        svc.resolve_year()
+        students = list(
+            Student.objects.filter(deleted_at__isnull=True)
+            .select_related('school_class')
+            .only('id', 'name', 'school_class__name')
+            .order_by('name')
+        )
+        ids = [s.id for s in students]
+        full = svc.compute(students, ids)
+        due, paid = svc.compute_totals(students, ids)
+        self.assertEqual(len(full), 2)
+        self.assertAlmostEqual(due, sum(r['totalDue'] for r in full))
+        self.assertAlmostEqual(paid, sum(r['totalPaid'] for r in full))
+        # Paginated endpoint (limit=1 forces the totals-only branch) agrees.
+        res = self.client.get(
+            '/api/finance/defaulter/?year=2026&limit=1&page=1'
+            '&monthFrom=2026-01&monthTo=2026-06'
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertAlmostEqual(res.data['grandTotalDue'], due)
+        self.assertAlmostEqual(res.data['grandTotalPaid'], paid)
+
     # ── AGM Report ──
 
     def test_agm_report(self):

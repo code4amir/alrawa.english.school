@@ -38,6 +38,7 @@ const Layout = ({ children }: LayoutProps) => {
   const [connState, setConnState] = useState<ConnState>('checking');
 
   const checkHealth = useCallback(async () => {
+    if (document.hidden) return;
     try {
       // Derive the root backend health endpoint from the /api base URL
       const res = await fetch(`${API_URL.replace(/\/api\/?$/, '')}/health/`, { signal: AbortSignal.timeout(5000) });
@@ -48,7 +49,7 @@ const Layout = ({ children }: LayoutProps) => {
 
   useEffect(() => {
     checkHealth();
-    const interval = setInterval(checkHealth, 30000);
+    const interval = setInterval(checkHealth, 60000);
     const onOnline = () => { setConnState('checking'); setTimeout(checkHealth, 500); };
     const onOffline = () => setConnState('disconnected');
     window.addEventListener('online', onOnline);

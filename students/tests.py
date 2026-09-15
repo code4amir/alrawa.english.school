@@ -285,3 +285,35 @@ class ServiceWindowDefaultTests(TestCase):
         r = toggle_student_service(s.id, svc.id, True, starts_at='2026-03', ends_at='2026-06')
         self.assertEqual(r['student_service']['starts_at'], '2026-03')
         self.assertEqual(r['student_service']['ends_at'], '2026-06')
+
+
+class StudentMinimalFieldsTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        _auth(self.client)
+        self.klass = SchoolClass.objects.create(name='Class 5', order=1)
+
+    def test_all_minimal_shape(self):
+        Student.objects.create(
+            name='S1', student_id='S000001',
+            school_class=self.klass, roll='1',
+        )
+        res = self.client.get('/api/students/?all=true&fields=minimal')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(len(res.data), 1)
+        row = res.data[0]
+        self.assertEqual(
+            set(row.keys()), {'id', 'name', 'roll', 'classId'})
+        self.assertEqual(row['name'], 'S1')
+        self.assertEqual(row['classId'], str(self.klass.id))
+
+    def test_all_default_shape_unchanged(self):
+        Student.objects.create(
+            name='S1', student_id='S000001',
+            school_class=self.klass, roll='1',
+        )
+        res = self.client.get('/api/students/?all=true')
+        self.assertEqual(res.status_code, 200)
+        row = res.data[0]
+        self.assertIn('studentId', row)
+        self.assertGreater(len(row.keys()), 4)

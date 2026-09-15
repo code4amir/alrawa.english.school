@@ -1180,3 +1180,32 @@ class MobileTeachersAuthTests(TestCase):
         self.assertEqual(res.status_code, 200, msg=res.content[:300])
         self.assertIn('teachers', res.data)
 
+
+
+class AttendanceRangeCapTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = _auth(self.client)
+        self.klass = SchoolClass.objects.create(name='Class 5', order=1)
+
+    def test_class_report_rejects_overlong_range(self):
+        res = self.client.get('/api/attendance/class-report/', {
+            'class_id': str(self.klass.id),
+            'from': '2026-01-01', 'to': '2026-04-01',
+        })
+        self.assertEqual(res.status_code, 400)
+
+    def test_monthly_report_rejects_overlong_range(self):
+        res = self.client.get('/api/attendance/monthly-report/', {
+            'class_id': str(self.klass.id),
+            'from_date': '2026-01-01', 'to_date': '2026-04-01',
+        })
+        self.assertEqual(res.status_code, 400)
+
+    def test_range_within_cap_ok(self):
+        # 2026-01-01 .. 2026-03-03 inclusive = 62 days: allowed.
+        res = self.client.get('/api/attendance/class-report/', {
+            'class_id': str(self.klass.id),
+            'from': '2026-01-01', 'to': '2026-03-03',
+        })
+        self.assertEqual(res.status_code, 200)

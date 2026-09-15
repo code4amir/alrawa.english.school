@@ -5,8 +5,11 @@ from .models import SchoolClass, Subject, AcademicYear, SchoolSetting, AuditLog,
 class SchoolClassSerializer(serializers.ModelSerializer):
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     studentCount = serializers.IntegerField(source='student_count', read_only=True)
-    bookCount = serializers.IntegerField(source='book_count', read_only=True)
-    subjectCount = serializers.IntegerField(source='subject_count', read_only=True)
+    # Optional: ClassViewSet annotates student_count only (perf). When the
+    # book/subject annotations are absent these are omitted from output
+    # instead of raising; callers fall back to 0 (`cls.bookCount || 0`).
+    bookCount = serializers.IntegerField(source='book_count', read_only=True, required=False)
+    subjectCount = serializers.IntegerField(source='subject_count', read_only=True, required=False)
 
     class Meta:
         model = SchoolClass

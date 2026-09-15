@@ -8,10 +8,11 @@ from finance.views.base import _waiver_expected_amount, _waiver_covers_month, _p
 
 class FeeStatusService:
 
-    def __init__(self, student_id, fee_month=None, fee_month_to=None):
+    def __init__(self, student_id, fee_month=None, fee_month_to=None, academic_year=None):
         self.student_id = student_id
         self.fee_month = fee_month
         self.fee_month_to = fee_month_to
+        self.academic_year = academic_year
 
     def get_status(self):
         try:
@@ -22,7 +23,10 @@ class FeeStatusService:
         class_id = student.school_class_id
         schedules = FeeSchedule.objects.filter(
             Q(school_class_id=class_id) | Q(school_class_id__isnull=True)
-        ).order_by('category')
+        ).select_related('school_class', 'academic_year').order_by('category')
+        if self.academic_year:
+            # Opt-in scope; default remains unscoped (all years).
+            schedules = schedules.filter(academic_year__name=self.academic_year)
 
         auto_schedules, assigned_only_schedules = [], []
         for s in schedules:

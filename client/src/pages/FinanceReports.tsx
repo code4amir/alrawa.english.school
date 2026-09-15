@@ -5,7 +5,7 @@ import { useSchoolStore, api } from '../store';
 import { Calendar, BarChart3, Scale, Users, Loader } from 'lucide-react';
 import { toast } from '../components/Toast';
 import ExportMenu from '../components/ExportMenu';
-import { getMonthName, fmt, headwise, pdfIncomeReport, pdfExpenseReport, pdfAudit, pdfYearlyAGM } from '../lib/financeReportPdf';
+import { getMonthName, fmt, headwise } from '../lib/reportFormat';
 import { aggregateMonthly, monthlyBarChartSvg, expensePieSvg, svgToPngDataUrl } from '../lib/agmCharts';
 import { FISCAL_YEAR_START_MONTH, FISCAL_START_LABEL, FISCAL_END_LABEL } from '../lib/config';
 import { ACCOUNT_IDS, PRIMARY_BANK, SECONDARY_BANK } from '../lib/accounts';
@@ -110,7 +110,7 @@ const FinanceReports = () => {
   }, [tab, yearFilter]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchFinance(); fetchOpeningBalances(); }, []);
+  useEffect(() => { void Promise.all([fetchFinance(), fetchOpeningBalances()]); }, []);
   // Row-level data (full transaction crawl) is only needed for the
   // detail/breakdown tabs. The yearly-AGM tab uses dedicated server
   // endpoints (/finance/reports/agm|monthly) — no crawl there.
@@ -124,8 +124,7 @@ const FinanceReports = () => {
   }, [tab, yearFilter]);
 
   const openOpeningBalModal = async () => {
-    await fetchOpeningBalances(yearFilter);
-    await fetchOpeningBalanceHistory(yearFilter);
+    await Promise.all([fetchOpeningBalances(yearFilter), fetchOpeningBalanceHistory(yearFilter)]);
     const fresh = useSchoolStore.getState().openingBalances;
     const ob: Record<string, string> = {};
     ACCOUNT_IDS.forEach(id => { ob[id] = String(fresh[id] || 0); });
@@ -249,6 +248,7 @@ const FinanceReports = () => {
           uniqueStudents: new Set(incomeTx.filter((t: any) => (t.category || 'Uncategorized') === cat && t.studentName).map((t: any) => t.studentName)).size,
         }));
         const grandTotal = hw.reduce((s: number, x: [string, number]) => s + x[1], 0);
+        const { pdfIncomeReport } = await import('../lib/financeReportPdf');
         pdfIncomeReport(categories, grandTotal, incomeTx, dateFrom, dateTo);
       }
       else if (tab === 'expense-report') {
@@ -259,12 +259,14 @@ const FinanceReports = () => {
           count: expenseTx.filter((t: any) => (t.category || 'Uncategorized') === cat).length,
         }));
         const grandTotal = hw.reduce((s: number, x: [string, number]) => s + x[1], 0);
+        const { pdfExpenseReport } = await import('../lib/financeReportPdf');
         pdfExpenseReport(categories, grandTotal, expenseTx, dateFrom, dateTo);
       }
       else if (tab === 'audit') {
         const { ti, te } = getAuditTotals();
         const incHw = headwise(yearIncome);
         const expHw = headwise(yearExpense);
+        const { pdfAudit } = await import('../lib/financeReportPdf');
         pdfAudit({ totalIncome: ti, totalExpense: te, netSurplus: ti - te, incomeByCategory: incHw, expenseByCategory: expHw }, yearFilter);
       }
       else if (tab === 'yearly-agm' && agmData) {
@@ -281,6 +283,7 @@ const FinanceReports = () => {
             (expense || []).length > 0 ? svgToPngDataUrl(pieSvg, 640, 240) : Promise.resolve(null),
           ]);
         } catch { /* charts stay out of the PDF, tables still print */ }
+        const { pdfYearlyAGM } = await import('../lib/financeReportPdf');
         await pdfYearlyAGM({
           yearFilter, income, expense, totalIncome, totalExpense, netSurplus,
           opening, closing, totalAssets, totalTransfers, transactionCount, transferCount,

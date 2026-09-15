@@ -197,11 +197,13 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
   },
 
   fetchClasses: async (force) => {
-    if (!force && get().classes.length > 0) return;
+    const key = 'classes';
+    const now = Date.now();
+    if (!force && now - (get()._fetchedAt[key] || 0) < CACHE_TTL && get().classes.length > 0) return;
     set((s) => ({ loading: { ...s.loading, classes: true }, loadError: { ...s.loadError, classes: false } }));
     try {
-      const res = await api.get('/classes/');
-      set({ classes: res.data.results || res.data.data || res.data, lastFetched: Date.now() });
+      const res = await dedupedFetch(key, () => api.get('/classes/'));
+      set({ classes: res.data.results || res.data.data || res.data, lastFetched: Date.now(), _fetchedAt: { ...get()._fetchedAt, [key]: Date.now() } });
     } catch (e) {
       if (import.meta.env.DEV) console.warn("[store]", e);
       set((s) => ({ loadError: { ...s.loadError, classes: true } }));
@@ -209,7 +211,9 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
     finally { set((s) => ({ loading: { ...s.loading, classes: false } })); }
   },
   fetchStudents: async (params, force) => {
-    if (!force && get().students.length > 0 && !params) return;
+    const hasParams = !!params && Object.keys(params).length > 0;
+    const now = Date.now();
+    if (!force && !hasParams && get().students.length > 0 && now - (get()._fetchedAt['students'] || 0) < CACHE_TTL) return;
     set((s) => ({ loading: { ...s.loading, students: true } }));
     try {
       const res = await api.get('/students/', { params: { limit: '2000', ...params } });
@@ -230,20 +234,23 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
         // must NOT clobber the dashboard's global studentTotal with a
         // single-class count.
         ...(params ? {} : { studentTotal: res.data.count ?? res.data.total ?? 0 }),
-        lastFetched: Date.now()
+        lastFetched: Date.now(),
+        ...(params ? {} : { _fetchedAt: { ...get()._fetchedAt, students: Date.now() } })
       });
     } catch (e) { if (import.meta.env.DEV) console.warn("[store]", e); }
     finally { set((s) => ({ loading: { ...s.loading, students: false } })); }
   },
   fetchTeachers: async (params, force) => {
-    if (!force && get().teachers.length > 0 && !params) return;
+    const hasParams = !!params && Object.keys(params).length > 0;
+    if (!force && !hasParams && get().teachers.length > 0 && Date.now() - (get()._fetchedAt['teachers'] || 0) < CACHE_TTL) return;
     set((s) => ({ loading: { ...s.loading, teachers: true }, loadError: { ...s.loadError, teachers: false } }));
     try {
       const res = await api.get('/teachers/', { params: { limit: '2000', ...params } });
       set({
         teachers: res.data.results || res.data.data || res.data,
         teacherTotal: res.data.count ?? res.data.total ?? 0,
-        lastFetched: Date.now()
+        lastFetched: Date.now(),
+        ...(!hasParams ? { _fetchedAt: { ...get()._fetchedAt, teachers: Date.now() } } : {})
       });
     } catch (e) {
       if (import.meta.env.DEV) console.warn("[store]", e);
@@ -252,21 +259,24 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
     finally { set((s) => ({ loading: { ...s.loading, teachers: false } })); }
   },
   fetchStaff: async (params, force) => {
-    if (!force && get().staff.length > 0 && !params) return;
+    const hasParams = !!params && Object.keys(params).length > 0;
+    if (!force && !hasParams && get().staff.length > 0 && Date.now() - (get()._fetchedAt['staff'] || 0) < CACHE_TTL) return;
     set((s) => ({ loading: { ...s.loading, staff: true } }));
     try {
       const res = await api.get('/staff/', { params: { limit: '2000', ...params } });
       set({
         staff: res.data.results || res.data.data || res.data,
         staffTotal: res.data.count ?? res.data.total ?? 0,
-        lastFetched: Date.now()
+        lastFetched: Date.now(),
+        ...(!hasParams ? { _fetchedAt: { ...get()._fetchedAt, staff: Date.now() } } : {})
       });
     } catch (e) { if (import.meta.env.DEV) console.warn("[store]", e); }
     finally { set((s) => ({ loading: { ...s.loading, staff: false } })); }
   },
   fetchBooks: async (params, force) => {
     const page = get().bookPage;
-    if (!force && get().books.length > 0 && !params) return;
+    const hasParams = !!params && Object.keys(params).length > 0;
+    if (!force && !hasParams && get().books.length > 0 && Date.now() - (get()._fetchedAt['books'] || 0) < CACHE_TTL) return;
     set((s) => ({ loading: { ...s.loading, books: true } }));
     try {
       // DRF paginates at 50/page — accumulate ALL pages so every class's
@@ -284,7 +294,7 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
         next = res.data.next ?? null;
         offset += 50;
       }
-      set({ books: all, bookTotal: total, lastFetched: Date.now() });
+      set({ books: all, bookTotal: total, lastFetched: Date.now(), ...(!hasParams ? { _fetchedAt: { ...get()._fetchedAt, books: Date.now() } } : {}) });
     } catch (e) { if (import.meta.env.DEV) console.warn("[store]", e); }
     finally { set((s) => ({ loading: { ...s.loading, books: false } })); }
   },

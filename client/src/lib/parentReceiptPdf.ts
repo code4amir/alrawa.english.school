@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
-import { addLogo, fmt } from './financeReportPdf';
+import { addLogo } from './financeReportPdf';
+import { fmt } from './reportFormat';
 
 export interface ParentPayment {
   reference: string;

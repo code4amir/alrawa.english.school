@@ -20,7 +20,7 @@ from .serializers import (
 )
 from .permissions import CanMarkAttendance, CanManageHolidays
 from students.models import Student
-from core.models import SchoolClass, SchoolSetting
+from core.models import SchoolClass
 from accounts.permissions import require_permission, is_admin_or_superuser, can_manage_students
 from core.audit import log_audit
 from parents.services import notify_parents_of_student
@@ -29,12 +29,10 @@ from parents.services import notify_parents_of_student
 WEEKEND_DAYS_DEFAULT = '4,5'
 
 
-def _get_weekend_set():
-    try:
-        raw = SchoolSetting.objects.get(key='weekend_days').value
-        return {int(x.strip()) for x in raw.split(',') if x.strip().isdigit()}
-    except SchoolSetting.DoesNotExist:
-        return {int(x) for x in WEEKEND_DAYS_DEFAULT.split(',')}
+def _get_weekend_set(request=None):
+    """Thin wrapper over the shared request-scoped helper (core.request_cache)."""
+    from core.request_cache import get_weekend_set as _shared_weekend_set
+    return _shared_weekend_set(request)
 
 
 def _get_holiday_dates(year=None, month=None):
@@ -131,7 +129,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
                 status=400,
             )
 
-        weekend_set = _get_weekend_set()
+        weekend_set = _get_weekend_set(request)
         if att_date.weekday() in weekend_set:
             return Response(
                 {'error': 'Cannot mark attendance on a weekend day'},
@@ -246,7 +244,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
             absent_count=models.Count('id', filter=models.Q(status='absent')),
         )
 
-        weekend_set = _get_weekend_set()
+        weekend_set = _get_weekend_set(request)
         known_holidays = _get_holiday_dates(year=year or None, month=month)
 
         weekend_count = 0
@@ -315,7 +313,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
             date__month=month,
         ).order_by('date')
 
-        weekend_set = _get_weekend_set()
+        weekend_set = _get_weekend_set(request)
         known_holidays = _get_holiday_dates(year=year, month=month)
 
         class_date_records = AttendanceRecord.objects.filter(
@@ -419,6 +417,14 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         except (ValueError, TypeError):
             return Response(
                 {'error': 'Invalid from or to date, expected YYYY-MM-DD'},
+                status=400,
+            )
+
+        # Perf guard: range reports walk every calendar day; cap the span at
+        # 62 days (≈ two months). Month views are unaffected.
+        if (date.fromisoformat(to_date) - date.fromisoformat(from_date)).days + 1 > 62:
+            return Response(
+                {'error': 'Date range too large: max 62 days'},
                 status=400,
             )
 
@@ -669,6 +675,10 @@ class AttendanceViewSet(viewsets.GenericViewSet):
                 return Response({'error': 'Invalid from_date or to_date'}, status=400)
             if d_from > d_to:
                 return Response({'error': 'from_date must be <= to_date'}, status=400)
+            # Perf guard: range mode walks every calendar day; cap at 62 days
+            # (≈ two months). Legacy year/month mode is unaffected.
+            if (d_to - d_from).days + 1 > 62:
+                return Response({'error': 'Date range too large: max 62 days'}, status=400)
         elif year and month:
             d_from = d_to = None
         else:
@@ -703,7 +713,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
             while cur <= d_to:
                 day_list.append(cur)
                 cur += timedelta(days=1)
-            weekend_set = _get_weekend_set()
+            weekend_set = _get_weekend_set(request)
             holiday_set = _get_holiday_dates(year=None, month=None)
             holiday_set = {h for h in holiday_set if d_from <= h <= d_to}
             resp_year, resp_month = d_from.year, d_from.month
@@ -725,7 +735,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
                 ]
             except (ValueError, TypeError):
                 return Response({'error': 'Invalid year or month'}, status=400)
-            weekend_set = _get_weekend_set()
+            weekend_set = _get_weekend_set(request)
             holiday_set = _get_holiday_dates(year=year_int, month=month_int)
             resp_year, resp_month = year_int, month_int
             records = AttendanceRecord.objects.filter(
