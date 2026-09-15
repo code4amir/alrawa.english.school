@@ -37,8 +37,12 @@ export async function unsubscribePush(): Promise<void> {
 export function usePushSubscription() {
   const [error, setError] = useState<string | null>(null);
   const user = useAuthStore((s) => s.user);
+  const userId = user?.id ?? null;
 
   useEffect(() => {
+    // Auth-aware: skip entirely when logged out (no session = no push
+    // registration), and (re)run after login when the session arrives.
+    if (!userId) return;
     if (!('Notification' in window) || !('serviceWorker' in navigator)) return;
     if (Notification.permission === 'denied') return;
 
@@ -80,7 +84,7 @@ export function usePushSubscription() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [userId]);
 
   // Unsubscribe on logout: when the session transitions from a signed-in
   // user to null, tear down the browser subscription and delete the server

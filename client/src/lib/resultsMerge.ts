@@ -28,7 +28,7 @@ export function mergeSavedMarks(
   const next = rows.map((r) => ({ ...r, marks: { ...(r.marks || {}) } }));
   for (const sid of studentIds) {
     const v = values[sid];
-    const saved = v !== '' && v !== undefined && !isNaN(+v) ? Math.min(+v, fullMarks) : undefined;
+    const saved = v !== '' && v !== undefined && !isNaN(+v) ? Math.max(0, Math.min(+v, fullMarks)) : undefined;
     const idx = next.findIndex((r) => sameCell(r, sid, term));
     if (idx >= 0) {
       if (saved === undefined) delete next[idx].marks![subject];

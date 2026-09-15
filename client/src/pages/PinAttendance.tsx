@@ -13,7 +13,7 @@ type StatusType = 'present' | 'absent' | 'unmarked';
 interface Teacher { id: string; name: string; }
 interface ClassInfo { id: string; name: string; }
 interface Student { id: string; name: string; roll: string; }
-interface QueuedRecord { school_class: string; date: string; term: string; session: string; records: Record<string, string>; timestamp: number; }
+interface QueuedRecord { school_class: string; date: string; term: string; session: string; records: Record<string, string>; timestamp: number; teacherId: string; teacherName: string; }
 interface Holiday { id: string; date: string; name: string; type: string; }
 
 const STATUS_NAMES: Record<string, string> = { present: 'Present', absent: 'Absent' };
@@ -180,10 +180,17 @@ export default function PinAttendance() {
     if (queue.length === 0) return;
     const t = localStorage.getItem(LS_TOKEN_KEY);
     if (!t) return;
+    // Teacher binding: only sync records queued by the CURRENT teacher.
+    // Another teacher's records are skipped but KEPT (never synced under a
+    // different teacher — that would misattribute the attendance).
+    let currentTeacherId = '';
+    try { currentTeacherId = JSON.parse(localStorage.getItem(LS_TEACHER_KEY) || 'null')?.id || ''; } catch { /* ignore */ }
     const before = queue.length;
     let dropped = 0;
+    let skippedForeign = 0;
     for (let i = queue.length - 1; i >= 0; i--) {
       const item = queue[i];
+      if (currentTeacherId && (item as QueuedRecord).teacherId && (item as QueuedRecord).teacherId !== currentTeacherId) { skippedForeign++; continue; }
       try {
         await apiPost('/m/attendance/batch/', t, {
           school_class: item.school_class, date: item.date, term: item.term, session: item.session, records: item.records,
@@ -199,6 +206,7 @@ export default function PinAttendance() {
     const synced = before - queue.length - dropped;
     if (synced > 0) safeToast(`Synced ${synced} queued record${synced > 1 ? 's' : ''}`, 'success');
     if (dropped > 0) safeToast(`Removed ${dropped} invalid queued record${dropped > 1 ? 's' : ''} (rejected by server)`, 'error');
+    if (skippedForeign > 0) safeToast(`${skippedForeign} queued record${skippedForeign > 1 ? 's' : ''} belong${skippedForeign > 1 ? '' : 's'} to another teacher — kept for them`, 'info');
     setRefreshKey((k) => k + 1);
   }, []);
 
@@ -387,7 +395,7 @@ export default function PinAttendance() {
     try {
       if (!navigator.onLine) {
         const queue = loadQueue();
-        queue.unshift({ ...payload, timestamp: Date.now() });
+        queue.unshift({ ...payload, timestamp: Date.now(), teacherId: selectedTeacher?.id || '', teacherName: selectedTeacher?.name || '' });
         saveQueue(queue);
         setRefreshKey((k) => k + 1);
         safeToast('Saved offline — will sync when online', 'info');
@@ -407,7 +415,7 @@ export default function PinAttendance() {
       }
       safeToast('Server unavailable — queued for retry', 'info');
       const queue = loadQueue();
-      queue.unshift({ ...payload, timestamp: Date.now() });
+      queue.unshift({ ...payload, timestamp: Date.now(), teacherId: selectedTeacher?.id || '', teacherName: selectedTeacher?.name || '' });
       saveQueue(queue);
       setRefreshKey((k) => k + 1);
     } finally {

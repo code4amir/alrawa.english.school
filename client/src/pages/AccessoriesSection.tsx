@@ -140,9 +140,7 @@ const AccessoriesSection = () => {
       const existing = feeSchedules.find((fs: any) => fs.category === category && (!fs.classId || fs.classId === selectedClassId));
       const amount = Number(editFee.amount) || 0;
       if (existing) {
-        await api.put(`/finance/fee-schedules/${existing.id}/`, { amount });
-        toast('Updated ✓', 'success');
-        fetchFeeSchedules(true);
+        await api.patch(`/finance/fee-schedules/${existing.id}/`, { amount });
       } else {
         const activeYear = useSchoolStore.getState().academicYears.find((y: any) => y.isActive);
         await api.post('/finance/fee-schedules/', { academicYearId: activeYear?.id, classId: selectedClassId, category, amount, frequency: 'YEARLY' });

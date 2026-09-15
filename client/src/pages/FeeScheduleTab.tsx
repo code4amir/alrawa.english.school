@@ -145,7 +145,7 @@ const FeeScheduleTab = () => {
             </div>
             <div>
               <label className="text-[10px] font-bold uppercase text-school-muted block mb-1">Amount (৳)</label>
-              <input type="number" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} className="w-full border border-school-border rounded-xl px-3 py-2 text-sm" />
+              <input type="number" min="0" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} className="w-full border border-school-border rounded-xl px-3 py-2 text-sm" />
             </div>
             <div>
               <label className="text-[10px] font-bold uppercase text-school-muted block mb-1">Frequency</label>

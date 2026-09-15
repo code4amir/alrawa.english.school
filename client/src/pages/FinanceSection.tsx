@@ -45,7 +45,7 @@ type TxTab = 'income' | 'expense' | 'transfer' | 'import';
 
 const PAGE_SIZE = 25;
 
-function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, refreshKey }: { fmt: (n: number) => string; fetchFinance: () => void; fetchFeeSchedules: () => void; fetchDashboardSummary: (fy?: string) => void; refreshKey: number }) {
+function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, refreshKey }: { fmt: (n: number) => string; fetchFinance: (force?: boolean) => void; fetchFeeSchedules: (force?: boolean) => void; fetchDashboardSummary: (fy?: string, force?: boolean) => void; refreshKey: number }) {
   const role = useAuthStore((s) => s.user?.role);
   const canWrite = role === 'admin' || role === 'accountant';
   const [ledgerAccount, setLedgerAccount] = useState<string>('CASH_IN_HAND');
@@ -121,8 +121,8 @@ function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, r
       const now = new Date();
       const fy = now.getMonth() >= FISCAL_YEAR_START_MONTH ? now.getFullYear() + 1 : now.getFullYear();
       if (store._fetchedAt) store._fetchedAt[`dashboardSummary_${fy}`] = 0;
-      fetchFinance();
-      fetchDashboardSummary(String(fy));
+      fetchFinance(true);
+      fetchDashboardSummary(String(fy), true);
     } catch {
       toast('Failed to cancel', 'error');
     } finally {
@@ -626,8 +626,8 @@ const FinanceSection = () => {
       const now = new Date();
       const fy = now.getMonth() >= FISCAL_YEAR_START_MONTH ? now.getFullYear() + 1 : now.getFullYear();
       if (store._fetchedAt) store._fetchedAt[`dashboardSummary_${fy}`] = 0;
-      fetchFinance();
-      fetchDashboardSummary(String(fy));
+      fetchFinance(true);
+      fetchDashboardSummary(String(fy), true);
       setLedgerRefreshKey(k => k + 1);
     } catch (err: any) {
       const msg = err?.response?.data?.error;

@@ -13,6 +13,8 @@ def toggle_student_service(student_id, service_type_id, active, starts_at=None, 
     Returns dict with keys: student_service, fee_assignment_created, fee_assignment_removed.
     """
     from finance.models import FeeSchedule, StudentFeeAssignment
+    from finance.views.base import _check_period_open, _fiscal_year_from_date
+    from core.audit import log_audit
 
     student = Student.objects.get(id=student_id)
     service_type = ServiceType.objects.get(id=service_type_id)
@@ -73,6 +75,7 @@ def toggle_student_service(student_id, service_type_id, active, starts_at=None, 
 
     if not fee_schedule and active:
         # Auto-create FeeSchedule from ServiceType defaults
+        _check_period_open(_fiscal_year_from_date(active_year.start_date))
         fee_schedule = FeeSchedule.objects.create(
             academic_year=active_year,
             school_class=None,
@@ -81,9 +84,17 @@ def toggle_student_service(student_id, service_type_id, active, starts_at=None, 
             frequency=service_type.frequency,
             applicability='ASSIGNED_ONLY',
         )
+        log_audit('create', 'fee_schedule', entity_id=fee_schedule.pk,
+                  details={'category': fee_schedule.category,
+                           'academic_year': active_year.name,
+                           'via': 'toggle_student_service'})
 
     if fee_schedule:
         if active:
+            _check_period_open(_fiscal_year_from_date(
+                fee_schedule.academic_year.start_date
+                if getattr(fee_schedule, 'academic_year', None) and getattr(fee_schedule.academic_year, 'start_date', None)
+                else active_year.start_date))
             # Create or reactivate StudentFeeAssignment
             assignment, was_created = StudentFeeAssignment.objects.get_or_create(
                 student=student,
@@ -96,6 +107,10 @@ def toggle_student_service(student_id, service_type_id, active, starts_at=None, 
             )
             if was_created:
                 result['fee_assignment_created'] = True
+                log_audit('create', 'student_fee_assignment', entity_id=assignment.pk,
+                          details={'student_id': str(student.id),
+                                   'fee_schedule_id': str(fee_schedule.id),
+                                   'via': 'toggle_student_service'})
             elif not assignment.active:
                 assignment.active = True
                 if starts_at:
@@ -104,15 +119,28 @@ def toggle_student_service(student_id, service_type_id, active, starts_at=None, 
                     assignment.ends_at = ends_at
                 assignment.save(update_fields=['active', 'starts_at', 'ends_at'])
                 result['fee_assignment_created'] = True
+                log_audit('update', 'student_fee_assignment', entity_id=assignment.pk,
+                          details={'active': True, 'via': 'toggle_student_service'})
         else:
             # Deactivate StudentFeeAssignment
-            updated = StudentFeeAssignment.objects.filter(
+            active_rows = StudentFeeAssignment.objects.filter(
                 student=student,
                 fee_schedule=fee_schedule,
                 active=True,
-            ).update(active=False)
+            )
+            if active_rows.exists():
+                _check_period_open(_fiscal_year_from_date(
+                    fee_schedule.academic_year.start_date
+                    if getattr(fee_schedule, 'academic_year', None) and getattr(fee_schedule.academic_year, 'start_date', None)
+                    else active_year.start_date))
+            updated = active_rows.update(active=False)
             if updated:
                 result['fee_assignment_removed'] = True
+                rows = StudentFeeAssignment.objects.filter(
+                    student=student, fee_schedule=fee_schedule)
+                for row in rows:
+                    log_audit('update', 'student_fee_assignment', entity_id=row.pk,
+                              details={'active': False, 'via': 'toggle_student_service'})
 
     return result
 

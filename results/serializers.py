@@ -40,9 +40,13 @@ class ResultSerializer(serializers.ModelSerializer):
             student = attrs.get('student') or getattr(self.instance, 'student', None)
             class_id = getattr(student, 'school_class_id', None)
             if class_id:
-                from core.models import Subject
-                limits = dict(Subject.objects.filter(
-                    school_class_id=class_id).values_list('name', 'full_marks'))
+                # Bulk saves prefetch all classes' limits into context (one
+                # query); single saves fall back to one query here.
+                limits = (self.context or {}).get('subject_limits')
+                if limits is None:
+                    from core.models import Subject
+                    limits = dict(Subject.objects.filter(
+                        school_class_id=class_id).values_list('name', 'full_marks'))
                 bad = {}
                 for key, val in marks.items():
                     if val is None or isinstance(val, bool):

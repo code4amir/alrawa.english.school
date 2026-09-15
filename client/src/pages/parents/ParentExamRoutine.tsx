@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../../store';
+import Toast, { toast } from '../../components/Toast';
 import { Loader2, Calendar } from 'lucide-react';
 
 interface Exam {
@@ -20,24 +21,30 @@ export default function ParentExamRoutine() {
   useEffect(() => {
     api.get('/parents/exam-routine/')
       .then((res) => setExams(res.data))
-      .catch(() => {})
+      .catch(() => toast('Failed to load exam routine', 'error'))
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) {
     return (
-      <div className="flex justify-center py-20">
-        <Loader2 size={28} className="animate-spin text-school-muted" />
-      </div>
+      <>
+        <Toast />
+        <div className="flex justify-center py-20">
+          <Loader2 size={28} className="animate-spin text-school-muted" />
+        </div>
+      </>
     );
   }
 
   if (exams.length === 0) {
     return (
-      <div className="text-center py-20 text-school-muted text-sm">
-        <Calendar size={40} className="mx-auto mb-3 opacity-40" />
-        No exam routine published yet
-      </div>
+      <>
+        <Toast />
+        <div className="text-center py-20 text-school-muted text-sm">
+          <Calendar size={40} className="mx-auto mb-3 opacity-40" />
+          No exam routine published yet
+        </div>
+      </>
     );
   }
 
@@ -50,6 +57,7 @@ export default function ParentExamRoutine() {
 
   return (
     <div className="space-y-4 animate-fade-in">
+      <Toast />
       {Object.entries(grouped).map(([examName, examList]) => (
         <div key={examName}>
           <h3 className="font-bold text-sm text-school-primary dark:text-[#e0e0e8] mb-2">{examName}</h3>

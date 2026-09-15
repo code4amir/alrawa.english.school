@@ -19,7 +19,7 @@ export default function PeriodCloseTab() {
     try {
       const res = await api.get('/finance/period-closes');
       setPeriods(res.data.results || res.data.data || res.data);
-    } catch { /* empty */ }
+    } catch { toast('Failed to load closed periods', 'error'); }
     finally { setLoading(false); }
   };
 

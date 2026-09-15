@@ -398,7 +398,7 @@ export default function AttendanceSection() {
                 className="px-3 py-1.5 border border-school-border rounded-xl text-xs font-semibold text-school-primary dark:text-[#e0e0e8] hover:bg-school-paper dark:hover:bg-white/5 transition-colors flex items-center gap-1.5">
                 <Check size={14} /> Mark All Present
               </button>
-              <span className="text-xs text-school-muted">{markedCount}/{students.length} marked{studentTotal != null && studentTotal > students.length ? ` · showing ${students.length} of ${studentTotal}` : ''}</span>
+              <span className="text-xs text-school-muted">{markedCount}/{students.length} marked{studentTotal != null && studentTotal > students.length ? ` · showing ${students.length} of ${studentTotal} (limit 2000)` : ''}</span>
             </div>
           )}
 

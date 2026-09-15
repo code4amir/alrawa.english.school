@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../../store';
 import { SCHOOL_LOGO } from '../../lib/logo';
 import { Home, ClipboardList, CalendarCheck, BookOpen, BookText, LogOut, ArrowLeft } from 'lucide-react';
@@ -13,8 +13,11 @@ const tabs = [
 
 export default function TeacherLayout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, logout } = useAuthStore();
-  const currentPath = window.location.hash.replace('#', '');
+  // Subscribe to router location (not window.location.hash) so the active
+  // tab highlight re-renders on every in-app navigation under HashRouter.
+  const currentPath = location.pathname;
 
   const isActive = (path: string) =>
     path === '/teacher' ? currentPath === '/teacher' : currentPath.startsWith(path);

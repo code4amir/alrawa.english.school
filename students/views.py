@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
+import uuid
 from .models import Student, StudentService
 from .serializers import StudentSerializer, StudentServiceToggleSerializer
 from accounts.permissions import require_permission, can_manage_students, is_admin_or_superuser, require_photo_access
@@ -49,6 +50,11 @@ class StudentViewSet(PhotoHandleMixin, viewsets.ModelViewSet):
             if not show_archived:
                 qs = qs.filter(deleted_at__isnull=True)
             if class_id:
+                try:
+                    uuid.UUID(str(class_id))
+                except (ValueError, TypeError, AttributeError):
+                    from rest_framework.exceptions import ValidationError as DRFValidationError
+                    raise DRFValidationError({'class_id': 'Invalid class id'})
                 qs = qs.filter(school_class_id=class_id)
             if class_name:
                 qs = qs.filter(school_class__name=class_name)
@@ -193,6 +199,16 @@ class StudentViewSet(PhotoHandleMixin, viewsets.ModelViewSet):
 
         if not service_type_id:
             return Response({'error': 'service_type_id required'}, status=400)
+
+        import re as _re
+        _month_re = _re.compile(r'^\d{4}-(0[1-9]|1[0-2])$')
+        for _field, _val in (('starts_at', starts_at), ('ends_at', ends_at)):
+            if _val in (None, ''):
+                continue
+            if not _month_re.match(str(_val)):
+                return Response({'error': f'{_field}: Expected YYYY-MM.'}, status=400)
+        if starts_at and ends_at and str(starts_at) > str(ends_at):
+            return Response({'error': 'ends_at: End month must be on or after start month.'}, status=400)
 
         if class_id:
             student_ids = list(Student.objects.filter(

@@ -105,6 +105,7 @@ export interface FeeWaiver {
   value: number;
   reason: string | null;
   approvedBy: string | null;
+  approvalStatus?: string | null;
   active: boolean;
   startsAt: string | null;
   endsAt: string | null;

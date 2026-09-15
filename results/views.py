@@ -205,12 +205,56 @@ class ResultViewSet(viewsets.ModelViewSet):
                 detail = first[0] if isinstance(first, list) else first
             return str(detail)[:200]
 
+        # Prefetch everything the loop needs in 3 queries (was 2+N per
+        # item: one Student lookup, one Result lookup and one Subject
+        # limits lookup per item inside serializer validation).
+        import uuid as _uuid
+        sid_strs = []
+        for item in items:
+            sid = item.get('student') if isinstance(item, dict) else None
+            if sid:
+                try:
+                    sid_strs.append(str(_uuid.UUID(str(sid))))
+                except (ValueError, TypeError, AttributeError):
+                    pass
+        students_by_id = (
+            {str(s.id): s for s in Student.objects.select_related(
+                'school_class').filter(id__in=sid_strs)}
+            if sid_strs else {}
+        )
+        results_by_sid = (
+            {str(r.student_id): r for r in Result.objects.filter(
+                student_id__in=list(students_by_id.keys()),
+                term=term, session=session).select_related('student')}
+            if students_by_id else {}
+        )
+        class_ids = {
+            s.school_class_id for s in students_by_id.values()
+            if s.school_class_id
+        }
+        limits_by_class = {}
+        if class_ids:
+            from core.models import Subject
+            for sc_id, name, full in Subject.objects.filter(
+                school_class_id__in=class_ids,
+            ).values_list('school_class_id', 'name', 'full_marks'):
+                limits_by_class.setdefault(sc_id, {})[name] = full
+
+        def _serializer(instance, student, data, partial):
+            ctx = self.get_serializer_context()
+            ctx['subject_limits'] = limits_by_class.get(student.school_class_id, {})
+            return self.get_serializer(instance, data=data, partial=partial, context=ctx)
+
         for item in items:
             sid = item.get('student') if isinstance(item, dict) else None
             try:
                 if not sid:
                     raise ValidationError('Missing student.')
-                student = Student.objects.filter(id=sid).first()
+                try:
+                    sid_key = str(_uuid.UUID(str(sid)))
+                except (ValueError, TypeError, AttributeError):
+                    sid_key = str(sid)
+                student = students_by_id.get(sid_key)
                 if not student:
                     raise ValidationError('Student not found.')
                 data = {'student': str(student.id), 'session': session, 'term': term}
@@ -219,10 +263,9 @@ class ResultViewSet(viewsets.ModelViewSet):
                         data[key] = item[key]
                 marks = data.get('marks') or {}
                 _reject_if_locked(request.user, student.school_class_id, session, term)
-                instance = Result.objects.filter(
-                    student=student, term=term, session=session).first()
-                serializer = self.get_serializer(
-                    instance, data=data, partial=bool(instance))
+                instance = results_by_sid.get(str(student.id))
+                serializer = _serializer(
+                    instance, student, data=data, partial=bool(instance))
                 serializer.is_valid(raise_exception=True)
                 # Mass-clear guard BEFORE the empty-skip below: an all-null
                 # wipe must 403, not slip through as "nothing to do".
@@ -246,8 +289,10 @@ class ResultViewSet(viewsets.ModelViewSet):
                             student=student, term=term, session=session).first()
                         if instance is None:
                             raise
+                        ctx = self.get_serializer_context()
+                        ctx['subject_limits'] = limits_by_class.get(student.school_class_id, {})
                         serializer = self.get_serializer(
-                            instance, data=data, partial=True)
+                            instance, data=data, partial=True, context=ctx)
                         serializer.is_valid(raise_exception=True)
                         self._apply_validated_save(serializer, instance, request)
                 else:

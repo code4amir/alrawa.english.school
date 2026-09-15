@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../../store';
 import { SCHOOL_LOGO } from '../../lib/logo';
 import { usePushSubscription } from '../../lib/usePushSubscription';
@@ -22,8 +22,11 @@ const tabs = [
 
 export default function ParentLayout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, logout } = useAuthStore();
-  const currentPath = window.location.hash.replace('#', '');
+  // Subscribe to router location (not window.location.hash) so the active
+  // tab highlight re-renders on every in-app navigation under HashRouter.
+  const currentPath = location.pathname;
   usePushSubscription();
 
   const isActive = (path: string) =>

@@ -123,3 +123,21 @@ class StudentServiceToggleSerializer(serializers.Serializer):
     active = serializers.BooleanField()
     starts_at = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     ends_at = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
+    def validate(self, data):
+        import re as _re
+        month_re = _re.compile(r'^\d{4}-(0[1-9]|1[0-2])$')
+
+        def _check(value, field):
+            if value in (None, ''):
+                return
+            if not month_re.match(str(value)):
+                raise serializers.ValidationError({field: 'Expected YYYY-MM.'})
+
+        _check(data.get('starts_at'), 'starts_at')
+        _check(data.get('ends_at'), 'ends_at')
+        if data.get('starts_at') and data.get('ends_at'):
+            if data['starts_at'] > data['ends_at']:
+                raise serializers.ValidationError(
+                    {'ends_at': 'End month must be on or after start month.'})
+        return data

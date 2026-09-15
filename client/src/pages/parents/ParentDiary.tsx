@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../../store';
+import Toast, { toast } from '../../components/Toast';
 import { Loader2, BookText } from 'lucide-react';
 
 interface DiaryItem {
@@ -19,29 +20,36 @@ export default function ParentDiary() {
   useEffect(() => {
     api.get('/parents/diary/')
       .then((res) => setItems(res.data))
-      .catch(() => {})
+      .catch(() => toast('Failed to load diary entries', 'error'))
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) {
     return (
-      <div className="flex justify-center py-20">
-        <Loader2 size={28} className="animate-spin text-school-muted" />
-      </div>
+      <>
+        <Toast />
+        <div className="flex justify-center py-20">
+          <Loader2 size={28} className="animate-spin text-school-muted" />
+        </div>
+      </>
     );
   }
 
   if (items.length === 0) {
     return (
-      <div className="text-center py-20 text-school-muted text-sm">
-        <BookText size={40} className="mx-auto mb-3 opacity-40" />
-        No diary entries yet
-      </div>
+      <>
+        <Toast />
+        <div className="text-center py-20 text-school-muted text-sm">
+          <BookText size={40} className="mx-auto mb-3 opacity-40" />
+          No diary entries yet
+        </div>
+      </>
     );
   }
 
   return (
     <div className="space-y-3 animate-fade-in">
+      <Toast />
       {items.map((entry) => (
         <div key={entry.id} className="bg-white dark:bg-[#1a1a2e] rounded-2xl border border-school-border dark:border-[#2a2a3e] p-4 shadow-sm">
           <div className="flex items-center gap-2 mb-1">

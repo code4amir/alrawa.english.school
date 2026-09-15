@@ -49,7 +49,7 @@ export default function ReconciliationTab() {
     try {
       const res = await api.get('/finance/reconciliations');
       setRecords(res.data.results || res.data.data || res.data);
-    } catch { /* empty */ }
+    } catch { toast('Failed to load reconciliations', 'error'); }
     finally { setLoading(false); }
   };
 

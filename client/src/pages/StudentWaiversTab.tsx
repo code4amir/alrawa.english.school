@@ -2,7 +2,25 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSchoolStore, api } from '../store';
 import { X, Shield, Search } from 'lucide-react';
 import { toast } from '../components/Toast';
+import { waiverExpectedAmount } from '../lib/waivers';
 import type { FeeWaiver, SchoolClass } from '../lib/types';
+
+type WaiverType = 'PERCENTAGE' | 'CUSTOM_AMOUNT';
+
+// Client-side bounds mirror finance/serializers.py::FeeWaiverSerializer:
+// PERCENTAGE value is a discount % (0–100); CUSTOM_AMOUNT value is the
+// amount the student pays and cannot exceed the schedule's full fee.
+function waiverBoundsError(type: string, raw: string, base: number): string | null {
+  const v = Number(raw);
+  if (raw === '' || isNaN(v)) return 'Enter a value';
+  if (type === 'PERCENTAGE') {
+    if (v < 0 || v > 100) return 'Percentage must be between 0 and 100';
+  } else {
+    if (v < 0) return 'Amount cannot be negative';
+    if (base > 0 && v > base) return `Cannot exceed full fee (${base.toLocaleString()})`;
+  }
+  return null;
+}
 
 const StudentWaiversTab = () => {
   const { classes, students, feeSchedules: schedules, fetchClasses, fetchStudents, fetchFeeSchedules } = useSchoolStore();
@@ -15,12 +33,14 @@ const StudentWaiversTab = () => {
   const [activeWaivers, setActiveWaivers] = useState<FeeWaiver[]>([]);
   const [activeLoading, setActiveLoading] = useState(true);
   const [selectedScheduleId, setSelectedScheduleId] = useState('');
+  const [waiverType, setWaiverType] = useState<WaiverType>('CUSTOM_AMOUNT');
   const [expectedAmount, setExpectedAmount] = useState('');
   const [reason, setReason] = useState('');
   const [approvedBy, setApprovedBy] = useState('');
   const [waiverSearch, setWaiverSearch] = useState('');
   const [studentSearch, setStudentSearch] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editType, setEditType] = useState<WaiverType>('CUSTOM_AMOUNT');
   const [editExpected, setEditExpected] = useState('');
   const [editReason, setEditReason] = useState('');
   const [editApprovedBy, setEditApprovedBy] = useState('');
@@ -42,6 +62,7 @@ const StudentWaiversTab = () => {
   const loadData = useCallback(async () => {
     if (!selectedStudent) return;
     setSelectedScheduleId('');
+    setWaiverType('CUSTOM_AMOUNT');
     setExpectedAmount('');
     setReason('');
     setApprovedBy('');
@@ -85,6 +106,7 @@ const StudentWaiversTab = () => {
   const handleScheduleChange = (id: string) => {
     setSelectedScheduleId(id);
     const existing = getWaiver(id);
+    setWaiverType((existing?.type as WaiverType) || 'CUSTOM_AMOUNT');
     setExpectedAmount(existing ? String(existing.value) : '');
     setReason(existing?.reason || '');
     setApprovedBy(existing?.approvedBy || '');
@@ -92,10 +114,13 @@ const StudentWaiversTab = () => {
 
   const saveWaiver = async () => {
     if (!selectedScheduleId || !expectedAmount) { toast('Select a fee category and enter expected amount', 'error'); return; }
+    const schedAmt = selectedSched ? Number(selectedSched.amount) : 0;
+    const boundsErr = waiverBoundsError(waiverType, expectedAmount, schedAmt);
+    if (boundsErr) { toast(boundsErr, 'error'); return; }
     setSaving(true);
     try {
       await api.post('/finance/fee-waivers/', {
-        student: selectedStudent, feeSchedule: selectedScheduleId, value: Number(expectedAmount), reason, approvedBy,
+        student: selectedStudent, feeSchedule: selectedScheduleId, type: waiverType, value: Number(expectedAmount), reason, approvedBy,
       });
       toast('Waiver saved', 'success');
       await loadData();
@@ -115,6 +140,7 @@ const StudentWaiversTab = () => {
 
   const editWaiver = (w: FeeWaiver) => {
     setEditingId(w.id);
+    setEditType((w.type as WaiverType) || 'CUSTOM_AMOUNT');
     setEditExpected(String(w.value));
     setEditReason(w.reason || '');
     setEditApprovedBy(w.approvedBy || '');
@@ -122,6 +148,7 @@ const StudentWaiversTab = () => {
 
   const cancelEdit = () => {
     setEditingId(null);
+    setEditType('CUSTOM_AMOUNT');
     setEditExpected('');
     setEditReason('');
     setEditApprovedBy('');
@@ -129,19 +156,41 @@ const StudentWaiversTab = () => {
 
   const saveInline = async (w: FeeWaiver) => {
     if (!editExpected) { toast('Enter expected amount', 'error'); return; }
+    const boundsErr = waiverBoundsError(editType, editExpected, Number(w.feeScheduleAmount || 0));
+    if (boundsErr) { toast(boundsErr, 'error'); return; }
+    // Atomic edit: the (student, feeSchedule) unique constraint forbids a
+    // second row, so deactivate the old waiver, create the replacement, and
+    // ROLL BACK (re-activate the original) if the create fails — the waiver
+    // must never be silently lost.
     try {
       await api.post(`/finance/fee-waivers/${w.id}/deactivate/`, {});
-      await api.post('/finance/fee-waivers/', {
-        student: w.student, feeSchedule: w.feeSchedule, value: Number(editExpected), reason: editReason || w.reason, approvedBy: editApprovedBy || w.approvedBy,
-      });
+      try {
+        await api.post('/finance/fee-waivers/', {
+          student: w.student, feeSchedule: w.feeSchedule, type: editType, value: Number(editExpected), reason: editReason || w.reason, approvedBy: editApprovedBy || w.approvedBy,
+        });
+      } catch (createErr) {
+        const restored = await api.patch(`/finance/fee-waivers/${w.id}/`, { active: true }).then(() => true).catch(() => false);
+        toast(restored ? 'Failed to update — original waiver restored' : 'Failed to update AND original waiver could not be restored — contact admin', 'error');
+        return;
+      }
       toast('Waiver updated', 'success');
       setEditingId(null);
+      setEditType('CUSTOM_AMOUNT');
       setEditExpected('');
       setEditReason('');
       setEditApprovedBy('');
       await loadActiveWaivers();
       await loadData();
     } catch { toast('Failed to update', 'error'); }
+  };
+
+  const approveWaiver = async (waiverId: string) => {
+    try {
+      await api.post(`/finance/fee-waivers/${waiverId}/approve/`, {});
+      toast('Waiver approved', 'success');
+      await loadData();
+      await loadActiveWaivers();
+    } catch { toast('Failed to approve', 'error'); }
   };
 
   const manageRef = useRef<HTMLDivElement>(null);
@@ -154,7 +203,8 @@ const StudentWaiversTab = () => {
   const selectedSched = activeSchedules.find(s => s.id === selectedScheduleId);
   const existingWaiver = getWaiver(selectedScheduleId);
   const baseAmt = selectedSched ? Number(selectedSched.amount) : 0;
-  const expectedVal = Number(expectedAmount) || 0;
+  const expectedVal = waiverExpectedAmount(
+    selectedScheduleId ? { type: waiverType, value: Number(expectedAmount) || 0 } : null, baseAmt);
   const waiverAmt = Math.max(0, baseAmt - expectedVal);
 
   return (
@@ -197,8 +247,10 @@ const StudentWaiversTab = () => {
                 <tbody className="divide-y divide-school-border/50">
                   {filteredActiveWaivers.map((w) => {
                   const fullFee = Number(w.feeScheduleAmount || 0);
-                  const expected = Number(w.value);
+                  // PERCENTAGE value is a discount %, not the payable amount.
+                  const expected = waiverExpectedAmount(w, fullFee);
                   const waiverVal = Math.max(0, fullFee - expected);
+                  const isApproved = String((w as any).approvalStatus ?? (w as any).approval_status ?? '').toLowerCase() === 'approved';
                   const isEditing = editingId === w.id;
                   return (
                     <tr key={w.id} className={`hover:bg-school-paper/30 transition-colors ${isEditing ? 'bg-blue-50/50' : ''}`}>
@@ -207,11 +259,18 @@ const StudentWaiversTab = () => {
                       <td data-label="Full Fee" className="px-4 py-2.5 text-right font-mono text-xs">{fullFee.toLocaleString()}</td>
                       <td data-label="Student Pays" className="px-4 py-2.5 text-right font-mono text-xs font-bold text-emerald-600">
                         {isEditing ? (
-                          <input type="number" min="0" value={editExpected} autoFocus
-                            onChange={e => setEditExpected(e.target.value)}
-                            className="w-24 text-right border border-blue-300 rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-blue-500"
-                            onKeyDown={e => { if (e.key === 'Enter') saveInline(w); if (e.key === 'Escape') cancelEdit(); }} />
-                        ) : expected.toLocaleString()}
+                          <span className="inline-flex flex-col items-end gap-1">
+                            <select value={editType} onChange={e => setEditType(e.target.value as WaiverType)} aria-label="Waiver type"
+                              className="border border-blue-300 rounded px-1 py-0.5 text-[10px] font-sans focus:outline-none focus:border-blue-500">
+                              <option value="CUSTOM_AMOUNT">Amount (pays)</option>
+                              <option value="PERCENTAGE">% off</option>
+                            </select>
+                            <input type="number" min="0" max={editType === 'PERCENTAGE' ? '100' : undefined} value={editExpected} autoFocus
+                              onChange={e => setEditExpected(e.target.value)}
+                              className="w-24 text-right border border-blue-300 rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-blue-500"
+                              onKeyDown={e => { if (e.key === 'Enter') saveInline(w); if (e.key === 'Escape') cancelEdit(); }} />
+                          </span>
+                        ) : <>{expected.toLocaleString()}{w.type === 'PERCENTAGE' ? <span className="text-[10px] text-school-muted"> ({Number(w.value)}% off)</span> : null}</>}
                       </td>
                       <td data-label="Waived Amount" className="px-4 py-2.5 text-right font-mono text-xs text-rose-500">{waiverVal.toLocaleString()}</td>
                       <td data-label="Reason" className="px-4 py-2.5 text-xs text-school-muted">
@@ -233,7 +292,13 @@ const StudentWaiversTab = () => {
                             </button>
                           </div>
                         ) : (
-                          <div className="flex items-center justify-center gap-1">
+                          <div className="flex items-center justify-center gap-1 flex-wrap">
+                            {!isApproved && (
+                              <button onClick={() => approveWaiver(w.id)}
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold bg-emerald-100 text-emerald-700 hover:bg-emerald-200">
+                                Approve
+                              </button>
+                            )}
                             <button onClick={() => editWaiver(w)}
                               className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold bg-blue-100 text-blue-700 hover:bg-blue-200">
                               Edit
@@ -335,9 +400,21 @@ const StudentWaiversTab = () => {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="text-[10px] font-bold uppercase text-school-muted mb-1 block">Student Pays</label>
-                    <input type="number" min="0" value={expectedAmount} onChange={e => setExpectedAmount(e.target.value)}
-                      placeholder="e.g. 500" className="w-full border border-school-border rounded-lg px-3 py-2 text-sm" />
+                    <label className="text-[10px] font-bold uppercase text-school-muted mb-1 block">Waiver Type</label>
+                    <select value={waiverType} onChange={e => setWaiverType(e.target.value as WaiverType)}
+                      className="w-full border border-school-border rounded-lg px-3 py-2 text-sm bg-white">
+                      <option value="CUSTOM_AMOUNT">Fixed amount (student pays)</option>
+                      <option value="PERCENTAGE">Percentage discount</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase text-school-muted mb-1 block">
+                      {waiverType === 'PERCENTAGE' ? 'Discount % (0–100)' : 'Student Pays'}
+                    </label>
+                    <input type="number" min="0" max={waiverType === 'PERCENTAGE' ? '100' : undefined}
+                      value={expectedAmount} onChange={e => setExpectedAmount(e.target.value)}
+                      placeholder={waiverType === 'PERCENTAGE' ? 'e.g. 50' : 'e.g. 500'}
+                      className="w-full border border-school-border rounded-lg px-3 py-2 text-sm" />
                   </div>
                   <div>
                     <label className="text-[10px] font-bold uppercase text-school-muted mb-1 block">Reason</label>

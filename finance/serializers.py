@@ -1,4 +1,6 @@
 from rest_framework import serializers
+from decimal import Decimal
+import re
 from .models import (
     Transaction, FeeSchedule, FeeWaiver, StudentFeeAssignment,
     PaymentAllocation, ReceiptCounter, OpeningBalance,
@@ -6,6 +8,15 @@ from .models import (
     BankAccount, AccountBalance,
 )
 from core.camelcase import CamelCaseModelSerializer
+
+MONTH_RE = re.compile(r'^\d{4}-(0[1-9]|1[0-2])$')
+
+
+def _validate_month_string(value, field_name):
+    if value in (None, ''):
+        return
+    if not MONTH_RE.match(str(value)):
+        raise serializers.ValidationError({field_name: 'Expected YYYY-MM.'})
 
 
 class TransactionSerializer(CamelCaseModelSerializer):
@@ -36,6 +47,11 @@ class TransactionSerializer(CamelCaseModelSerializer):
                             'receipt_sequence', 'reference_id', 'token_number',
                             'affects_income_ledger', 'affects_expense_ledger',
                             'approved_by']
+
+    def validate_amount(self, value):
+        if value is None or Decimal(str(value)) <= 0:
+            raise serializers.ValidationError('Amount must be greater than zero.')
+        return value
 
 
 class TransactionCancelSerializer(serializers.Serializer):
@@ -82,7 +98,16 @@ class FeeWaiverSerializer(CamelCaseModelSerializer):
                   'feeScheduleAmount', 'type', 'value', 'reason', 'approved_by',
                   'approved_at', 'approval_status', 'active', 'starts_at',
                   'ends_at', 'created_at']
-        read_only_fields = ['id', 'created_at', 'approved_at']
+        read_only_fields = ['id', 'created_at', 'approved_by', 'approved_at']
+
+    def validate(self, data):
+        waiver_type = data.get('type', getattr(self.instance, 'type', None))
+        value = data.get('value', getattr(self.instance, 'value', None))
+        if waiver_type == 'PERCENTAGE' and value is not None:
+            if Decimal(str(value)) > 100:
+                raise serializers.ValidationError(
+                    {'value': 'Percentage waiver cannot exceed 100.'})
+        return data
 
 
 class StudentFeeAssignmentSerializer(CamelCaseModelSerializer):
@@ -110,6 +135,13 @@ class StudentFeeAssignmentToggleSerializer(serializers.Serializer):
                 raise serializers.ValidationError({'startsAt': 'Start month is required when activating an assignment.'})
             if not data.get('endsAt'):
                 raise serializers.ValidationError({'endsAt': 'End month is required when activating an assignment.'})
+            _validate_month_string(data.get('startsAt'), 'startsAt')
+            _validate_month_string(data.get('endsAt'), 'endsAt')
+            if data.get('startsAt') and data.get('endsAt') and data['startsAt'] > data['endsAt']:
+                raise serializers.ValidationError({'endsAt': 'End month must be on or after start month.'})
+        else:
+            _validate_month_string(data.get('startsAt'), 'startsAt')
+            _validate_month_string(data.get('endsAt'), 'endsAt')
             if data.get('startsAt') and data.get('endsAt') and data['startsAt'] > data['endsAt']:
                 raise serializers.ValidationError({'endsAt': 'End month must be on or after start month.'})
         return data
@@ -128,6 +160,13 @@ class BulkAssignSerializer(serializers.Serializer):
                 raise serializers.ValidationError({'startsAt': 'Start month is required when activating assignments.'})
             if not data.get('endsAt'):
                 raise serializers.ValidationError({'endsAt': 'End month is required when activating assignments.'})
+            _validate_month_string(data.get('startsAt'), 'startsAt')
+            _validate_month_string(data.get('endsAt'), 'endsAt')
+            if data.get('startsAt') and data.get('endsAt') and data['startsAt'] > data['endsAt']:
+                raise serializers.ValidationError({'endsAt': 'End month must be on or after start month.'})
+        else:
+            _validate_month_string(data.get('startsAt'), 'startsAt')
+            _validate_month_string(data.get('endsAt'), 'endsAt')
             if data.get('startsAt') and data.get('endsAt') and data['startsAt'] > data['endsAt']:
                 raise serializers.ValidationError({'endsAt': 'End month must be on or after start month.'})
         return data

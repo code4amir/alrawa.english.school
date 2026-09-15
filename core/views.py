@@ -2,7 +2,7 @@ import logging
 from rest_framework import viewsets, status, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import NotFound, ValidationError
 from django.db.models import Count, Q, Subquery, OuterRef
 from .models import SchoolClass, Subject, AcademicYear, SchoolSetting, AuditLog, Category, ServiceType, AgentFinding
 from students.models import Student
@@ -18,6 +18,14 @@ from .services import promote_all as promote_all_service, auto_create_fee_schedu
 from .audit import log_audit, AuditLogMixin
 
 logger = logging.getLogger(__name__)
+
+def _scheduler_job_id(pk):
+    """Coerce a scheduler URL pk to int; non-integer ids are 404, not 502."""
+    try:
+        return int(pk)
+    except (ValueError, TypeError):
+        raise NotFound('Scheduled task not found')
+
 
 class ClassViewSet(AuditLogMixin, viewsets.ModelViewSet):
     queryset = SchoolClass.objects.annotate(
@@ -368,8 +376,9 @@ class SchedulerViewSet(viewsets.ViewSet):
 
     def retrieve(self, request, pk=None):
         from . import scheduler as svc
+        job_id = _scheduler_job_id(pk)
         try:
-            job = svc.get_job(int(pk))
+            job = svc.get_job(job_id)
             return Response(job.to_public())
         except svc.SchedulerConfigError as exc:
             return Response({'configured': False, 'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
@@ -401,9 +410,10 @@ class SchedulerViewSet(viewsets.ViewSet):
     def update(self, request, pk=None):
         from . import scheduler as svc
         data = request.data
+        job_id = _scheduler_job_id(pk)
         try:
             job = svc.update_job(
-                int(pk),
+                job_id,
                 crontab_syntax=data.get('crontabSyntax') or data.get('crontab_syntax'),
                 argument=data.get('argument'),
                 ssh_user=data.get('sshUser') or data.get('ssh_user'),
@@ -422,8 +432,9 @@ class SchedulerViewSet(viewsets.ViewSet):
 
     def destroy(self, request, pk=None):
         from . import scheduler as svc
+        job_id = _scheduler_job_id(pk)
         try:
-            svc.delete_job(int(pk))
+            svc.delete_job(job_id)
             log_audit('delete', 'scheduled_task', entity_id=pk, request=request)
             return Response(status=status.HTTP_204_NO_CONTENT)
         except svc.SchedulerConfigError as exc:
@@ -435,8 +446,9 @@ class SchedulerViewSet(viewsets.ViewSet):
     @action(detail=True, methods=['post'])
     def run(self, request, pk=None):
         from . import scheduler as svc
+        job_id = _scheduler_job_id(pk)
         try:
-            job = svc.get_job(int(pk))
+            job = svc.get_job(job_id)
         except svc.SchedulerConfigError as exc:
             return Response({'configured': False, 'error': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         except Exception as exc:

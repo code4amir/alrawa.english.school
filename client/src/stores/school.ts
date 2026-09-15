@@ -47,10 +47,10 @@ interface SchoolState {
   fetchBooks: (params?: Record<string, string>, force?: boolean) => Promise<void>;
   setBookPage: (page: number) => void;
   fetchSubjects: (classId: string) => Promise<void>;
-  fetchFinance: () => Promise<void>;
+  fetchFinance: (force?: boolean) => Promise<void>;
   fetchTransactions: (params?: Record<string, string>) => Promise<void>;
   dashboardSummary: { totalIncome: number; totalDepositedToBank: number; depositRemaining: number };
-  fetchDashboardSummary: (fiscalYear?: string) => Promise<void>;
+  fetchDashboardSummary: (fiscalYear?: string, force?: boolean) => Promise<void>;
   fetchFeeSchedules: (force?: boolean) => Promise<void>;
   fetchOpeningBalances: (year?: string) => Promise<void>;
   setOpeningBalances: (year: string, balances: Record<string, number>) => Promise<void>;
@@ -251,10 +251,10 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
       set({ subjects: res.data.results || res.data.data || res.data, _fetchedAt: { ...get()._fetchedAt, [key]: Date.now() } });
     } catch (e) { if (import.meta.env.DEV) console.warn("[store]", e); }
   },
-  fetchFinance: async () => {
+  fetchFinance: async (force?: boolean) => {
     const key = 'finance';
     const now = Date.now();
-    if (now - (get()._fetchedAt[key] || 0) < CACHE_TTL) return;
+    if (!force && now - (get()._fetchedAt[key] || 0) < CACHE_TTL) return;
     set((s) => ({ loading: { ...s.loading, finance: true } }));
     try { const res = await dedupedFetch(key, () => api.get('/finance/balances/')); set({ balances: res.data, _fetchedAt: { ...get()._fetchedAt, [key]: Date.now() } }); } catch (e) { if (import.meta.env.DEV) console.warn("[store]", e); }
     finally { set((s) => ({ loading: { ...s.loading, finance: false } })); }
@@ -297,10 +297,10 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
     finally { set((s) => ({ loading: { ...s.loading, transactions: false } })); }
   },
 
-  fetchDashboardSummary: async (fiscalYear?: string) => {
+  fetchDashboardSummary: async (fiscalYear?: string, force?: boolean) => {
     const key = `dashboardSummary_${fiscalYear || ''}`;
     const now = Date.now();
-    if (now - (get()._fetchedAt[key] || 0) < CACHE_TTL) return;
+    if (!force && now - (get()._fetchedAt[key] || 0) < CACHE_TTL) return;
     try {
       const res = await dedupedFetch(key, () => api.get('/finance/dashboard-summary/', { params: { fiscalYear } }));
       set({ dashboardSummary: res.data, _fetchedAt: { ...get()._fetchedAt, [key]: Date.now() } });
@@ -376,7 +376,7 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
 
   createClass: async (name: string) => {
     const res = await api.post('/classes/', { name });
-    await get().fetchClasses();
+    await get().fetchClasses(true);
     return res.data;
   },
   deleteClass: async (id: string) => {

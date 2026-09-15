@@ -248,8 +248,19 @@ def _check_period_open(fiscal_year):
 
 def _fiscal_year_from_date(dt):
     """Calculate fiscal year from a date using September start (month > 8 → fy = year+1).
-    FISCAL_YEAR_START_MONTH is 0-indexed (8=Sep in JS), so compare with dt.month (> not >=)."""
+    FISCAL_YEAR_START_MONTH is 0-indexed (8=Sep in JS), so compare with dt.month (> not >=).
+    Accepts date/datetime objects or 'YYYY-MM-DD' strings."""
     from school_management.settings import FISCAL_YEAR_START_MONTH
+    if isinstance(dt, str):
+        from datetime import date as _date, datetime as _dt
+        try:
+            dt = _dt.fromisoformat(dt)
+        except ValueError:
+            dt = _date.fromisoformat(dt[:10])
+    else:
+        import datetime as _mod
+        if isinstance(dt, _mod.datetime):
+            dt = dt.date()
     return dt.year + 1 if dt.month > FISCAL_YEAR_START_MONTH else dt.year
 
 

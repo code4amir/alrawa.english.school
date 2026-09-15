@@ -35,6 +35,11 @@ export default function EnterByStudent() {
   const attendanceRef = useRef(attendance);
   const commentRef = useRef(comment);
   const sessionRef = useRef(sessionFilter);
+  // Delta-only autosave: attendance/comment are sent ONLY when the teacher
+  // actually edited them this session (pass undefined otherwise) so one
+  // teacher's autosave never clobbers a colleague's concurrent edits.
+  const attendanceEditedRef = useRef(false);
+  const commentEditedRef = useRef(false);
 
   useEffect(() => { marksRef.current = marks; }, [marks]);
   useEffect(() => { attendanceRef.current = attendance; }, [attendance]);
@@ -87,6 +92,9 @@ export default function EnterByStudent() {
     if (result?.marks) { const m: Record<string, string> = {}; Object.entries(result.marks).forEach(([k, v]) => { m[k] = String(v); }); setMarks(m); } else { setMarks({}); }
     if (result?.attendance) { setAttendance({ days: String(result.attendance.days || ''), present: String(result.attendance.present || '') }); } else { setAttendance({ days: '', present: '' }); }
     setComment(result?.comment || '');
+    // Fresh student/term: prefilled values are NOT edits — clear delta flags.
+    attendanceEditedRef.current = false;
+    commentEditedRef.current = false;
   }, [activeStudent, activeTerm, allResults.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const ranks = useMemo(() => activeStudent ? calcTermRanks(clsStudents, activeTerm, subjects, allResults) : {}, [activeStudent, clsStudents, activeTerm, subjects, allResults]);
@@ -110,13 +118,21 @@ export default function EnterByStudent() {
     setSaveStatus('saving'); clearTimeout(statusTimer.current);
     const m = marksRef.current;
     const marksData: Record<string, number> = {};
-    subjects.forEach((sub: any) => { const v = m[sub.name]; if (v !== '' && v !== undefined && !isNaN(+v)) marksData[sub.name] = Math.min(+v, sub.fullMarks); });
-    const days = parseInt(attendanceRef.current.days) || 0;
-    const present = parseInt(attendanceRef.current.present) || 0;
-    if (days < 0 || present < 0) { toast('Attendance values cannot be negative', 'error'); setSaveStatus(''); return; }
-    if (days > 0 && present > days) { toast('Days present cannot exceed total days', 'error'); setSaveStatus(''); return; }
-    const attendanceData = days > 0 ? { days, present } : undefined;
-    await saveStudentResult(activeStudent.id, activeTerm, marksData, attendanceData, commentRef.current, sessionRef.current);
+    subjects.forEach((sub: any) => { const v = m[sub.name]; if (v !== '' && v !== undefined && !isNaN(+v)) marksData[sub.name] = Math.max(0, Math.min(+v, sub.fullMarks)); });
+    // Delta-only: attendance/comment travel ONLY when edited (undefined =
+    // backend keeps the stored value). Validates only the edited payload.
+    let attendanceData: { days: number; present: number } | null | undefined;
+    if (attendanceEditedRef.current) {
+      const days = parseInt(attendanceRef.current.days) || 0;
+      const present = parseInt(attendanceRef.current.present) || 0;
+      if (days < 0 || present < 0) { toast('Attendance values cannot be negative', 'error'); setSaveStatus(''); return; }
+      if (days > 0 && present > days) { toast('Days present cannot exceed total days', 'error'); setSaveStatus(''); return; }
+      attendanceData = days > 0 ? { days, present } : null;
+    }
+    const commentData = commentEditedRef.current ? commentRef.current : undefined;
+    await saveStudentResult(activeStudent.id, activeTerm, marksData, attendanceData, commentData, sessionRef.current);
+    attendanceEditedRef.current = false;
+    commentEditedRef.current = false;
     setHasUnsavedChanges(false);
     setSaveStatus('saved'); statusTimer.current = setTimeout(() => setSaveStatus(''), 2000);
   };
@@ -236,14 +252,14 @@ export default function EnterByStudent() {
           <div className="bg-white rounded-2xl border border-school-border p-4">
             <h4 className="font-bold text-sm mb-3 flex items-center gap-1.5"><CalendarDays size={16} /> Attendance</h4>
             <div className="grid grid-cols-3 gap-3">
-              <div><label className="text-xs text-school-muted mb-1 block">Total Days</label><input type="number" min="0" value={attendance.days} onChange={(e) => { setAttendance({ ...attendance, days: e.target.value }); setHasUnsavedChanges(true); }} placeholder="200" className="w-full px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none focus:border-school-accent" /></div>
-              <div><label className="text-xs text-school-muted mb-1 block">Days Present</label><input type="number" min="0" value={attendance.present} onChange={(e) => { setAttendance({ ...attendance, present: e.target.value }); setHasUnsavedChanges(true); }} placeholder="185" className="w-full px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none focus:border-school-accent" /></div>
+              <div><label className="text-xs text-school-muted mb-1 block">Total Days</label><input type="number" min="0" value={attendance.days} onChange={(e) => { setAttendance({ ...attendance, days: e.target.value }); attendanceEditedRef.current = true; setHasUnsavedChanges(true); }} placeholder="200" className="w-full px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none focus:border-school-accent" /></div>
+              <div><label className="text-xs text-school-muted mb-1 block">Days Present</label><input type="number" min="0" value={attendance.present} onChange={(e) => { setAttendance({ ...attendance, present: e.target.value }); attendanceEditedRef.current = true; setHasUnsavedChanges(true); }} placeholder="185" className="w-full px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none focus:border-school-accent" /></div>
               <div><label className="text-xs text-school-muted mb-1 block">Attendance</label><div className="px-3 py-2 bg-school-paper rounded-xl text-sm font-bold text-center">{attendPct}</div></div>
             </div>
           </div>
           <div className="bg-white rounded-2xl border border-school-border p-4">
             <h4 className="font-bold text-sm mb-3 flex items-center gap-1.5"><MessageSquare size={16} /> Teacher's Comment</h4>
-            <textarea value={comment} onChange={(e) => { setHasUnsavedChanges(true); setComment(e.target.value); commentRef.current = e.target.value; clearTimeout(saveTimer.current); saveTimer.current = setTimeout(() => { save().catch((err) => { console.error('Auto-save failed', err?.response?.data || err); toast('Auto-save failed — press Save to retry', 'error'); setSaveStatus(''); }); }, 500); }} rows={3} placeholder="Write about the student's performance…" className="w-full px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none focus:border-school-accent resize-none" />
+            <textarea value={comment} onChange={(e) => { setHasUnsavedChanges(true); setComment(e.target.value); commentRef.current = e.target.value; commentEditedRef.current = true; clearTimeout(saveTimer.current); saveTimer.current = setTimeout(() => { save().catch((err) => { console.error('Auto-save failed', err?.response?.data || err); toast('Auto-save failed — press Save to retry', 'error'); setSaveStatus(''); }); }, 500); }} rows={3} placeholder="Write about the student's performance…" className="w-full px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none focus:border-school-accent resize-none" />
           </div>
         </div>
       )}

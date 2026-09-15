@@ -13,15 +13,16 @@ async function loadJsPDF() {
 }
 
 export default function AllReportCardsTab() {
-  const { students, fetchStudents, subjects, fetchSubjects, academicYears, fetchAcademicYears, classResults, fetchClassResults } = useSchoolStore();
+  const { students, fetchStudents, fetchSubjects, academicYears, fetchAcademicYears, fetchClassResults } = useSchoolStore();
   const [cls, setCls] = useState<any>(null);
-  const [allResults, setAllResults] = useState<any[]>([]);
+  const [, setAllResults] = useState<any[]>([]);
   const [sessionFilter, setSessionFilter] = useState('');
 
   const loadResults = async (clsId: string) => {
     const key = `${clsId}-${sessionFilter}`;
-    const invalidated = useSchoolStore.getState()._fetchedAt[`classResults_${key}`] === 0;
-    if (classResults[key] && !invalidated) { setAllResults(classResults[key]); return; }
+    const st = useSchoolStore.getState();
+    const invalidated = st._fetchedAt[`classResults_${key}`] === 0;
+    if (st.classResults[key] && !invalidated) { setAllResults(st.classResults[key]); return; }
     await fetchClassResults(clsId, sessionFilter);
     setAllResults(useSchoolStore.getState().classResults[key] || []);
   };
@@ -39,11 +40,28 @@ export default function AllReportCardsTab() {
   const clsStudents = cls ? students.filter((s: any) => s.class === cls.name).sort((a: any, b: any) => (+a.roll || 999) - (+b.roll || 999) || a.name.localeCompare(b.name)) : [];
 
   const downloadAll = async (term: string) => {
-    if (!clsStudents.length) { toast('No students', 'error'); return; }
-    toast(`Generating ${clsStudents.length} report cards…`, 'info');
+    if (!cls) { toast('Select a class first', 'error'); return; }
+    // Await class data (students/subjects/results) BEFORE building PDFs:
+    // the select-time fetches are fire-and-forget, so the store snapshots
+    // may be stale/empty when the teacher clicks immediately after picking
+    // a class. Read fresh state after the awaits (never the closure copies).
+    toast('Loading class data…', 'info');
+    await Promise.all([
+      fetchSubjects(cls.id),
+      fetchStudents({ className: cls.name }, true),
+      loadResults(cls.id),
+    ]);
+    const fresh = useSchoolStore.getState();
+    const freshStudents = fresh.students
+      .filter((s: any) => s.class === cls.name)
+      .sort((a: any, b: any) => (+a.roll || 999) - (+b.roll || 999) || a.name.localeCompare(b.name));
+    const freshSubjects = fresh.subjects;
+    const freshResults = fresh.classResults[`${cls.id}-${sessionFilter}`] || [];
+    if (!freshStudents.length) { toast('No students', 'error'); return; }
+    toast(`Generating ${freshStudents.length} report cards…`, 'info');
     const JsPDF = await loadJsPDF();
     const doc = new JsPDF({ format: 'a4', unit: 'mm' });
-    for (const s of clsStudents) { await downloadReportCardPDF(s, cls.name, subjects, allResults, term, doc); }
+    for (const s of freshStudents) { await downloadReportCardPDF(s, cls.name, freshSubjects, freshResults, term, doc); }
     const isFinal = term === 'final';
     const label = isFinal ? 'Annual' : TERM_NAMES[term];
     doc.save(`${cls.name.replace(/\s+/g, '_')}_${label}_All_Reports.pdf`);

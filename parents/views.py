@@ -95,8 +95,8 @@ class StudentAttendanceView(APIView):
             return Response({'error': 'Student not found'}, status=404)
 
         try:
-            student = Student.objects.get(id=student_id)
-        except Student.DoesNotExist:
+            student = Student.objects.get(id=student_id, deleted_at__isnull=True)
+        except (Student.DoesNotExist, ValidationError):
             return Response({'error': 'Student not found'}, status=404)
 
         year = request.query_params.get('year')
@@ -178,7 +178,7 @@ class StudentFeesView(APIView):
 
         try:
             student = Student.objects.get(id=student_id)
-        except Student.DoesNotExist:
+        except (Student.DoesNotExist, ValidationError):
             return Response({'error': 'Student not found'}, status=404)
 
         # Single source of truth: reuse DefaulterService (same computation
@@ -558,11 +558,13 @@ class ParentLinkView(APIView):
         User = get_user_model()
         try:
             parent = User.objects.get(id=parent_id, role='parent')
-        except User.DoesNotExist:
+        except (User.DoesNotExist, ValidationError):
             return Response({'error': 'Parent not found'}, status=404)
         try:
             student = Student.objects.get(id=student_id)
-        except Student.DoesNotExist:
+        except (Student.DoesNotExist, ValidationError):
+            return Response({'error': 'Student not found'}, status=404)
+        if student.deleted_at is not None:
             return Response({'error': 'Student not found'}, status=404)
         link, created = ParentStudentLink.objects.get_or_create(parent=parent, student=student)
         if not created:

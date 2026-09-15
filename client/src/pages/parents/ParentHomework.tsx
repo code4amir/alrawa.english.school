@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../../store';
+import Toast, { toast } from '../../components/Toast';
 import { Loader2, BookOpen } from 'lucide-react';
 
 interface HomeworkItem {
@@ -19,24 +20,30 @@ export default function ParentHomework() {
   useEffect(() => {
     api.get('/parents/homework/')
       .then((res) => setItems(res.data))
-      .catch(() => {})
+      .catch(() => toast('Failed to load homework', 'error'))
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) {
     return (
-      <div className="flex justify-center py-20">
-        <Loader2 size={28} className="animate-spin text-school-muted" />
-      </div>
+      <>
+        <Toast />
+        <div className="flex justify-center py-20">
+          <Loader2 size={28} className="animate-spin text-school-muted" />
+        </div>
+      </>
     );
   }
 
   if (items.length === 0) {
     return (
-      <div className="text-center py-20 text-school-muted text-sm">
-        <BookOpen size={40} className="mx-auto mb-3 opacity-40" />
-        No homework assigned yet
-      </div>
+      <>
+        <Toast />
+        <div className="text-center py-20 text-school-muted text-sm">
+          <BookOpen size={40} className="mx-auto mb-3 opacity-40" />
+          No homework assigned yet
+        </div>
+      </>
     );
   }
 
@@ -49,6 +56,7 @@ export default function ParentHomework() {
 
   return (
     <div className="space-y-4 animate-fade-in">
+      <Toast />
       {Object.entries(grouped).map(([date, hws]) => (
         <div key={date}>
           <p className="text-[10px] font-bold uppercase text-school-muted tracking-wider mb-2">{date}</p>

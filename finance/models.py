@@ -326,8 +326,8 @@ class Reconciliation(models.Model):
         related_name='reconciliations'
     )
     statement_date = models.DateTimeField()
-    closing_balance = models.DecimalField(max_digits=12, decimal_places=2)
-    system_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    closing_balance = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
+    system_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0, validators=[MinValueValidator(0)])
     difference = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     notes = models.TextField(blank=True, null=True)

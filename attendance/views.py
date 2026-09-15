@@ -1,13 +1,15 @@
 import calendar
 import logging
+import uuid
 from datetime import date, timedelta
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db import transaction as db_transaction
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, ValidationError as DRFValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +62,16 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         class_id = self.request.query_params.get('class_id')
         date_param = self.request.query_params.get('date')
         if class_id:
+            try:
+                uuid.UUID(str(class_id))
+            except (ValueError, TypeError, AttributeError):
+                raise DRFValidationError({'class_id': 'Invalid class id'})
             qs = qs.filter(school_class_id=class_id)
         if date_param:
+            try:
+                date.fromisoformat(date_param)
+            except (ValueError, TypeError):
+                raise DRFValidationError({'date': 'Invalid date, expected YYYY-MM-DD'})
             qs = qs.filter(date=date_param)
         return qs
 
@@ -101,7 +111,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
 
         try:
             school_class = SchoolClass.objects.get(id=class_id)
-        except SchoolClass.DoesNotExist:
+        except (SchoolClass.DoesNotExist, ValidationError):
             return Response({'error': 'School class not found'}, status=404)
 
         # Class-teacher gate (browser-app parity with the PIN path in
@@ -201,7 +211,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
 
         try:
             student = Student.objects.get(id=student_id)
-        except Student.DoesNotExist:
+        except (Student.DoesNotExist, ValidationError):
             raise NotFound('Student not found')
 
         base_qs = AttendanceRecord.objects.filter(
@@ -295,8 +305,8 @@ class AttendanceViewSet(viewsets.GenericViewSet):
                 return Response({'error': 'Student not found'}, status=404)
 
         try:
-            student = Student.objects.get(id=student_id)
-        except Student.DoesNotExist:
+            student = Student.objects.get(id=student_id, deleted_at__isnull=True)
+        except (Student.DoesNotExist, ValidationError):
             raise NotFound('Student not found')
 
         records = AttendanceRecord.objects.filter(
@@ -391,7 +401,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
 
         try:
             school_class = SchoolClass.objects.get(id=class_id)
-        except SchoolClass.DoesNotExist:
+        except (SchoolClass.DoesNotExist, ValidationError):
             return Response({'error': 'Class not found'}, status=404)
 
         students = list(
@@ -402,6 +412,15 @@ class AttendanceViewSet(viewsets.GenericViewSet):
             .order_by('roll', 'name')
             .values('id', 'name', 'roll')
         )
+
+        try:
+            date.fromisoformat(from_date)
+            date.fromisoformat(to_date)
+        except (ValueError, TypeError):
+            return Response(
+                {'error': 'Invalid from or to date, expected YYYY-MM-DD'},
+                status=400,
+            )
 
         qs = AttendanceRecord.objects.filter(
             school_class=school_class,
@@ -485,6 +504,11 @@ class AttendanceViewSet(viewsets.GenericViewSet):
         if not class_id or not date_param:
             return Response({'error': 'class_id and date query params are required'}, status=400)
 
+        try:
+            date.fromisoformat(date_param)
+        except (ValueError, TypeError):
+            return Response({'error': 'Invalid date, expected YYYY-MM-DD'}, status=400)
+
         # Parent role: verify linked student is in this class
         if request.user.is_authenticated and request.user.role == 'parent':
             parent_student_ids = set(
@@ -498,7 +522,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
 
         try:
             school_class = SchoolClass.objects.get(id=class_id)
-        except SchoolClass.DoesNotExist:
+        except (SchoolClass.DoesNotExist, ValidationError):
             return Response({'error': 'Class not found'}, status=404)
 
         students = list(
@@ -560,6 +584,11 @@ class AttendanceViewSet(viewsets.GenericViewSet):
 
         if not date_param:
             return Response({'error': 'date query param is required'}, status=400)
+
+        try:
+            date.fromisoformat(date_param)
+        except (ValueError, TypeError):
+            return Response({'error': 'Invalid date, expected YYYY-MM-DD'}, status=400)
 
         summaries = []
 
@@ -664,7 +693,7 @@ class AttendanceViewSet(viewsets.GenericViewSet):
 
         try:
             school_class = SchoolClass.objects.get(id=class_id)
-        except SchoolClass.DoesNotExist:
+        except (SchoolClass.DoesNotExist, ValidationError):
             return Response({'error': 'Class not found'}, status=404)
 
         if d_from is not None:

@@ -219,7 +219,7 @@ export default function EnterBySubject() {
       const hasValue = v !== '' && v !== undefined && !isNaN(+v);
       if (!hasValue && existing?.marks?.[canonicalSubject] === undefined) continue;
       const marksData: Record<string, number | null> = {};
-      if (hasValue) marksData[canonicalSubject] = Math.min(+v, selectedSubj.fullMarks);
+      if (hasValue) marksData[canonicalSubject] = Math.max(0, Math.min(+v, selectedSubj.fullMarks));
       else marksData[canonicalSubject] = null;
       items.push({ student: String(s.id), marks: marksData });
     }

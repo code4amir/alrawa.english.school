@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../../store';
+import Toast, { toast } from '../../components/Toast';
 import { Loader2, ClipboardList } from 'lucide-react';
 
 interface Period {
@@ -25,24 +26,30 @@ export default function ParentRoutine() {
   useEffect(() => {
     api.get('/parents/routine/')
       .then((res) => setPeriods(res.data))
-      .catch(() => {})
+      .catch(() => toast('Failed to load routine', 'error'))
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) {
     return (
-      <div className="flex justify-center py-20">
-        <Loader2 size={28} className="animate-spin text-school-muted" />
-      </div>
+      <>
+        <Toast />
+        <div className="flex justify-center py-20">
+          <Loader2 size={28} className="animate-spin text-school-muted" />
+        </div>
+      </>
     );
   }
 
   if (periods.length === 0) {
     return (
-      <div className="text-center py-20 text-school-muted text-sm">
-        <ClipboardList size={40} className="mx-auto mb-3 opacity-40" />
-        No routine available
-      </div>
+      <>
+        <Toast />
+        <div className="text-center py-20 text-school-muted text-sm">
+          <ClipboardList size={40} className="mx-auto mb-3 opacity-40" />
+          No routine available
+        </div>
+      </>
     );
   }
 
@@ -50,6 +57,7 @@ export default function ParentRoutine() {
 
   return (
     <div className="space-y-3 animate-fade-in">
+      <Toast />
       <p className="text-[10px] font-bold uppercase text-school-muted tracking-wider mb-2">Weekly Schedule</p>
       <div className="overflow-x-auto">
         <table className="w-full text-xs border-collapse">

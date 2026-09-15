@@ -34,9 +34,11 @@ export default function ServiceTypeManager() {
       (x.serviceTypeId === serviceId || x.service_type_id === serviceId));
     const edit = dateEdits[`${student.id}_${serviceId}`];
     // Fresh enrollments fall back to the header bulk window (academic year).
+    // NOTE: use || (not ??) so an edited-but-empty month falls back to the
+    // stored value instead of wiping the sibling field with ''.
     return {
-      startsAt: (edit?.startsAt ?? yearMonth(svc?.startsAt ?? svc?.starts_at)) || bulkStartsAt,
-      endsAt: (edit?.endsAt ?? yearMonth(svc?.endsAt ?? svc?.ends_at)) || bulkEndsAt,
+      startsAt: (edit?.startsAt || yearMonth(svc?.startsAt ?? svc?.starts_at)) || bulkStartsAt,
+      endsAt: (edit?.endsAt || yearMonth(svc?.endsAt ?? svc?.ends_at)) || bulkEndsAt,
     };
   };
   const setSvcDate = (studentId: string, serviceId: string, field: 'startsAt' | 'endsAt', value: string) => {
@@ -78,6 +80,11 @@ export default function ServiceTypeManager() {
       if (first) setBulkServiceId(first.id);
     }
   }, [serviceTypes, bulkServiceId]);
+
+  // Stale month edits belong to the previous service — drop them on switch.
+  useEffect(() => {
+    setDateEdits({});
+  }, [bulkServiceId]);
 
   const handleBulk = async (cls: any, active: boolean) => {
     if (!bulkServiceId) { toast('Select a service first', 'error'); return; }
@@ -140,6 +147,12 @@ export default function ServiceTypeManager() {
         ends_at: active ? endsAt : null,
       });
       toast(`${active ? 'Enrolled' : 'Removed'}: ${student.name}`, 'success');
+      // The edit was consumed — clear it so a later toggle re-reads stored dates.
+      setDateEdits(prev => {
+        const next = { ...prev };
+        delete next[`${student.id}_${bulkServiceId}`];
+        return next;
+      });
       if (expandedClass) fetchStudents({ className: expandedClass.className }, true);
       loadSummary();
     } catch (e: any) {
@@ -366,6 +379,9 @@ export default function ServiceTypeManager() {
               <label className="text-[10px] font-bold uppercase text-school-muted">To</label>
               <input type="month" value={bulkEndsAt} onChange={e => setBulkEndsAt(e.target.value)} aria-label="Bulk end month"
                 className="border border-school-border rounded-lg px-2 py-1.5 text-xs bg-white dark:bg-[#1a1a2e] outline-none focus:ring-2 focus:ring-school-accent" />
+              {!academicYears.some((v: any) => v.isActive) && (
+                <span className="text-[10px] text-amber-600 font-bold">No active academic year — set From/To months manually before enrolling</span>
+              )}
             </div>
           </div>
           {summary.length === 0 ? (

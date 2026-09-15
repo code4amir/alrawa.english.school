@@ -1,4 +1,6 @@
 from datetime import date, timedelta
+from django.core.exceptions import ValidationError
+from django.db.models import Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
@@ -6,7 +8,7 @@ from rest_framework.permissions import IsAuthenticated, BasePermission, SAFE_MET
 from rest_framework.exceptions import PermissionDenied, NotFound
 
 from accounts.permissions import (
-    require_permission, is_admin_or_superuser,
+    require_permission, is_admin_or_superuser, is_academic_admin,
 )
 from core.models import SchoolSetting, SchoolClass
 from parents.models import ParentStudentLink
@@ -114,7 +116,7 @@ class AdminRoutineTemplateViewSet(viewsets.ModelViewSet):
                     url='/#/parent/routine',
                 )
                 return Response({'notified': f'Parents of {cls.name}'})
-            except SchoolClass.DoesNotExist:
+            except (SchoolClass.DoesNotExist, ValidationError):
                 return Response({'error': 'Class not found'}, status=404)
         notify_all_parents(
             'Weekly Class Plan Updated',
@@ -265,11 +267,15 @@ class TeacherHomeworkViewSet(viewsets.ModelViewSet):
             )
 
     def perform_update(self, serializer):
-        teacher = _write_teacher_or_403(self.request.user)
-        was_published = serializer.instance.published if serializer.instance else False
-        if teacher is not None:
-            obj = serializer.save(teacher=teacher)
+        was_published = bool(serializer.instance.published) if serializer.instance else False
+        if is_academic_admin(self.request.user):
+            obj = serializer.save()
         else:
+            teacher = _write_teacher_or_403(self.request.user)
+            if serializer.instance is not None and serializer.instance.teacher_id != teacher.id:
+                raise PermissionDenied('You can only edit homework you created')
+            # Never reassign ownership from the payload: the owner stays put.
+            serializer.validated_data.pop('teacher', None)
             obj = serializer.save()
         if obj.published and not was_published:
             notify_parents_of_class(
@@ -280,7 +286,10 @@ class TeacherHomeworkViewSet(viewsets.ModelViewSet):
             )
 
     def perform_destroy(self, instance):
-        _write_teacher_or_403(self.request.user)
+        if not is_academic_admin(self.request.user):
+            teacher = _write_teacher_or_403(self.request.user)
+            if instance.teacher_id != teacher.id:
+                raise PermissionDenied('You can only delete homework you created')
         instance.delete()
 
 
@@ -319,14 +328,21 @@ class TeacherDiaryViewSet(viewsets.ModelViewSet):
         )
 
     def perform_update(self, serializer):
-        teacher = _write_teacher_or_403(self.request.user)
-        if teacher is not None:
-            serializer.save(teacher=teacher)
+        if is_academic_admin(self.request.user):
+            serializer.save()
         else:
+            teacher = _write_teacher_or_403(self.request.user)
+            if serializer.instance is not None and serializer.instance.teacher_id != teacher.id:
+                raise PermissionDenied('You can only edit diary entries you created')
+            # Never reassign ownership from the payload: the owner stays put.
+            serializer.validated_data.pop('teacher', None)
             serializer.save()
 
     def perform_destroy(self, instance):
-        _write_teacher_or_403(self.request.user)
+        if not is_academic_admin(self.request.user):
+            teacher = _write_teacher_or_403(self.request.user)
+            if instance.teacher_id != teacher.id:
+                raise PermissionDenied('You can only delete diary entries you created')
         instance.delete()
 
 
@@ -559,16 +575,24 @@ class TeacherLeaveReasonViewSet(viewsets.GenericViewSet):
 
         if is_admin_or_superuser(request.user):
             class_ids = SchoolClass.objects.values_list('id', flat=True)
+            # Classless students match no class id; include them so they
+            # group under 'Unassigned' instead of vanishing (500 before).
+            class_filter = (
+                Q(student__school_class_id__in=class_ids)
+                | Q(student__school_class__isnull=True)
+            )
         else:
             class_ids = get_teacher_assigned_class_ids(teacher)
+            class_filter = Q(student__school_class_id__in=class_ids)
 
         leaves = LeaveReason.objects.filter(
-            student__school_class_id__in=class_ids,
+            class_filter,
         ).select_related('student', 'student__school_class', 'parent').order_by('-start_date')
 
         grouped = {}
         for lr in leaves:
-            cls_name = lr.student.school_class.name
+            school_class = getattr(getattr(lr, 'student', None), 'school_class', None)
+            cls_name = school_class.name if school_class else 'Unassigned'
             if cls_name not in grouped:
                 grouped[cls_name] = []
             grouped[cls_name].append(LeaveReasonSerializer(lr).data)

@@ -44,6 +44,15 @@ class FeeScheduleViewSet(PeriodClosedMixin, AuditLogMixin, viewsets.ModelViewSet
     def copy_from_year(self, request):
         serializer = FeeScheduleCopySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        from core.models import AcademicYear
+        from finance.views.base import _fiscal_year_from_date as _fy_from_date
+        try:
+            target_year = AcademicYear.objects.get(
+                id=serializer.validated_data['to_academic_year_id'])
+        except AcademicYear.DoesNotExist:
+            from rest_framework.exceptions import ValidationError as _VE
+            raise _VE({'targetAcademicYearId': 'Target academic year not found.'})
+        _check_period_open(_fy_from_date(target_year.start_date))
         with db_transaction.atomic():
             from_year_id = serializer.validated_data['from_academic_year_id']
             to_year_id = serializer.validated_data['to_academic_year_id']
@@ -89,6 +98,22 @@ class FeeWaiverViewSet(PeriodClosedMixin, AuditLogMixin, viewsets.ModelViewSet):
         else:
             serializer.save()
 
+    def perform_update(self, serializer):
+        # Period lock follows the existing waiver's schedule year.
+        fiscal_year = _resolve_fiscal_year(serializer.instance)
+        if fiscal_year:
+            _check_period_open(fiscal_year)
+        # Transitioning to approved stamps the approver; callers cannot
+        # self-approve (approved_by/approved_at are read-only).
+        if (serializer.validated_data.get('approval_status') == 'approved'
+                and getattr(serializer.instance, 'approval_status', None) != 'approved'):
+            serializer.save(
+                approved_by=str(self.request.user.id),
+                approved_at=timezone.now(),
+            )
+        else:
+            serializer.save()
+
     def get_queryset(self):
         qs = super().get_queryset()
         student_id = _param(self.request, 'student_id', 'studentId')
@@ -108,8 +133,24 @@ class FeeWaiverViewSet(PeriodClosedMixin, AuditLogMixin, viewsets.ModelViewSet):
         return [require_permission('finance:write')()]
 
     @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        waiver = self.get_object()
+        fiscal_year = _resolve_fiscal_year(waiver)
+        if fiscal_year:
+            _check_period_open(fiscal_year)
+        waiver.approval_status = 'approved'
+        waiver.approved_by = str(request.user.id)
+        waiver.approved_at = timezone.now()
+        waiver.save(update_fields=['approval_status', 'approved_by', 'approved_at'])
+        log_audit('approve', 'fee_waiver', entity_id=waiver.pk, request=request)
+        return Response(FeeWaiverSerializer(waiver).data)
+
+    @action(detail=True, methods=['post'])
     def deactivate(self, request, pk=None):
         waiver = self.get_object()
+        fiscal_year = _resolve_fiscal_year(waiver)
+        if fiscal_year:
+            _check_period_open(fiscal_year)
         waiver.active = False
         waiver.save(update_fields=['active'])
         log_audit('deactivate', 'fee_waiver', entity_id=waiver.pk, request=request)

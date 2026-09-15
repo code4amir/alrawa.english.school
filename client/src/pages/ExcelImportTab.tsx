@@ -386,7 +386,7 @@ export default function ExcelImportTab() {
       fetchTransactions();
       const store = useSchoolStore.getState();
       if (store._fetchedAt) store._fetchedAt['finance'] = 0;
-      fetchFinance();
+      fetchFinance(true);
     } catch (err: any) {
       const errorMsg = err.response?.data?.detail || err.response?.data?.error || 'Import failed';
       toast(errorMsg, 'error');

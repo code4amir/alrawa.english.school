@@ -74,6 +74,9 @@ class OpeningBalanceViewSet(viewsets.ModelViewSet):
                 except (TypeError, ValueError, InvalidOperation):
                     error = f'Invalid amount for {account_name}'
                     break
+                if amount < 0:
+                    error = f'Invalid amount for {account_name}: must be non-negative'
+                    break
                 account = BankAccount.objects.filter(name=account_name).first()
                 if account is None:
                     error = f'Unknown account {account_name}'
@@ -159,9 +162,18 @@ class OpeningBalanceViewSet(viewsets.ModelViewSet):
                 fiscal_year=history.fiscal_year,
                 account=history.account,
             )
+            old_amount = balance.amount
             balance.amount = history.old_amount
             balance.updated_by = str(request.user.id)
             balance.save()
+            if old_amount != history.old_amount:
+                OpeningBalanceHistory.objects.create(
+                    fiscal_year=history.fiscal_year,
+                    account=history.account,
+                    old_amount=old_amount,
+                    new_amount=history.old_amount,
+                    changed_by=str(request.user.id),
+                )
         log_audit('revert', 'opening_balance', entity_id=balance.pk,
                   details={'history_id': str(history_pk)}, request=request)
         return Response(OpeningBalanceSerializer(balance).data)

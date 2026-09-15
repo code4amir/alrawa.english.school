@@ -25,9 +25,16 @@ def create_transaction(serializer, request, row_data=None):
     # pipeline (counters, waiver/allocation validation, notify); single
     # create falls back to request.data.
     data = row_data if row_data is not None else request.data
-    fiscal_year = serializer.validated_data.get('fiscal_year')
-    if fiscal_year:
-        _check_period_open(fiscal_year)
+    explicit_year = serializer.validated_data.get('fiscal_year')
+    tx_date_for_fy = serializer.validated_data.get('transaction_date') or timezone.now().date()
+    if isinstance(tx_date_for_fy, str):
+        try:
+            from datetime import date as _date
+            tx_date_for_fy = _date.fromisoformat(str(tx_date_for_fy)[:10])
+        except ValueError:
+            tx_date_for_fy = timezone.now().date()
+    _check_period_open(explicit_year or _fiscal_year_from_date(tx_date_for_fy))
+    fiscal_year = explicit_year
     tx_type = serializer.validated_data.get('transaction_type')
 
     if tx_type == 'INCOME':
