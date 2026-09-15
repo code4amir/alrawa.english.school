@@ -41,7 +41,10 @@ export default function ServiceTypeManager() {
   };
   const setSvcDate = (studentId: string, serviceId: string, field: 'startsAt' | 'endsAt', value: string) => {
     const k = `${studentId}_${serviceId}`;
-    setDateEdits(prev => ({ ...prev, [k]: { startsAt: '', endsAt: '', ...prev[k], [field]: value } }));
+    setDateEdits(prev => {
+      const cur = prev[k] ?? { startsAt: '', endsAt: '' };
+      return { ...prev, [k]: { ...cur, [field]: value } };
+    });
   };
 
   const loadSummary = async () => {
