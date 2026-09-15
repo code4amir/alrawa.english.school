@@ -433,7 +433,10 @@ const FinanceSection = () => {
     const fy = now.getMonth() >= FISCAL_YEAR_START_MONTH ? now.getFullYear() + 1 : now.getFullYear();
     fetchDashboardSummary(String(fy));
     fetchClasses();
-    fetchStudents(undefined, true);
+    // No upfront full-student crawl: the income form only ever shows one
+    // class at a time, and the selectedClass effect below fetches exactly
+    // that class on demand. Skips a limit=2000 response (services arrays
+    // included) that the dropdown never renders.
     fetchFeeSchedules();
     fetchExpenseCategories();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -528,7 +531,9 @@ const FinanceSection = () => {
     }
   }, [availableStudents, selectedStudent]);
 
-  const { totalIncome, depositRemaining, voids, refunds } = dashboardSummary;
+  const { totalIncome, depositRemaining, voids, refunds, totals, totalExpense } = dashboardSummary;
+  // Server-computed FY totals (dashboard-summary) — no transaction crawl needed.
+  const expenseTotal = totals?.expense ?? totalExpense ?? 0;
 
   const resetForm = () => {
     setAmount(''); setCategory(''); setDesc('');
@@ -673,11 +678,15 @@ const FinanceSection = () => {
         </div>
       </div>
 
-      {/* Income Collected & Undeposited Income */}
-      <div className="grid grid-cols-2 gap-3 sm:gap-4">
+      {/* Income Collected, Expense & Undeposited Income (server FY totals) */}
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-3">
         <div className="bg-white rounded-xl border border-school-border p-3 sm:p-4">
           <p className="text-[9px] sm:text-[10px] uppercase font-bold tracking-widest text-school-muted mb-1">Income Collected</p>
           <h3 className="text-base sm:text-xl font-serif text-school-primary">৳ {fmt(totalIncome)}</h3>
+        </div>
+        <div className="bg-white rounded-xl border border-school-border p-3 sm:p-4">
+          <p className="text-[9px] sm:text-[10px] uppercase font-bold tracking-widest text-school-muted mb-1">Total Expense</p>
+          <h3 className="text-base sm:text-xl font-serif text-rose-600">৳ {fmt(expenseTotal)}</h3>
         </div>
         <div className="bg-white rounded-xl border border-school-border p-3 sm:p-4">
           <p className="text-[9px] sm:text-[10px] uppercase font-bold tracking-widest text-school-muted mb-1">Undeposited Income</p>

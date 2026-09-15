@@ -17,6 +17,7 @@ urlpatterns = [
     path('classes/promote-all/', views.ClassViewSet.as_view({'post': 'promote_all'}), name='promote-all'),
     path('', include(router.urls)),
     path('settings/', views.SettingView.as_view(), name='settings'),
+    path('bootstrap/', views.BootstrapView.as_view(), name='bootstrap'),
     path('setup/status/', views.SetupStatusView.as_view(), name='setup-status'),
     path('setup/init/', views.SetupInitView.as_view(), name='setup-init'),
     path('dashboard-summary/', views.DashboardSummaryView.as_view(), name='dashboard-summary'),

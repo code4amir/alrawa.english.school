@@ -40,6 +40,7 @@ interface SchoolState {
   loadError: Record<string, boolean>;
 
   fetchDashboardCounts: () => Promise<void>;
+  fetchBootstrap: (force?: boolean) => Promise<void>;
   fetchClasses: (force?: boolean) => Promise<void>;
   fetchStudents: (params?: Record<string, string>, force?: boolean) => Promise<void>;
   fetchTeachers: (params?: Record<string, string>, force?: boolean) => Promise<void>;
@@ -49,7 +50,7 @@ interface SchoolState {
   fetchSubjects: (classId: string) => Promise<void>;
   fetchFinance: (force?: boolean) => Promise<void>;
   fetchTransactions: (params?: Record<string, string>) => Promise<void>;
-  dashboardSummary: { totalIncome: number; totalDepositedToBank: number; depositRemaining: number; totalExpense?: number; net?: number; voids?: { count: number; amount: number }; refunds?: { count: number; amount: number } };
+  dashboardSummary: { totalIncome: number; totalDepositedToBank: number; depositRemaining: number; totalExpense?: number; net?: number; totals?: { income: number; expense: number }; fiscalYear?: number | string; voids?: { count: number; amount: number }; refunds?: { count: number; amount: number } };
   fetchDashboardSummary: (fiscalYear?: string, force?: boolean) => Promise<void>;
   fetchFeeSchedules: (force?: boolean) => Promise<void>;
   fetchOpeningBalances: (year?: string) => Promise<void>;
@@ -144,6 +145,55 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
         bookTotal: res.data.bookCount,
       });
     } catch (e) { if (import.meta.env.DEV) console.warn("[store] fetchDashboardCounts failed", e); }
+  },
+
+  // One-shot bootstrap: counts + classes + academic years + settings +
+  // expense categories in a SINGLE request (was: dashboard-summary +
+  // classes + academic-years + settings + categories = 5). Populates the
+  // same _fetchedAt keys so later lazy fetches hit cache instead of
+  // re-firing. Falls back to the legacy two fetches if the endpoint is
+  // unavailable, so Dashboard still renders during backend rollout.
+  fetchBootstrap: async (force?: boolean) => {
+    const key = 'bootstrap';
+    const now = Date.now();
+    if (!force && now - (get()._fetchedAt[key] || 0) < CACHE_TTL) return;
+    try {
+      const res = await dedupedFetch(key, () => api.get('/bootstrap/'));
+      const d = res.data || {};
+      const stamp = Date.now();
+      const patch: Record<string, any> = {
+        _fetchedAt: {
+          ...get()._fetchedAt,
+          [key]: stamp,
+          dashboardCounts: stamp,
+          academicYears: stamp,
+          settings: stamp,
+          expenseCategories: stamp,
+        },
+      };
+      if (d.counts && typeof d.counts === 'object') {
+        patch.studentTotal = d.counts.students ?? get().studentTotal;
+        patch.teacherTotal = d.counts.teachers ?? get().teacherTotal;
+        patch.staffTotal = d.counts.staff ?? get().staffTotal;
+        patch.bookTotal = d.counts.books ?? get().bookTotal;
+      }
+      if (Array.isArray(d.classes)) patch.classes = d.classes;
+      if (Array.isArray(d.academicYears)) patch.academicYears = d.academicYears;
+      if (d.settings && typeof d.settings === 'object') {
+        patch.settings = { ...get().settings, ...d.settings };
+      }
+      if (Array.isArray(d.expenseCategories)) {
+        const names = d.expenseCategories
+          .map((c: any) => (typeof c === 'string' ? c : c?.name))
+          .filter(Boolean);
+        patch.expenseCategories = names;
+      }
+      set(patch);
+    } catch (e) {
+      if (import.meta.env.DEV) console.warn('[store] fetchBootstrap failed, falling back', e);
+      await Promise.all([get().fetchDashboardCounts(), get().fetchClasses()]);
+      set((s) => ({ _fetchedAt: { ...s._fetchedAt, [key]: Date.now() } }));
+    }
   },
 
   fetchClasses: async (force) => {

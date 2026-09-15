@@ -142,6 +142,17 @@ describe('useSchoolStore — finance', () => {
 
       expect(useSchoolStore.getState().dashboardSummary).toEqual({ totalIncome: 0, totalDepositedToBank: 0, depositRemaining: 0 });
     });
+
+    it('passes through server totals + fiscalYear for the audit header', async () => {
+      const summary = { fiscalYear: 2026, totalIncome: 9000, totalExpense: 4000, totals: { income: 9000, expense: 4000 }, totalDepositedToBank: 8000, depositRemaining: 1000 };
+      vi.spyOn(api, 'get').mockResolvedValue({ data: summary });
+
+      await useSchoolStore.getState().fetchDashboardSummary('2026');
+
+      const ds = useSchoolStore.getState().dashboardSummary;
+      expect(ds.totals).toEqual({ income: 9000, expense: 4000 });
+      expect(String(ds.fiscalYear)).toBe('2026');
+    });
   });
 
   describe('fee schedules and opening balances', () => {

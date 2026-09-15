@@ -12,6 +12,7 @@ from finance.serializers import (
     StudentFeeAssignmentToggleSerializer, BulkAssignSerializer
 )
 from accounts.permissions import require_permission
+from core.cache_headers import PrivateRefDataCacheMixin
 from .base import PeriodClosedMixin, _param, _resolve_fiscal_year, _check_period_open
 from core.audit import log_audit, AuditLogMixin
 
@@ -30,7 +31,7 @@ def _check_schedule_period_open(fee_schedule_id):
     if fiscal_year:
         _check_period_open(fiscal_year)
 
-class FeeScheduleViewSet(PeriodClosedMixin, AuditLogMixin, viewsets.ModelViewSet):
+class FeeScheduleViewSet(PrivateRefDataCacheMixin, PeriodClosedMixin, AuditLogMixin, viewsets.ModelViewSet):
     queryset = FeeSchedule.objects.select_related('academic_year', 'school_class').all()
     serializer_class = FeeScheduleSerializer
     filterset_fields = ['academic_year_id', 'school_class_id', 'category']

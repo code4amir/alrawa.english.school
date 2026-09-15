@@ -316,6 +316,13 @@ class TransactionViewSet(AuditLogMixin, LedgerActionsMixin, PeriodClosedMixin, v
                 'totalDepositedToBank': agg['deposited'] or Decimal('0'),
                 'depositRemaining': (agg['income'] or Decimal('0')) - (agg['deposited'] or Decimal('0')),
                 'net': (agg['income'] or Decimal('0')) - (agg['expense'] or Decimal('0')),
+                # Server-side FY totals (same report_filter() rows the
+                # client used to accumulate by page-crawling): clients
+                # should read totals instead of crawling all pages.
+                'totals': {
+                    'income': agg['income'] or Decimal('0'),
+                    'expense': agg['expense'] or Decimal('0'),
+                },
                 'voids': memo['voids'],
                 'refunds': memo['refunds'],
             }

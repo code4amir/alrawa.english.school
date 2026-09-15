@@ -1,5 +1,5 @@
 import logging
-from rest_framework import viewsets, status, generics
+from rest_framework import viewsets, status, generics, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import NotFound, ValidationError
@@ -13,9 +13,10 @@ from .serializers import (
     SchoolSettingSerializer, AuditLogSerializer, CategorySerializer,
     PromoteAllSerializer, ServiceTypeSerializer, AgentFindingSerializer,
 )
-from accounts.permissions import require_permission
+from accounts.permissions import require_permission, has_permission
 from .services import promote_all as promote_all_service, auto_create_fee_schedules_for_service
 from .audit import log_audit, AuditLogMixin
+from .cache_headers import PrivateRefDataCacheMixin, apply_private_ref_cache
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ def _scheduler_job_id(pk):
         raise NotFound('Scheduled task not found')
 
 
-class ClassViewSet(AuditLogMixin, viewsets.ModelViewSet):
+class ClassViewSet(PrivateRefDataCacheMixin, AuditLogMixin, viewsets.ModelViewSet):
     queryset = SchoolClass.objects.annotate(
         student_count=Subquery(
             Student.objects.filter(school_class=OuterRef('pk'), deleted_at__isnull=True)
@@ -111,7 +112,7 @@ class SubjectViewSet(viewsets.ModelViewSet):
         log_audit('create', 'subject', entity_id=obj.pk, request=self.request)
 
 
-class AcademicYearViewSet(viewsets.ModelViewSet):
+class AcademicYearViewSet(PrivateRefDataCacheMixin, viewsets.ModelViewSet):
     queryset = AcademicYear.objects.all()
     serializer_class = AcademicYearSerializer
 
@@ -134,6 +135,20 @@ self):
         log_audit('update', 'academic_year', entity_id=obj.pk, request=self.request)
 
 
+def get_settings_summary():
+    """The /settings/ summary dict, shared by SettingView and BootstrapView."""
+    settings = {s.key: s.value for s in SchoolSetting.objects.all()}
+    if not settings:
+        settings = {
+            'school_name': 'AL RAWA English School',
+            'address': '',
+            'phone': '',
+            'email': '',
+            'website': '',
+        }
+    return settings
+
+
 class SettingView(generics.GenericAPIView):
     queryset = SchoolSetting.objects.all()
     serializer_class = SchoolSettingSerializer
@@ -149,16 +164,7 @@ class SettingView(generics.GenericAPIView):
             from django.shortcuts import get_object_or_404
             obj = get_object_or_404(SchoolSetting, key=key)
             return Response(SchoolSettingSerializer(obj).data)
-        settings = {s.key: s.value for s in SchoolSetting.objects.all()}
-        if not settings:
-            settings = {
-                'school_name': 'AL RAWA English School',
-                'address': '',
-                'phone': '',
-                'email': '',
-                'website': '',
-            }
-        return Response(settings)
+        return apply_private_ref_cache(Response(get_settings_summary()))
 
     ALLOWED_SETTING_KEYS = {
         'school_name', 'address', 'phone', 'email', 'website',
@@ -181,6 +187,110 @@ class SettingView(generics.GenericAPIView):
         log_audit('update', 'setting', details={'keys': list(data.keys())}, request=request)
         settings = {s.key: s.value for s in SchoolSetting.objects.all()}
         return Response(settings)
+
+
+class BootstrapView(generics.GenericAPIView):
+    """One-request app bootstrap: counts + ref-data lists.
+
+    Shape is EXACTLY::
+
+        {counts: {students, teachers, staff, books},
+         classes: [{id, name, order, studentCount}],
+         academicYears: [{id, name, isActive, startDate, endDate}],
+         settings: {<same keys as GET /settings/ summary>},
+         expenseCategories: [{id, name, type}]}
+
+    Every section reuses the underlying endpoint's queryset/serializer
+    (including parent scoping in StudentViewSet.get_queryset), so counts
+    match the list endpoints. Sections the caller may not read (per the
+    same ``<resource>:read`` permission the list endpoint enforces)
+    come back empty instead of leaking — authenticated-only, never
+    public. No cache headers: rows are role-scoped per user.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from students.views import StudentViewSet
+        from teachers.views import TeacherViewSet
+        from staff.views import StaffViewSet
+        from books.views import BookViewSet
+
+        user = request.user
+
+        def scoped_qs(viewset_cls):
+            vs = viewset_cls()
+            vs.request = request
+            vs.format_kwarg = None
+            vs.kwargs = {}
+            vs.action = 'list'
+            return vs.get_queryset()
+
+        if has_permission(user, 'students:read'):
+            student_count = scoped_qs(StudentViewSet).count()
+        else:
+            student_count = 0
+        if has_permission(user, 'teachers:read'):
+            teacher_count = scoped_qs(TeacherViewSet).count()
+        else:
+            teacher_count = 0
+        if has_permission(user, 'staff:read'):
+            staff_count = scoped_qs(StaffViewSet).count()
+        else:
+            staff_count = 0
+        if has_permission(user, 'books:read'):
+            book_count = scoped_qs(BookViewSet).count()
+        else:
+            book_count = 0
+
+        if has_permission(user, 'classes:read'):
+            class_rows = SchoolClassSerializer(
+                scoped_qs(ClassViewSet), many=True
+            ).data
+            classes = [{
+                'id': c['id'],
+                'name': c['name'],
+                'order': c['order'],
+                'studentCount': c.get('studentCount') or 0,
+            } for c in class_rows]
+        else:
+            classes = []
+
+        if has_permission(user, 'academic-years:read'):
+            year_rows = AcademicYearSerializer(
+                scoped_qs(AcademicYearViewSet), many=True
+            ).data
+            academic_years = [{
+                'id': y['id'],
+                'name': y['name'],
+                'isActive': y.get('isActive', False),
+                'startDate': y.get('startDate'),
+                'endDate': y.get('endDate'),
+            } for y in year_rows]
+        else:
+            academic_years = []
+
+        # SettingView.get gates GET on classes:read — same gate here.
+        settings = get_settings_summary() if has_permission(user, 'classes:read') else {}
+
+        if has_permission(user, 'finance:read'):
+            expense_categories = CategorySerializer(
+                Category.objects.filter(type='EXPENSE'), many=True
+            ).data
+        else:
+            expense_categories = []
+
+        return Response({
+            'counts': {
+                'students': student_count,
+                'teachers': teacher_count,
+                'staff': staff_count,
+                'books': book_count,
+            },
+            'classes': classes,
+            'academicYears': academic_years,
+            'settings': settings,
+            'expenseCategories': expense_categories,
+        })
 
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
@@ -251,7 +361,7 @@ class AgentFindingViewSet(viewsets.ModelViewSet):
         return self._transition(request, pk, 'resolved')
 
 
-class CategoryViewSet(AuditLogMixin, viewsets.ModelViewSet):
+class CategoryViewSet(PrivateRefDataCacheMixin, AuditLogMixin, viewsets.ModelViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
 

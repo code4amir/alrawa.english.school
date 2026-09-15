@@ -70,7 +70,7 @@ function printDiv(id: string) {
 
 const FinanceReports = () => {
   useEffect(() => { document.title = 'Finance Reports - AL RAWA English School'; }, []);
-  const { transactions, fetchTransactions, fetchStudents, fetchFinance, fetchOpeningBalances, setOpeningBalances, openingBalancesHistory, fetchOpeningBalanceHistory, revertOpeningBalance } = useSchoolStore();
+  const { transactions, fetchTransactions, fetchFinance, fetchOpeningBalances, setOpeningBalances, openingBalancesHistory, fetchOpeningBalanceHistory, revertOpeningBalance, dashboardSummary, fetchDashboardSummary } = useSchoolStore();
   const [tab, setTab] = useState<ReportTab>('income-report');
   const [dateFrom, setDateFrom] = useState(() => { const d = new Date(); d.setMonth(d.getMonth() - 3); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; });
   const [dateTo, setDateTo] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; });
@@ -110,7 +110,18 @@ const FinanceReports = () => {
   }, [tab, yearFilter]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchTransactions(); fetchStudents(undefined, true); fetchFinance(); fetchOpeningBalances(); }, []);
+  useEffect(() => { fetchFinance(); fetchOpeningBalances(); }, []);
+  // Row-level data (full transaction crawl) is only needed for the
+  // detail/breakdown tabs. The yearly-AGM tab uses dedicated server
+  // endpoints (/finance/reports/agm|monthly) — no crawl there.
+  // The audit header prefers server FY totals (dashboard-summary); the
+  // crawl stays as fallback for the category breakdowns and when totals
+  // are absent.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (tab === 'audit') fetchDashboardSummary(String(yearFilter));
+    if (tab !== 'yearly-agm') fetchTransactions();
+  }, [tab, yearFilter]);
 
   const openOpeningBalModal = async () => {
     await fetchOpeningBalances(yearFilter);
@@ -165,6 +176,29 @@ const FinanceReports = () => {
   const yearIncome = yearFiltered.filter((t: any) => (t.transactionType === 'INCOME' && t.affectsIncomeLedger) || isCrossBankIncome(t));
   const yearExpense = yearFiltered.filter((t: any) => (t.transactionType === 'EXPENSE' && t.affectsExpenseLedger) || isCrossBankExpense(t));
   const fmtDate = (d: string | undefined) => d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+
+  // Audit header totals: prefer server-computed FY totals from
+  // dashboard-summary (one cheap request, no page crawl). The summary is
+  // only valid when its fiscalYear matches the selected FY — otherwise
+  // fall back to summing the crawled rows (which the breakdown tables
+  // need anyway, so the crawl stays as fallback, never removed).
+  const getAuditTotals = () => {
+    const ds: any = dashboardSummary;
+    if (ds && String(ds.fiscalYear ?? '') === String(yearFilter)) {
+      const t = ds.totals;
+      if (t && t.income !== undefined && t.expense !== undefined) {
+        return { ti: Number(t.income) || 0, te: Number(t.expense) || 0, server: true as const };
+      }
+      if (ds.totalIncome !== undefined || ds.totalExpense !== undefined) {
+        return { ti: Number(ds.totalIncome) || 0, te: Number(ds.totalExpense) || 0, server: true as const };
+      }
+    }
+    return {
+      ti: yearIncome.reduce((s: number, t: any) => s + Number(t.amount), 0),
+      te: yearExpense.reduce((s: number, t: any) => s + Number(t.amount), 0),
+      server: false as const,
+    };
+  };
 
 
 
@@ -228,10 +262,9 @@ const FinanceReports = () => {
         pdfExpenseReport(categories, grandTotal, expenseTx, dateFrom, dateTo);
       }
       else if (tab === 'audit') {
+        const { ti, te } = getAuditTotals();
         const incHw = headwise(yearIncome);
         const expHw = headwise(yearExpense);
-        const ti = incHw.reduce((s: number, x: [string, number]) => s + x[1], 0);
-        const te = expHw.reduce((s: number, x: [string, number]) => s + x[1], 0);
         pdfAudit({ totalIncome: ti, totalExpense: te, netSurplus: ti - te, incomeByCategory: incHw, expenseByCategory: expHw }, yearFilter);
       }
       else if (tab === 'yearly-agm' && agmData) {
@@ -392,7 +425,7 @@ const FinanceReports = () => {
 
       {tab === 'audit' && (
         <div className="bg-white rounded-xl border border-school-border p-4" id="print-area">
-          {(() => { const ti = yearIncome.reduce((s, t) => s + Number(t.amount), 0); const te = yearExpense.reduce((s, t) => s + Number(t.amount), 0); const ns = ti - te; return (
+          {(() => { const { ti, te } = getAuditTotals(); const ns = ti - te; return (
             <div className="space-y-4">
               <h4 className="font-serif text-sm text-school-primary">Audit Report — FY {Number(yearFilter)-1}-{yearFilter}</h4>
               <div className="grid grid-cols-3 gap-3">

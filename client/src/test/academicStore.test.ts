@@ -14,6 +14,64 @@ beforeEach(() => {
 });
 
 describe('useSchoolStore — academic', () => {
+  describe('fetchBootstrap', () => {
+    it('populates counts, classes, years, settings and categories from one request', async () => {
+      const payload = {
+        counts: { students: 10, teachers: 3, staff: 2, books: 44 },
+        classes: [{ id: 'c1', name: 'Play' }],
+        academicYears: [{ id: 'y1', name: '2025-2026', isActive: true }],
+        settings: { school_name: 'Test School' },
+        expenseCategories: [{ name: 'Salary' }, 'Stationery'],
+      };
+      const getSpy = vi.spyOn(api, 'get').mockResolvedValue({ data: payload });
+
+      await useSchoolStore.getState().fetchBootstrap();
+
+      expect(getSpy).toHaveBeenCalledWith('/bootstrap/');
+      expect(getSpy).toHaveBeenCalledTimes(1);
+      const s = useSchoolStore.getState();
+      expect(s.studentTotal).toBe(10);
+      expect(s.teacherTotal).toBe(3);
+      expect(s.staffTotal).toBe(2);
+      expect(s.bookTotal).toBe(44);
+      expect(s.classes).toEqual(payload.classes);
+      expect(s.academicYears).toEqual(payload.academicYears);
+      expect(s.settings.school_name).toBe('Test School');
+      expect(s.expenseCategories).toEqual(['Salary', 'Stationery']);
+    });
+
+    it('respects TTL and force-refetches on demand', async () => {
+      const getSpy = vi.spyOn(api, 'get').mockResolvedValue({ data: {} });
+
+      await useSchoolStore.getState().fetchBootstrap();
+      await useSchoolStore.getState().fetchBootstrap();
+      expect(getSpy).toHaveBeenCalledTimes(1);
+
+      await useSchoolStore.getState().fetchBootstrap(true);
+      expect(getSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('falls back to legacy fetches when bootstrap is unavailable', async () => {
+      const getSpy = vi.spyOn(api, 'get').mockImplementation((url: string) => {
+        if (url === '/bootstrap/') return Promise.reject(new Error('404'));
+        if (url === '/dashboard-summary/') {
+          return Promise.resolve({ data: { studentCount: 5, teacherCount: 1, staffCount: 1, bookCount: 7 } });
+        }
+        return Promise.resolve({ data: [{ id: 'c1', name: 'Play' }] });
+      });
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await useSchoolStore.getState().fetchBootstrap();
+
+      expect(getSpy).toHaveBeenCalledWith('/bootstrap/');
+      expect(getSpy).toHaveBeenCalledWith('/dashboard-summary/');
+      expect(getSpy).toHaveBeenCalledWith('/classes/');
+      const s = useSchoolStore.getState();
+      expect(s.studentTotal).toBe(5);
+      expect(s.classes).toEqual([{ id: 'c1', name: 'Play' }]);
+    });
+  });
+
   describe('fetchClasses', () => {
     it('calls GET /classes and stores result', async () => {
       const classList = [{ id: 'c1', name: 'Class 1' }, { id: 'c2', name: 'Class 2' }];

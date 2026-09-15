@@ -31,7 +31,9 @@ def mobile_redirect(request):
 
 
 class WakeDBView(generics.GenericAPIView):
-    permission_classes = [permissions.IsAdminUser]
+    # Auth-free by design: runs one trivial query and returns static JSON.
+    # Lets the login screen warm a cold database before credentials exist.
+    permission_classes = [permissions.AllowAny]
     def get(self, request):
         from django.db import connection
         connection.cursor()

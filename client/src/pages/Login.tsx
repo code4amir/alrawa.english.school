@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { FormEvent } from 'react';
-import { useAuthStore, useDarkMode } from '../store';
+import { useAuthStore, useDarkMode, api } from '../store';
 import { Link, useNavigate } from 'react-router-dom';
 import { LogIn, ShieldAlert, School, BookOpen, Sun, Moon, Eye, EyeOff, Fingerprint } from 'lucide-react';
 import { SCHOOL_LOGO } from '../lib/logo';
@@ -19,6 +19,15 @@ const Login = () => {
 
   useEffect(() => { document.title = 'Login - AL RAWA English School'; }, []);
   useEffect(() => { document.documentElement.classList.toggle('dark', dark); }, [dark]);
+
+  // Fire-and-forget DB wake: the first authenticated query after a cold
+  // start can take seconds (Supabase cold start). Pinging /wake-db/ the
+  // moment the login screen mounts hides that latency inside the time the
+  // user spends typing credentials. Auth-free by design; failures are
+  // silently ignored — login must never depend on it.
+  useEffect(() => {
+    api.get('/wake-db/').catch(() => {});
+  }, []);
 
   // Check for stored credentials on mount
   useEffect(() => {

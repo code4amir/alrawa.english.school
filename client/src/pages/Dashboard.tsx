@@ -33,7 +33,7 @@ const Dashboard = () => {
   const { activeMode, setMode } = useUIStore();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { studentTotal, teacherTotal, staffTotal, fetchClasses, fetchDashboardCounts } = useSchoolStore();
+  const { studentTotal, teacherTotal, staffTotal, fetchBootstrap } = useSchoolStore();
   const user = useAuthStore((s) => s.user);
   const isTeacher = user?.role === 'teacher';
   const isMonitor = user?.role === 'monitor';
@@ -67,7 +67,9 @@ const Dashboard = () => {
 
   useEffect(() => { document.title = 'Dashboard - AL RAWA English School'; }, []);
   useEffect(() => {
-    Promise.all([fetchDashboardCounts(), fetchClasses()]).then(() => setCountsReady(true));
+    // Single bootstrap request (counts + classes + academic years +
+    // settings + expense categories) instead of parallel fetches.
+    fetchBootstrap().then(() => setCountsReady(true));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const MODULES = [
