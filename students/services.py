@@ -17,6 +17,16 @@ def toggle_student_service(student_id, service_type_id, active, starts_at=None, 
     student = Student.objects.get(id=student_id)
     service_type = ServiceType.objects.get(id=service_type_id)
 
+    # Activating with no window creates a dateless assignment, which the
+    # fee engine can never match (NULL never satisfies starts_at__lte /
+    # ends_at__gte) — the student looks enrolled but is never billed.
+    # Default missing ends of the window to the active academic year.
+    if active and (not starts_at or not ends_at):
+        active_year_for_window = AcademicYear.objects.filter(is_active=True).first()
+        if active_year_for_window:
+            starts_at = starts_at or active_year_for_window.start_date.strftime('%Y-%m')
+            ends_at = ends_at or active_year_for_window.end_date.strftime('%Y-%m')
+
     # Find or create the StudentService record
     student_service, created = StudentService.objects.select_for_update().get_or_create(
         student=student,

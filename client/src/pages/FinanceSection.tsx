@@ -4,13 +4,12 @@ import DOMPurify from 'dompurify';
 import { useSchoolStore, useAuthStore, useUIStore, api } from '../store';
 import { useFocusTrap } from '../lib/useFocusTrap';
 import { isUsableWaiver, waiverExpectedAmount } from '../lib/waivers';
-import { Clock, BarChart3, AlertTriangle, Users, Upload, Ban, ChevronLeft, ChevronRight, DollarSign, TrendingDown, RefreshCw, BookOpen, Shield, Lock, Scale, Printer, CheckCircle } from 'lucide-react';
+import { Clock, BarChart3, AlertTriangle, Upload, Ban, ChevronLeft, ChevronRight, DollarSign, TrendingDown, RefreshCw, BookOpen, Shield, Lock, Scale, Printer, CheckCircle } from 'lucide-react';
 import Skeleton from '../components/Skeleton';
 import { toast } from '../components/Toast';
 import DatePicker from '../components/DatePicker';
 import FinanceReports from './FinanceReports';
 import DefaulterTab from './DefaulterTab';
-import OptionalFeesTab from './OptionalFeesTab';
 import { pdfPaymentReceipt } from '../lib/parentReceiptPdf';
 import ExcelImportTab from './ExcelImportTab';
 import FeeScheduleTab from './FeeScheduleTab';
@@ -41,7 +40,7 @@ function filterMonthsByAssignment(months: string[], assignmentStart?: string | n
   });
 }
 
-type MainTab = 'transactions' | 'reports' | 'optional-fees' | 'defaulter' | 'fee-schedule' | 'waivers' | 'period-close' | 'reconciliation';
+type MainTab = 'transactions' | 'reports' | 'defaulter' | 'fee-schedule' | 'waivers' | 'period-close' | 'reconciliation';
 type TxTab = 'income' | 'expense' | 'transfer' | 'import';
 
 const PAGE_SIZE = 25;
@@ -693,9 +692,6 @@ const FinanceSection = () => {
         <button onClick={() => setMainTab('defaulter')} className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold border transition-all ${mainTab === 'defaulter' ? 'bg-school-primary text-white border-school-primary shadow-sm' : 'bg-white border-school-border text-school-muted hover:border-school-accent'}`}>
           <AlertTriangle size={14} /> Defaulter
         </button>
-        <button onClick={() => setMainTab('optional-fees')} className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold border transition-all ${mainTab === 'optional-fees' ? 'bg-school-primary text-white border-school-primary shadow-sm' : 'bg-white border-school-border text-school-muted hover:border-school-accent'}`}>
-          <Users size={14} /> Optional Fees
-        </button>
         <button onClick={() => setMainTab('fee-schedule')} className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold border transition-all ${mainTab === 'fee-schedule' ? 'bg-school-primary text-white border-school-primary shadow-sm' : 'bg-white border-school-border text-school-muted hover:border-school-accent'}`}>
           <BookOpen size={14} /> Fee Schedules
         </button>
@@ -714,7 +710,6 @@ const FinanceSection = () => {
 
       {mainTab === 'reports' ? <FinanceReports /> : null}
       {mainTab === 'defaulter' ? <DefaulterTab /> : null}
-      {mainTab === 'optional-fees' ? <OptionalFeesTab /> : null}
       {mainTab === 'fee-schedule' ? <FeeScheduleTab /> : null}
       {mainTab === 'waivers' ? <StudentWaiversTab /> : null}
       {mainTab === 'period-close' ? <PeriodCloseTab /> : null}

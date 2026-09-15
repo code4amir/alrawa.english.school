@@ -4,7 +4,7 @@ import { toast } from '../../components/Toast';
 import { Plus, Pencil, Trash2, AlertTriangle, Settings, Users, Power, ChevronDown } from 'lucide-react';
 
 export default function ServiceTypeManager() {
-  const { serviceTypes, fetchServiceTypes, fetchClasses, students, fetchStudents } = useSchoolStore();
+  const { serviceTypes, fetchServiceTypes, fetchClasses, students, fetchStudents, academicYears, fetchAcademicYears } = useSchoolStore();
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -18,6 +18,31 @@ export default function ServiceTypeManager() {
   const [bulkSubmitting, setBulkSubmitting] = useState<string | null>(null);
   const [expandedClass, setExpandedClass] = useState<any | null>(null);
   const [togglingStudent, setTogglingStudent] = useState<string | null>(null);
+  const [bulkStartsAt, setBulkStartsAt] = useState('');
+  const [bulkEndsAt, setBulkEndsAt] = useState('');
+  const [dateEdits, setDateEdits] = useState<Record<string, { startsAt: string; endsAt: string }>>({});
+
+  const yearMonth = (v: any): string => {
+    if (!v) return '';
+    const s = String(v);
+    if (/^\d{4}-\d{2}$/.test(s)) return s;
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 7);
+    return '';
+  };
+  const svcDatesOf = (student: any, serviceId: string) => {
+    const svc = student.services?.find((x: any) =>
+      (x.serviceTypeId === serviceId || x.service_type_id === serviceId));
+    const edit = dateEdits[`${student.id}_${serviceId}`];
+    // Fresh enrollments fall back to the header bulk window (academic year).
+    return {
+      startsAt: (edit?.startsAt ?? yearMonth(svc?.startsAt ?? svc?.starts_at)) || bulkStartsAt,
+      endsAt: (edit?.endsAt ?? yearMonth(svc?.endsAt ?? svc?.ends_at)) || bulkEndsAt,
+    };
+  };
+  const setSvcDate = (studentId: string, serviceId: string, field: 'startsAt' | 'endsAt', value: string) => {
+    const k = `${studentId}_${serviceId}`;
+    setDateEdits(prev => ({ ...prev, [k]: { startsAt: '', endsAt: '', ...prev[k], [field]: value } }));
+  };
 
   const loadSummary = async () => {
     setSummaryLoading(true);
@@ -31,8 +56,18 @@ export default function ServiceTypeManager() {
   useEffect(() => {
     fetchServiceTypes(true).then(() => setLoading(false));
     fetchClasses();
+    fetchAcademicYears();
     loadSummary();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Default the bulk window to the active academic year.
+  useEffect(() => {
+    const y: any = academicYears.find((v: any) => v.isActive);
+    if (y && !bulkStartsAt && !bulkEndsAt) {
+      setBulkStartsAt(yearMonth(y.startDate));
+      setBulkEndsAt(yearMonth(y.endDate));
+    }
+  }, [academicYears]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!bulkServiceId && serviceTypes.length > 0) {
@@ -43,6 +78,12 @@ export default function ServiceTypeManager() {
 
   const handleBulk = async (cls: any, active: boolean) => {
     if (!bulkServiceId) { toast('Select a service first', 'error'); return; }
+    if (active && (!bulkStartsAt || !bulkEndsAt)) {
+      toast('Start month and end month are required to enable a service', 'error'); return;
+    }
+    if (active && bulkStartsAt > bulkEndsAt) {
+      toast('End month must be on or after start month', 'error'); return;
+    }
     const label = active ? 'Enable' : 'Disable';
     if (!confirm(`${label} "${serviceTypes.find((s: any) => s.id === bulkServiceId)?.name}" for ALL ${cls.total} students in ${cls.className}?`)) return;
     const key = `${cls.classId}_${active}`;
@@ -52,6 +93,8 @@ export default function ServiceTypeManager() {
         service_type_id: bulkServiceId,
         class_id: cls.classId,
         active,
+        starts_at: active ? bulkStartsAt : undefined,
+        ends_at: active ? bulkEndsAt : undefined,
       });
       const d = res.data || {};
       toast(`${label}d ${d.ok}/${d.total} students ✓`, d.errors ? 'info' : 'success');
@@ -61,7 +104,7 @@ export default function ServiceTypeManager() {
         fetchStudents({ className: cls.className }, true);
       }
     } catch (e: any) {
-      toast(e?.response?.data?.error || 'Bulk update failed', 'error');
+      toast(e?.response?.data?.error || e?.response?.data?.detail || 'Bulk update failed', 'error');
     }
     setBulkSubmitting(null);
   };
@@ -77,20 +120,27 @@ export default function ServiceTypeManager() {
 
   const handleStudentToggle = async (student: any, active: boolean) => {
     if (!bulkServiceId) { toast('Select a service first', 'error'); return; }
+    const { startsAt, endsAt } = svcDatesOf(student, bulkServiceId);
+    if (active && (!startsAt || !endsAt)) {
+      toast('Start month and end month are required to enroll', 'error'); return;
+    }
+    if (active && startsAt > endsAt) {
+      toast('End month must be on or after start month', 'error'); return;
+    }
     setTogglingStudent(student.id);
     try {
       await api.post(`/students/${student.id}/toggle_service/`, {
         studentId: student.id,
         serviceTypeId: bulkServiceId,
         active,
-        starts_at: null,
-        ends_at: null,
+        starts_at: active ? startsAt : null,
+        ends_at: active ? endsAt : null,
       });
       toast(`${active ? 'Enrolled' : 'Removed'}: ${student.name}`, 'success');
       if (expandedClass) fetchStudents({ className: expandedClass.className }, true);
       loadSummary();
     } catch (e: any) {
-      toast(e?.response?.data?.error || 'Toggle failed', 'error');
+      toast(e?.response?.data?.error || e?.response?.data?.detail || 'Toggle failed', 'error');
     }
     setTogglingStudent(null);
   };
@@ -307,6 +357,12 @@ export default function ServiceTypeManager() {
                   <option key={st.id} value={st.id}>{st.name}{st.active ? '' : ' (inactive)'}</option>
                 ))}
               </select>
+              <label className="text-[10px] font-bold uppercase text-school-muted ml-1">From</label>
+              <input type="month" value={bulkStartsAt} onChange={e => setBulkStartsAt(e.target.value)} aria-label="Bulk start month"
+                className="border border-school-border rounded-lg px-2 py-1.5 text-xs bg-white dark:bg-[#1a1a2e] outline-none focus:ring-2 focus:ring-school-accent" />
+              <label className="text-[10px] font-bold uppercase text-school-muted">To</label>
+              <input type="month" value={bulkEndsAt} onChange={e => setBulkEndsAt(e.target.value)} aria-label="Bulk end month"
+                className="border border-school-border rounded-lg px-2 py-1.5 text-xs bg-white dark:bg-[#1a1a2e] outline-none focus:ring-2 focus:ring-school-accent" />
             </div>
           </div>
           {summary.length === 0 ? (
@@ -375,22 +431,36 @@ export default function ServiceTypeManager() {
                                 {expandedStudents.map((s: any) => {
                                   const hasSvc = s.services?.some((svc: any) => svc.serviceTypeId === bulkServiceId && svc.active);
                                   const busy = togglingStudent === s.id;
+                                  const { startsAt, endsAt } = svcDatesOf(s, bulkServiceId);
                                   return (
-                                    <div key={s.id} className="flex items-center gap-2 bg-white dark:bg-[#1a1a2e] border border-school-border dark:border-[#2a2a3e] rounded-lg px-3 py-2">
-                                      <div className="flex-1 min-w-0">
-                                        <div className="text-xs font-semibold text-school-primary dark:text-[#e0e0e8] truncate">{s.name}</div>
-                                        <div className="text-[10px] text-school-muted">Roll: {s.roll || '—'}</div>
+                                    <div key={s.id} className="flex flex-col gap-1.5 bg-white dark:bg-[#1a1a2e] border border-school-border dark:border-[#2a2a3e] rounded-lg px-3 py-2">
+                                      <div className="flex items-center gap-2">
+                                        <div className="flex-1 min-w-0">
+                                          <div className="text-xs font-semibold text-school-primary dark:text-[#e0e0e8] truncate">{s.name}</div>
+                                          <div className="text-[10px] text-school-muted">Roll: {s.roll || '—'}</div>
+                                        </div>
+                                        <button
+                                          onClick={() => handleStudentToggle(s, !hasSvc)}
+                                          disabled={busy}
+                                          className={`text-[10px] px-2 py-1 rounded font-bold border transition-colors disabled:opacity-50 shrink-0 ${
+                                            hasSvc
+                                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                              : 'bg-white text-gray-400 border-gray-200 hover:border-school-accent hover:text-school-primary'
+                                          }`}>
+                                          {busy ? '...' : hasSvc ? '✓ Enrolled' : '+ Enroll'}
+                                        </button>
                                       </div>
-                                      <button
-                                        onClick={() => handleStudentToggle(s, !hasSvc)}
-                                        disabled={busy}
-                                        className={`text-[10px] px-2 py-1 rounded font-bold border transition-colors disabled:opacity-50 shrink-0 ${
-                                          hasSvc
-                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-                                            : 'bg-white text-gray-400 border-gray-200 hover:border-school-accent hover:text-school-primary'
-                                        }`}>
-                                        {busy ? '...' : hasSvc ? '✓ Enrolled' : '+ Enroll'}
-                                      </button>
+                                      <div className="flex items-center gap-1.5">
+                                        <input type="month" value={startsAt}
+                                          onChange={e => setSvcDate(s.id, bulkServiceId, 'startsAt', e.target.value)}
+                                          aria-label={`Start month for ${s.name}`}
+                                          className="flex-1 min-w-0 border border-school-border rounded-md px-1.5 py-0.5 text-[10px] outline-none focus:border-school-accent" />
+                                        <span className="text-[10px] text-school-muted">→</span>
+                                        <input type="month" value={endsAt}
+                                          onChange={e => setSvcDate(s.id, bulkServiceId, 'endsAt', e.target.value)}
+                                          aria-label={`End month for ${s.name}`}
+                                          className="flex-1 min-w-0 border border-school-border rounded-md px-1.5 py-0.5 text-[10px] outline-none focus:border-school-accent" />
+                                      </div>
                                     </div>
                                   );
                                 })}
@@ -412,7 +482,8 @@ export default function ServiceTypeManager() {
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2 text-xs text-amber-800">
         <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
         <span>
-          When a service is toggled ON for a student, a <strong>StudentFeeAssignment</strong> is auto-created in Finance.
+          When a service is toggled ON for a student, a <strong>StudentFeeAssignment</strong> is auto-created in Finance
+          for the chosen months (defaults to the academic year, so every enrollment is billed).
           Student handlers can manage service enrollment from the student cards.
         </span>
       </div>

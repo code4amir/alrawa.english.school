@@ -250,3 +250,38 @@ class StudentClassTeacherScopeTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.data['created'], 1)
         self.assertEqual(len(res.data['errors']), 1)
+
+
+class ServiceWindowDefaultTests(TestCase):
+    """Dateless activation must fall back to the academic-year window,
+    otherwise the auto-created fee assignment can never match a fee month."""
+
+    def test_dateless_activation_gets_year_window(self):
+        from core.models import AcademicYear, ServiceType
+        from students.services import toggle_student_service
+        from finance.models import StudentFeeAssignment
+        year = AcademicYear.objects.create(
+            name='2026', start_date='2026-01-01', end_date='2026-12-31', is_active=True)
+        klass = SchoolClass.objects.create(name='Nursery', order=1)
+        svc = ServiceType.objects.create(name='Transport', default_amount=500)
+        s = Student.objects.create(name='Rider', school_class=klass)
+        r = toggle_student_service(s.id, svc.id, True)
+        self.assertTrue(r['student_service']['active'])
+        self.assertEqual(r['student_service']['starts_at'], '2026-01')
+        self.assertEqual(r['student_service']['ends_at'], '2026-12')
+        a = StudentFeeAssignment.objects.get(student=s)
+        self.assertTrue(a.active)
+        self.assertEqual(a.starts_at, '2026-01')
+        self.assertEqual(a.ends_at, '2026-12')
+
+    def test_explicit_window_kept(self):
+        from core.models import AcademicYear, ServiceType
+        from students.services import toggle_student_service
+        AcademicYear.objects.create(
+            name='2026', start_date='2026-01-01', end_date='2026-12-31', is_active=True)
+        klass = SchoolClass.objects.create(name='Nursery', order=1)
+        svc = ServiceType.objects.create(name='Hifz', default_amount=300)
+        s = Student.objects.create(name='Keeper', school_class=klass)
+        r = toggle_student_service(s.id, svc.id, True, starts_at='2026-03', ends_at='2026-06')
+        self.assertEqual(r['student_service']['starts_at'], '2026-03')
+        self.assertEqual(r['student_service']['ends_at'], '2026-06')
