@@ -34,7 +34,7 @@ class Student(models.Model):
             models.Index(fields=['deleted_at', 'session'], name='student_session_active_idx'),
         ]
         constraints = [
-            models.UniqueConstraint(fields=['roll', 'school_class'], name='unique_roll_per_class', condition=Q(roll__gt='')),
+            models.UniqueConstraint(fields=['roll', 'school_class'], name='unique_roll_per_class', condition=Q(roll__gt='') & Q(deleted_at__isnull=True)),
         ]
 
     def __str__(self):

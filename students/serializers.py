@@ -65,7 +65,7 @@ class StudentSerializer(PhotoUrlMixin, serializers.ModelSerializer):
         # Mirror the model's conditional uniqueness: only enforced when
         # roll is non-empty and a class is set (matches Q(roll__gt='')).
         if roll and school_class:
-            qs = Student.objects.filter(roll=roll, school_class=school_class)
+            qs = Student.objects.filter(roll=roll, school_class=school_class, deleted_at__isnull=True)
             if self.instance:
                 qs = qs.exclude(pk=self.instance.pk)
             if qs.exists():

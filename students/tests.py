@@ -74,6 +74,24 @@ class StudentTests(TestCase):
         s = Student.objects.get(name='Casey')
         self.assertEqual(s.school_class_id, self.klass.id)
 
+    def test_duplicate_roll_active_400(self):
+        self.client.post('/api/students/', {
+            'name': 'First', 'class': self.klass.name, 'roll': '2026420'})
+        res = self.client.post('/api/students/', {
+            'name': 'Second', 'class': self.klass.name, 'roll': '2026420'})
+        self.assertEqual(res.status_code, 400)
+
+    def test_deleted_roll_reusable_201(self):
+        res = self.client.post('/api/students/', {
+            'name': 'Gone', 'class': self.klass.name, 'roll': '2026420'})
+        self.assertEqual(res.status_code, 201)
+        gone = Student.objects.get(name='Gone')
+        del_res = self.client.delete(f'/api/students/{gone.id}/')
+        self.assertEqual(del_res.status_code, 204)
+        res2 = self.client.post('/api/students/', {
+            'name': 'Replacement', 'class': self.klass.name, 'roll': '2026420'})
+        self.assertEqual(res2.status_code, 201)
+
     def test_create_student_null_names_flattened(self):
         # NOT NULL columns with default '' — API must not 500 on nulls.
         res = self.client.post('/api/students/', {
