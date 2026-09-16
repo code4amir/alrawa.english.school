@@ -1785,3 +1785,12 @@ class BulkPaymentVisibilityTests(TestCase):
         rows = res.data.get('data', res.data) if isinstance(res.data, dict) else res.data
         row = [r for r in rows if r['studentId'] == str(self.student.id)][0]
         self.assertEqual(row['totalPaid'], 3500)
+
+    def test_due_total_excludes_paid_months(self):
+        self._bulk_pay('2026-01')
+        res = self.client.get('/api/finance/fee-status/', {
+            'studentId': str(self.student.id),
+            'feeMonth': '2026-01', 'feeMonthTo': '2026-03'})
+        self.assertEqual(res.status_code, 200)
+        item = [i for i in res.data if i['category'] == 'Tuition fee'][0]
+        self.assertEqual(item['dueTotal'], 7000)

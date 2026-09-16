@@ -510,7 +510,10 @@ const FinanceSection = () => {
       const total = selectedFeeIds.reduce((s, id) => {
         const f = feeStatusList.find((fs: any) => fs.feeScheduleId === id);
         if (!f) return s;
-        return s + Number(f.amount) * (f.numMonths || 1);
+        // Bill only what's still due: paid months must not inflate the total.
+        if (typeof f.dueTotal === 'number') return s + f.dueTotal;
+        const unpaid = Array.isArray(f.unpaidMonths) ? f.unpaidMonths.length : (f.numMonths || 1);
+        return s + Number(f.amount) * unpaid;
       }, 0);
       const otherTotal = otherFees.filter(o => o.checked).reduce((s, o) => s + (Number(o.amount) || 0), 0);
       setAmount(String(total + otherTotal));
@@ -596,7 +599,9 @@ const FinanceSection = () => {
           if (!fs) continue;
           if (fs.frequency === 'MONTHLY') {
             const allMonths = feeMonth && feeMonthTo ? getMonthsInRange(feeMonth, feeMonthTo) : [feeMonth || ''];
-            const months = filterMonthsByAssignment(allMonths, fs.assignmentStart, fs.assignmentEnd);
+            const months = filterMonthsByAssignment(allMonths, fs.assignmentStart, fs.assignmentEnd)
+              // Never re-bill months already paid in full.
+              .filter(m => !Array.isArray(fs.unpaidMonths) || fs.unpaidMonths.includes(m));
             for (const period of months) {
               body.allocations.push({ feeScheduleId: id, amount: Number(fs.amount), period });
             }

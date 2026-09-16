@@ -150,6 +150,7 @@ class FeeStatusService:
             waiver = waiver_map.get(fs_id)
             expected_per_month = float(s.amount)
             expected_total = 0.0
+            due_total = 0.0
 
             unpaid_months = []
             for month in valid_months:
@@ -169,6 +170,7 @@ class FeeStatusService:
                 )
                 if float(month_paid) < month_expected:
                     unpaid_months.append(month)
+                    due_total += month_expected - float(month_paid)
 
             item = {
                 'feeScheduleId': fs_id,
@@ -180,6 +182,7 @@ class FeeStatusService:
                 'paid': len(unpaid_months) == 0 and num_valid_months > 0,
                 'numMonths': num_valid_months,
                 'expectedTotal': expected_total,
+                'dueTotal': due_total,
                 'unpaidMonths': unpaid_months,
             }
             if a_start:
