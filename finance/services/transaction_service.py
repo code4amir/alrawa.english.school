@@ -50,6 +50,7 @@ def create_transaction(serializer, request, row_data=None):
         )
 
         allocations = data.get('allocations')
+        alloc_objects = []
         if allocations and tx_type == 'INCOME':
             fee_ids = [
                 a.get('feeScheduleId') or a.get('fee_schedule_id')
@@ -155,6 +156,9 @@ def create_transaction(serializer, request, row_data=None):
                     amount=tx.amount,
                 )
 
+        if not alloc_objects and tx_type == 'INCOME' and tx.student_id:
+            _auto_allocate_bulk_payment(tx, serializer, data)
+
         if tx_type == 'INCOME' and tx.destination_account and tx.destination_account.name in _internal_accounts():
             tx.affects_income_ledger = True
             tx.receipt_sequence = _next_receipt_sequence(tx.transaction_date, 'RCPT')
@@ -196,3 +200,45 @@ def create_transaction(serializer, request, row_data=None):
         except Exception:
             logger.exception('Failed to notify parents of fee payment')
     return tx
+
+
+def _auto_allocate_bulk_payment(tx, serializer, data):
+    """Backfill a PaymentAllocation for income written without one (bulk /
+    Excel import path: category + fee_month only, no allocations array).
+
+    Without this row the payment is invisible to fee-status/defaulter
+    schedule matching, so paid months keep showing as due. Resolves only
+    when exactly one AUTO monthly schedule matches (category, active year,
+    student's class or global) — ambiguous or ASSIGNED_ONLY cases are left
+    alone and stay visible via the transaction-level fallback in readers.
+    """
+    from core.models import AcademicYear
+    from django.db.models import Q
+    fee_month = serializer.validated_data.get('fee_month') or data.get('feeMonth')
+    category = (tx.category or '').strip()
+    if not fee_month or not category or ',' in category:
+        return
+    active_year = AcademicYear.objects.filter(is_active=True).first()
+    if not active_year:
+        return
+    base = FeeSchedule.objects.filter(
+        academic_year=active_year,
+        category__iexact=category,
+        frequency='MONTHLY',
+        applicability='AUTO',
+    )
+    if tx.student.school_class_id:
+        candidates = base.filter(
+            Q(school_class__isnull=True) | Q(school_class=tx.student.school_class),
+        )
+    else:
+        candidates = base.filter(school_class__isnull=True)
+    if candidates.count() != 1:
+        return
+    PaymentAllocation.objects.create(
+        transaction=tx,
+        fee_schedule=candidates.first(),
+        student=tx.student,
+        period=fee_month,
+        amount=tx.amount,
+    )

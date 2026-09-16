@@ -1697,3 +1697,91 @@ class VoidRefundCancelTests(TestCase):
             {'reason': 'x', 'cancel_type': 'bogus'}, format='json')
         self.assertEqual(res.status_code, 400)
         self.assertFalse(Transaction.objects.filter(reversal_of_id=tx.id).exists())
+
+
+class BulkPaymentVisibilityTests(TestCase):
+    """Bulk/Excel income (category + fee_month, no allocations array) must
+    still read as paid in fee-status and defaulter — the Play-tuition case."""
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        from rest_framework_simplejwt.tokens import RefreshToken
+        from rest_framework.test import APIClient
+        u = get_user_model().objects.create_superuser(
+            email='bulk@t.com', name='B', password='x')
+        self.client = APIClient()
+        t = RefreshToken.for_user(u)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {t.access_token}')
+        self.klass = SchoolClass.objects.create(name='Play', order=1)
+        self.year = AcademicYear.objects.create(
+            name='2026', start_date='2026-01-01', end_date='2026-12-31', is_active=True)
+        self.student = Student.objects.create(
+            name='Kid', student_id='S000009', school_class=self.klass, session='2026')
+        self.sched = FeeSchedule.objects.create(
+            academic_year=self.year, school_class=self.klass,
+            category='Tuition fee', amount=3500,
+            frequency='MONTHLY', applicability='AUTO')
+        for b in ('AL_RAWA_BANK', 'GLOBAL_FORUM_BANK', 'CASH_IN_HAND'):
+            BankAccount.objects.get_or_create(
+                name=b, defaults={'display_name': b})
+
+    def _bulk_pay(self, month, amount=3500):
+        return self.client.post('/api/finance/transactions/bulk/', [{
+            'transaction_date': f'{month}-05',
+            'transaction_type': 'INCOME',
+            'amount': amount,
+            'student': str(self.student.id),
+            'class_name': 'Play',
+            'destination_account': 'AL_RAWA_BANK',
+            'fee_month': month,
+            'category': 'Tuition fee',
+        }], format='json')
+
+    def test_bulk_payment_auto_allocates(self):
+        res = self._bulk_pay('2026-01')
+        self.assertEqual(res.status_code, 201, msg=res.content[:300])
+        self.assertTrue(PaymentAllocation.objects.filter(
+            student=self.student, fee_schedule=self.sched, period='2026-01').exists())
+
+    def test_bulk_paid_month_not_due(self):
+        self._bulk_pay('2026-01')
+        res = self.client.get('/api/finance/fee-status/', {
+            'studentId': str(self.student.id),
+            'feeMonth': '2026-01', 'feeMonthTo': '2026-03'})
+        self.assertEqual(res.status_code, 200)
+        item = [i for i in res.data if i['category'] == 'Tuition fee'][0]
+        self.assertNotIn('2026-01', item['unpaidMonths'])
+        self.assertIn('2026-02', item['unpaidMonths'])
+        self.assertIn('2026-03', item['unpaidMonths'])
+
+    def test_bulk_paid_month_not_defaulter(self):
+        self._bulk_pay('2026-01')
+        res = self.client.get('/api/finance/defaulter/', {
+            'month_from': '2026-01', 'month_to': '2026-03'})
+        self.assertEqual(res.status_code, 200)
+        rows = res.data.get('data', res.data) if isinstance(res.data, dict) else res.data
+        row = [r for r in rows if r['studentId'] == str(self.student.id)][0]
+        tuition = [f for f in row['fees'] if f['name'] == 'Tuition fee'][0]
+        by_month = {m['month']: m for m in tuition['months']}
+        self.assertTrue(by_month['2026-01']['paid'])
+        self.assertFalse(by_month['2026-02']['paid'])
+
+    def test_form_payment_not_double_counted(self):
+        # Income-form payment records tx + allocations; fallback must not double.
+        res = self.client.post('/api/finance/transactions/', {
+            'transaction_date': '2026-01-05',
+            'transaction_type': 'INCOME',
+            'amount': 3500,
+            'student': str(self.student.id),
+            'class_name': 'Play',
+            'destination_account': 'AL_RAWA_BANK',
+            'fee_month': '2026-01',
+            'category': 'Tuition fee',
+            'allocations': [{'feeScheduleId': str(self.sched.id), 'amount': 3500, 'period': '2026-01'}],
+        }, format='json')
+        self.assertEqual(res.status_code, 201, msg=res.content[:300])
+        res = self.client.get('/api/finance/defaulter/', {
+            'month_from': '2026-01', 'month_to': '2026-01'})
+        rows = res.data.get('data', res.data) if isinstance(res.data, dict) else res.data
+        row = [r for r in rows if r['studentId'] == str(self.student.id)][0]
+        self.assertEqual(row['totalPaid'], 3500)

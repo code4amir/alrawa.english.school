@@ -145,7 +145,7 @@ class FeeStatusService:
             num_valid_months = len(valid_months)
 
             schedule_paid = paid_by_schedule_period.get(fs_id, {})
-            has_allocations = bool(schedule_paid)
+            cat_paid = paid_by_category_month.get(s.category, {})
 
             waiver = waiver_map.get(fs_id)
             expected_per_month = float(s.amount)
@@ -158,10 +158,15 @@ class FeeStatusService:
                 month_expected = float(_waiver_expected_amount(w, s.amount))
                 expected_per_month = month_expected
                 expected_total += month_expected
-                if has_allocations:
-                    month_paid = schedule_paid.get(month, Decimal('0'))
-                else:
-                    month_paid = paid_by_category_month.get(s.category, {}).get(month, Decimal('0'))
+                # Allocation rows are authoritative, but bulk/legacy payments
+                # were written with category + fee_month only — fall back to
+                # the transaction-level sums so paid months don't read unpaid.
+                # max(), never sum: form payments record BOTH, and doubling
+                # them would mark partial months paid.
+                month_paid = max(
+                    schedule_paid.get(month, Decimal('0')),
+                    cat_paid.get(month, Decimal('0')),
+                )
                 if float(month_paid) < month_expected:
                     unpaid_months.append(month)
 

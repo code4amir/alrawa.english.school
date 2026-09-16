@@ -63,10 +63,12 @@ class DefaulterService:
         assigned = self._fetch_monthly_assignments(student_ids, monthly_schedules)
         yearly_assigned = self._fetch_yearly_assignments(student_ids, yearly_schedules)
         paid_map = self._fetch_paid_map(student_ids)
+        tx_paid_map = self._fetch_tx_paid_map(student_ids)
         waiver_map = self._fetch_waiver_map(student_ids)
 
         return self._build_result(students, yearly_schedules, monthly_schedules,
-                                  assigned, yearly_assigned, paid_map, waiver_map)
+                                  assigned, yearly_assigned, paid_map, waiver_map,
+                                  tx_paid_map=tx_paid_map)
 
     def compute_totals(self, students, student_ids):
         """Totals-only path: same batched fetches as compute(), but skips
@@ -87,11 +89,12 @@ class DefaulterService:
         assigned = self._fetch_monthly_assignments(student_ids, monthly_schedules)
         yearly_assigned = self._fetch_yearly_assignments(student_ids, yearly_schedules)
         paid_map = self._fetch_paid_map(student_ids)
+        tx_paid_map = self._fetch_tx_paid_map(student_ids)
         waiver_map = self._fetch_waiver_map(student_ids)
 
         rows = self._build_result(students, yearly_schedules, monthly_schedules,
                                   assigned, yearly_assigned, paid_map, waiver_map,
-                                  totals_only=True)
+                                  totals_only=True, tx_paid_map=tx_paid_map)
         grand_due = sum(r['totalDue'] for r in rows)
         grand_paid = sum(r['totalPaid'] for r in rows)
         return grand_due, grand_paid
@@ -136,6 +139,24 @@ class DefaulterService:
             paid_map[key] = float(pa['total'])
         return paid_map
 
+    def _fetch_tx_paid_map(self, student_ids):
+        """Transaction-level fallback for bulk/legacy payments written with
+        category + fee_month but no allocation rows. Keyed
+        (student, category, month) -> total. Callers take max() with the
+        allocation map, never sum, so months paid through the income form
+        (which records BOTH) are never double-counted."""
+        from finance.models import Transaction
+        from django.db.models import Sum
+        tx_paid = {}
+        for pt in Transaction.objects.filter(
+            student_id__in=student_ids,
+            transaction_type='INCOME',
+            is_cancelled=False,
+        ).values('student_id', 'category', 'fee_month').annotate(total=Sum('amount')):
+            if pt['fee_month']:
+                tx_paid[(pt['student_id'], pt['category'] or '', pt['fee_month'])] = float(pt['total'])
+        return tx_paid
+
     def _fetch_waiver_map(self, student_ids):
         waivers = FeeWaiver.objects.filter(
             student_id__in=student_ids, active=True,
@@ -149,7 +170,7 @@ class DefaulterService:
 
     def _build_result(self, students, yearly_schedules, monthly_schedules,
                       assigned, yearly_assigned, paid_map, waiver_map,
-                      totals_only=False):
+                      totals_only=False, tx_paid_map=None):
         result = []
         for student in students:
             sid = student.id
@@ -168,6 +189,11 @@ class DefaulterService:
                 waiver_entry = waiver_map.get((sid, fs.id))
                 amt = float(_waiver_expected_amount(waiver_entry, fs.amount))
                 paid_amt = paid_map.get((sid, fs.id, ''), 0)
+                if not paid_amt and tx_paid_map:
+                    paid_amt = sum(
+                        v for (s, c, _m), v in tx_paid_map.items()
+                        if s == sid and c == fs.category
+                    )
 
                 if not totals_only:
                     fees.append({
@@ -205,7 +231,10 @@ class DefaulterService:
                     # A waiver only discounts the months inside its active window.
                     w = waiver_entry if _waiver_covers_month(waiver_entry, month_label) else None
                     month_amt = float(_waiver_expected_amount(w, fs.amount))
-                    paid_amt = paid_map.get((sid, fs.id, month_label), 0)
+                    paid_amt = max(
+                        paid_map.get((sid, fs.id, month_label), 0),
+                        (tx_paid_map or {}).get((sid, fs.category, month_label), 0),
+                    )
                     if not totals_only:
                         months_list.append({
                             'month': month_label,
