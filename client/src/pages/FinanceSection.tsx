@@ -841,8 +841,9 @@ const FinanceSection = () => {
                               {feeStatusList.map((f: any) => {
                                 const checked = selectedAllocations[f.feeScheduleId] || false;
                                 const isMonthly = f.frequency === 'MONTHLY';
-                                const months = f.numMonths || 1;
-                                const totalAmount = Number(f.amount) * months;
+                                // Bill only what's still due (matches the Amount auto-fill).
+                                const totalAmount = typeof f.dueTotal === 'number' ? f.dueTotal
+                                  : Number(f.amount) * (Array.isArray(f.unpaidMonths) ? f.unpaidMonths.length : (f.numMonths || 1));
                                 return (
                                   <tr key={f.feeScheduleId} className={`hover:bg-school-paper/30 ${f.paid ? 'opacity-40' : ''}`}>
                                     <td className="px-4 py-2.5 text-center">
@@ -931,10 +932,8 @@ const FinanceSection = () => {
                                 <td className="px-4 py-2.5 text-right font-bold text-school-primary">
                                   {(feeStatusList
                                     .filter(f => selectedAllocations[f.feeScheduleId])
-                                    .reduce((s, f) => {
-                                      const months = f.numMonths || 1;
-                                      return s + Number(f.amount) * months;
-                                    }, 0) + otherFees.filter(o => o.checked).reduce((s, o) => s + (Number(o.amount) || 0), 0))
+                                    .reduce((s, f) => s + (typeof f.dueTotal === 'number' ? f.dueTotal
+                                      : Number(f.amount) * (Array.isArray(f.unpaidMonths) ? f.unpaidMonths.length : (f.numMonths || 1))), 0) + otherFees.filter(o => o.checked).reduce((s, o) => s + (Number(o.amount) || 0), 0))
                                     .toLocaleString()}
                                 </td>
                               </tr>
