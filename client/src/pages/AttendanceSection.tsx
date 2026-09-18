@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, memo } from 'react';
 import { api, useSchoolStore } from '../store';
 import Toast, { toast } from '../components/Toast';
 import { TERM_NAMES } from '../lib/config';
@@ -199,6 +199,51 @@ async function downloadMonthlyPDF(data: MonthlyReportData) {
   doc.save(fname);
 }
 
+/* --- Memoized grid rows (monthly register + daily marking) --- */
+
+const DailyMarkRow = memo(function DailyMarkRow({ s, status, onToggle }: { s: StudentInfo; status: StatusType; onToggle: (sid: string) => void }) {
+  return (
+    <button onClick={function () { onToggle(s.id); }}
+      className={'w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-school-paper/50 dark:hover:bg-white/5 ' + (status === 'present' ? 'bg-green-50 dark:bg-green-500/10' : status === 'absent' ? 'bg-red-50 dark:bg-red-500/10' : '')}>
+      <div className={'w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ' + (status === 'present' ? 'bg-green-100 dark:bg-green-500/20 text-green-600' : status === 'absent' ? 'bg-red-100 dark:bg-red-500/20 text-red-600' : 'bg-school-border/30 dark:bg-[#2a2a3e] text-school-muted')}>
+        {status === 'present' ? <Check size={16} /> : status === 'absent' ? <X size={16} /> : <span className="text-[10px]">—</span>}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="font-semibold text-sm text-school-primary dark:text-[#e0e0e8] truncate">{s.name}</div>
+        {s.roll && <div className="text-[10px] text-school-muted uppercase">Roll {s.roll}</div>}
+      </div>
+      <div className="flex gap-1.5">
+        <div className={'w-2.5 h-2.5 rounded-full ' + (status === 'present' ? 'bg-green-500' : 'bg-school-border/40 dark:bg-[#3a3a4e]')} />
+        <div className={'w-2.5 h-2.5 rounded-full ' + (status === 'absent' ? 'bg-red-500' : 'bg-school-border/40 dark:bg-[#3a3a4e]')} />
+      </div>
+      <div className="text-[10px] font-bold uppercase text-school-muted min-w-[48px] text-right">
+        {status === 'unmarked' ? 'Tap' : status === 'present' ? 'Present' : 'Absent'}
+      </div>
+    </button>
+  );
+});
+
+const MonthlyGridRow = memo(function MonthlyGridRow({ s, stripe, cells, presentCount }: {
+  s: StudentInfo; stripe: boolean; cells: { date: string; text: string; cls: string; title: string; off: boolean }[]; presentCount: number;
+}) {
+  return (
+    <tr className={'border-t border-school-border/30 dark:border-[#2a2a3e] ' + (stripe ? 'bg-gray-50 dark:bg-transparent' : '')}>
+      <td className="px-2 py-1.5 font-semibold text-school-primary dark:text-[#e0e0e8] sticky left-0 bg-white dark:bg-[#1a1a2e] z-10 truncate max-w-[120px]" title={s.name}>
+        {s.roll ? <span className="text-school-muted font-normal mr-1">{s.roll}.</span> : null}{s.name}
+      </td>
+      {cells.map(function (c) {
+        return (
+          <td key={c.date} title={c.title}
+            className={'text-center py-1.5 ' + c.cls + (c.off ? ' bg-school-paper/50 dark:bg-[#2a2a3e]/30' : '')}>
+            {c.text}
+          </td>
+        );
+      })}
+      <td className="text-center py-1.5 font-bold text-green-600 bg-school-paper/50 dark:bg-[#2a2a3e]/30">{presentCount}</td>
+    </tr>
+  );
+});
+
 /* --- Main component --- */
 
 export default function AttendanceSection() {
@@ -238,16 +283,28 @@ export default function AttendanceSection() {
 
   useEffect(function () { fetchClasses(); }, [fetchClasses]);
 
-  /* load students for daily marking */
+  /* load students for daily marking — cached per class so changing the
+     DATE (or leaving and returning within TTL) reuses the list instead of
+     re-crawling /students/?limit=2000. Only a class switch fetches. */
+  const studentsCache = useRef<Record<string, { list: StudentInfo[]; total: number | null; at: number }>>({});
   useEffect(function () {
     if (!classId) return;
+    const cached = studentsCache.current[classId];
+    if (cached && Date.now() - cached.at < 60_000) {
+      setStudents(cached.list);
+      setStudentTotal(cached.total);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     api.get('/students/', { params: { class_id: classId, limit: 2000 } })
       .then(function (res: any) {
         var list = (res.data.results || res.data).map(function (s: any) { return { id: s.id, name: s.name, roll: s.roll || '' }; });
         list.sort(function (a: any, b: any) { return String(a.roll || '').localeCompare(String(b.roll || ''), undefined, { numeric: true }); });
+        var total = res.data.count ?? res.data.total ?? list.length;
+        studentsCache.current[classId] = { list, total, at: Date.now() };
         setStudents(list);
-        setStudentTotal(res.data.count ?? res.data.total ?? list.length);
+        setStudentTotal(total);
       })
       .catch(function () { toast('Failed to load students', 'error'); })
       .finally(function () { setLoading(false); });
@@ -266,13 +323,16 @@ export default function AttendanceSection() {
       .catch(function () { setRecords({}); });
   }, [classId, date, tab]);
 
-  var markAllPresent = function () {
+  // Stable callbacks so memoized rows don't re-render on every keystroke.
+  // markAllPresent depends on the student list (changes only on class
+  // switch); toggleStatus is fully stable (functional update).
+  var markAllPresent = useCallback(function () {
     var all: Record<string, StatusType> = {};
     students.forEach(function (s: any) { all[s.id] = 'present'; });
     setRecords(all);
-  };
+  }, [students]);
 
-  var toggleStatus = function (sid: string) {
+  var toggleStatus = useCallback(function (sid: string) {
     setRecords(function (prev: Record<string, StatusType>) {
       var cur = prev[sid] || 'unmarked';
       var next: StatusType = cur === 'unmarked' ? 'present' : cur === 'present' ? 'absent' : 'unmarked';
@@ -281,7 +341,7 @@ export default function AttendanceSection() {
       copy[sid] = next;
       return copy;
     });
-  };
+  }, []);
 
   var handleSave = async function () {
     if (!classId || !date) { toast('Select a class and date', 'error'); return; }
@@ -352,6 +412,36 @@ export default function AttendanceSection() {
     return function () { clearTimeout(t); controller.abort(); };
   }, [monthlyClassId, monthYear, rptRangeMode, rptFrom, rptTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* Precompute monthly-register row cells once per dataset (was: rebuilt
+     inline on every render — O(students × days) string work per keystroke
+     elsewhere on the page). Rows are memoized below; cells arrays are
+     referentially stable until monthlyData changes. */
+  var monthlyRows = useMemo(function () {
+    if (!monthlyData) return [];
+    var sd = monthlyData.student_days || {};
+    return monthlyData.students.map(function (s, si) {
+      var row = sd[s.id] || {};
+      var presentCount = 0;
+      var cells = monthlyData.days.map(function (d) {
+        var st = row[d.date];
+        if (st === 'present') presentCount++;
+        var off = d.type === 'weekend' || d.type === 'holiday';
+        var text = st === 'present' ? 'P' : st === 'absent' ? 'A' : (off ? '·' : '');
+        var cls = st === 'present' ? 'text-green-600 font-bold'
+          : st === 'absent' ? 'text-red-600 font-bold'
+          : 'text-school-muted/40';
+        return {
+          date: d.date,
+          text,
+          cls,
+          off,
+          title: s.name + ' — ' + d.date + (off ? ' (' + d.type + ')' : st ? ': ' + st : ': unmarked'),
+        };
+      });
+      return { s, stripe: si % 2 === 1, cells, presentCount };
+    });
+  }, [monthlyData]);
+
   return (
     <div className="space-y-4 animate-fade-in max-w-2xl mx-auto">
       <Toast />
@@ -417,26 +507,7 @@ export default function AttendanceSection() {
           ) : (
             <div className="bg-white dark:bg-[#1a1a2e] rounded-2xl border border-school-border dark:border-[#2a2a3e] divide-y divide-school-border/50 dark:divide-[#2a2a3e] overflow-hidden">
               {students.map(function (s) {
-                var status = records[s.id] || 'unmarked';
-                return (
-                  <button key={s.id} onClick={function () { toggleStatus(s.id); }}
-                    className={'w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-school-paper/50 dark:hover:bg-white/5 ' + (status === 'present' ? 'bg-green-50 dark:bg-green-500/10' : status === 'absent' ? 'bg-red-50 dark:bg-red-500/10' : '')}>
-                    <div className={'w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ' + (status === 'present' ? 'bg-green-100 dark:bg-green-500/20 text-green-600' : status === 'absent' ? 'bg-red-100 dark:bg-red-500/20 text-red-600' : 'bg-school-border/30 dark:bg-[#2a2a3e] text-school-muted')}>
-                      {status === 'present' ? <Check size={16} /> : status === 'absent' ? <X size={16} /> : <span className="text-[10px]">---</span>}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-sm text-school-primary dark:text-[#e0e0e8] truncate">{s.name}</div>
-                      {s.roll && <div className="text-[10px] text-school-muted uppercase">Roll {s.roll}</div>}
-                    </div>
-                    <div className="flex gap-1.5">
-                      <div className={'w-2.5 h-2.5 rounded-full ' + (status === 'present' ? 'bg-green-500' : 'bg-school-border/40 dark:bg-[#3a3a4e]')} />
-                      <div className={'w-2.5 h-2.5 rounded-full ' + (status === 'absent' ? 'bg-red-500' : 'bg-school-border/40 dark:bg-[#3a3a4e]')} />
-                    </div>
-                    <div className="text-[10px] font-bold uppercase text-school-muted min-w-[48px] text-right">
-                      {status === 'unmarked' ? 'Tap' : status === 'present' ? 'Present' : 'Absent'}
-                    </div>
-                  </button>
-                );
+                return <DailyMarkRow key={s.id} s={s} status={records[s.id] || 'unmarked'} onToggle={toggleStatus} />;
               })}
             </div>
           )}
@@ -685,35 +756,8 @@ export default function AttendanceSection() {
                         </tr>
                       </thead>
                       <tbody>
-                        {monthlyData.students.map(function (s, si) {
-                          var row = (monthlyData.student_days || {})[s.id] || {};
-                          var presentCount = 0;
-                          monthlyData.days.forEach(function (d) {
-                            var st = row[d.date];
-                            if (st === 'present') presentCount++;
-                          });
-                          return (
-                            <tr key={s.id} className={'border-t border-school-border/30 dark:border-[#2a2a3e] ' + (si % 2 ? 'bg-gray-50 dark:bg-transparent' : '')}>
-                              <td className="px-2 py-1.5 font-semibold text-school-primary dark:text-[#e0e0e8] sticky left-0 bg-white dark:bg-[#1a1a2e] z-10 truncate max-w-[120px]" title={s.name}>
-                                {s.roll ? <span className="text-school-muted font-normal mr-1">{s.roll}.</span> : null}{s.name}
-                              </td>
-                              {monthlyData.days.map(function (d) {
-                                var st = row[d.date];
-                                var off = d.type === 'weekend' || d.type === 'holiday';
-                                var cell = st === 'present' ? 'P' : st === 'absent' ? 'A' : '';
-                                var cls = st === 'present' ? 'text-green-600 font-bold'
-                                  : st === 'absent' ? 'text-red-600 font-bold'
-                                  : 'text-school-muted/40';
-                                return (
-                                  <td key={d.date} title={s.name + ' — ' + d.date + (off ? ' (' + d.type + ')' : st ? ': ' + st : ': unmarked')}
-                                    className={'text-center py-1.5 ' + cls + (off ? ' bg-school-paper/50 dark:bg-[#2a2a3e]/30' : '')}>
-                                    {cell || (off ? '·' : '')}
-                                  </td>
-                                );
-                              })}
-                              <td className="text-center py-1.5 font-bold text-green-600 bg-school-paper/50 dark:bg-[#2a2a3e]/30">{presentCount}</td>
-                            </tr>
-                          );
+                        {monthlyRows.map(function (r) {
+                          return <MonthlyGridRow key={r.s.id} s={r.s} stripe={r.stripe} cells={r.cells} presentCount={r.presentCount} />;
                         })}
                       </tbody>
                     </table>

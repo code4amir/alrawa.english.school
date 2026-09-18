@@ -214,6 +214,11 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
     const hasParams = !!params && Object.keys(params).length > 0;
     const now = Date.now();
     if (!force && !hasParams && get().students.length > 0 && now - (get()._fetchedAt['students'] || 0) < CACHE_TTL) return;
+    // Per-class filtered fetches are keyed by params and honored against
+    // TTL, so switching classes back and forth within a minute reuses the
+    // merged global array instead of refetching.
+    const paramKey = hasParams ? `students_${JSON.stringify(params)}` : 'students';
+    if (!force && hasParams && now - (get()._fetchedAt[paramKey] || 0) < CACHE_TTL) return;
     set((s) => ({ loading: { ...s.loading, students: true } }));
     try {
       const res = await api.get('/students/', { params: { limit: '2000', ...params } });
@@ -227,15 +232,28 @@ export const useSchoolStore = create<SchoolState>((set, get) => ({
               // the ID Card section.)
               class: s.className || s.schoolClass || s.class,
             })) : [];
+      if (hasParams) {
+        // Merge into the global array (upsert by id) — a class-filtered
+        // fetch must NOT replace (clobber) the global list, or every other
+        // class filter re-renders empty and the dashboard total is lost.
+        const byId = new Map(get().students.map((s: any) => [String(s.id), s]));
+        for (const s of normalized) byId.set(String((s as any).id), s);
+        set({
+          students: [...byId.values()],
+          lastFetched: Date.now(),
+          _fetchedAt: { ...get()._fetchedAt, [paramKey]: Date.now() },
+        });
+        return;
+      }
       set({
         students: normalized,
         // Only an UNFILTERED fetch (no params) reflects the school-wide total.
         // Class-filtered fetches (e.g. visiting a class in the ID Card section)
         // must NOT clobber the dashboard's global studentTotal with a
         // single-class count.
-        ...(params ? {} : { studentTotal: res.data.count ?? res.data.total ?? 0 }),
+        studentTotal: res.data.count ?? res.data.total ?? 0,
         lastFetched: Date.now(),
-        ...(params ? {} : { _fetchedAt: { ...get()._fetchedAt, students: Date.now() } })
+        _fetchedAt: { ...get()._fetchedAt, students: Date.now() },
       });
     } catch (e) { if (import.meta.env.DEV) console.warn("[store]", e); }
     finally { set((s) => ({ loading: { ...s.loading, students: false } })); }

@@ -13,40 +13,58 @@ except ImportError:
 
 
 def notify(user, title, body, url=None, icon=None):
-    subs = PushSubscription.objects.filter(user=user)
-    if not subs.exists():
+    subs = list(PushSubscription.objects.filter(user=user))
+    if not subs:
         return 0
+    payload = _build_payload(title, body, url, icon)
+    vapid_claims = _vapid_claims()
+    sent = 0
+    for sub in subs:
+        if _deliver_to_sub(sub, payload, vapid_claims) == 'sent':
+            sent += 1
+    return sent
 
-    payload = json.dumps({
+
+def _deliver_to_sub(sub, payload, vapid_claims):
+    """Push one payload to one subscription. No DB reads.
+
+    Returns 'sent', 'gone' (410 — sub deleted), or 'failed'.
+    """
+    try:
+        _webpush(
+            subscription_info={
+                'endpoint': sub.endpoint,
+                'keys': {'p256dh': sub.p256dh_key, 'auth': sub.auth_key},
+            },
+            data=payload,
+            vapid_private_key=settings.VAPID_PRIVATE_KEY,
+            vapid_claims=vapid_claims,
+        )
+        return 'sent'
+    except WebPushException as e:
+        if hasattr(e, 'response') and e.response and e.response.status_code == 410:
+            sub.delete()
+            return 'gone'
+        logger.warning('Push send failed for %s: %s', sub.endpoint[:50], e)
+        return 'failed'
+    except Exception as e:
+        logger.error('Push error for %s: %s', sub.endpoint[:50], e)
+        return 'failed'
+
+
+def _build_payload(title, body, url=None, icon=None):
+    return json.dumps({
         'title': title,
         'body': body,
         'icon': icon or '/icon-192.svg',
         'data': {'url': url or '/'},
     })
 
-    vapid_claims = {
+
+def _vapid_claims():
+    return {
         'sub': f'mailto:{settings.VAPID_CLAIM_EMAIL}',
     }
-    sent = 0
-    for sub in subs:
-        try:
-            _webpush(
-                subscription_info={
-                    'endpoint': sub.endpoint,
-                    'keys': {'p256dh': sub.p256dh_key, 'auth': sub.auth_key},
-                },
-                data=payload,
-                vapid_private_key=settings.VAPID_PRIVATE_KEY,
-                vapid_claims=vapid_claims,
-            )
-            sent += 1
-        except WebPushException as e:
-            if hasattr(e, 'response') and e.response and e.response.status_code == 410:
-                sub.delete()
-            logger.warning('Push send failed for %s: %s', sub.endpoint[:50], e)
-        except Exception as e:
-            logger.error('Push error for %s: %s', sub.endpoint[:50], e)
-    return sent
 
 
 def _delivery_error(user, sent):
@@ -104,6 +122,77 @@ def notify_parents_of_student(student_id, event_type, title, body, url=None):
             error=err,
         )
     return parents.count()
+
+
+def notify_parents_of_students(student_ids, event_type, title, body, url=None):
+    """Batched fan-out to the parents of many students.
+
+    Flat query cost regardless of student count: ONE links query, ONE
+    users query, ONE push-subscription query, ONE bulk NotificationLog
+    insert. Students with no linked parents cost nothing (no per-student
+    lookups at all). Recipients, content, payloads and error strings are
+    identical to calling notify_parents_of_student per student.
+    """
+    from django.contrib.auth import get_user_model
+    from parents.models import ParentStudentLink
+    User = get_user_model()
+    sids = [str(s) for s in student_ids]
+    if not sids:
+        return 0
+    links = ParentStudentLink.objects.filter(
+        student_id__in=sids,
+    ).values_list('student_id', 'parent_id')
+    by_student = {}
+    parent_ids = set()
+    for stu_id, par_id in links:
+        by_student.setdefault(str(stu_id), []).append(par_id)
+        parent_ids.add(par_id)
+    if not parent_ids:
+        return 0
+    parents = {str(u.id): u for u in User.objects.filter(id__in=parent_ids)}
+    subs_by_user = {}
+    for sub in PushSubscription.objects.filter(user_id__in=parent_ids):
+        subs_by_user.setdefault(str(sub.user_id), []).append(sub)
+    payload = _build_payload(title, body, url)
+    vapid_claims = _vapid_claims()
+    logs = []
+    count = 0
+    for stu_key, pids in by_student.items():
+        for pid in pids:
+            parent = parents.get(str(pid))
+            if parent is None:
+                continue
+            subs = subs_by_user.get(str(pid), [])
+            sent = 0
+            err = None
+            try:
+                for sub in subs:
+                    if _deliver_to_sub(sub, payload, vapid_claims) == 'sent':
+                        sent += 1
+                if sent > 0:
+                    err = None
+                # A 410-gone sub is deleted by _deliver_to_sub (pk cleared),
+                # so only surviving subs count — same as _delivery_error's
+                # re-check after notify() deleted the dead ones.
+                elif any(s.pk for s in subs):
+                    err = 'push_failed'
+                else:
+                    err = 'no_subscription'
+            except Exception as e:
+                err = str(e)
+                logger.exception('Error notifying %s: %s', parent.email, e)
+            logs.append(NotificationLog(
+                user=parent,
+                event_type=event_type,
+                title=title,
+                body=body,
+                payload={'student_id': stu_key, 'url': url},
+                error=err,
+            ))
+            count += 1
+    if logs:
+        NotificationLog.objects.bulk_create(logs)
+    return count
 
 
 def notify_parents_of_class(class_id, event_type, title, body, url=None):

@@ -20,13 +20,13 @@ interface ReceiptStudent {
 /* Render a single receipt copy at vertical position y0, stamped with the given
  * copy label (OFFICE COPY / PARENT AND STUDENT COPY). Returns the height used
  * so the caller can stack two copies plus a perforation line on one A4 page. */
-function drawReceiptCopy(
+async function drawReceiptCopy(
   doc: jsPDF,
   p: ParentPayment,
   student: ReceiptStudent,
   y0: number,
   copyLabel: string,
-): number {
+): Promise<number> {
   let y = y0;
 
   // Copy marker bar — redundant stamp so it reads after cutting.
@@ -35,7 +35,7 @@ function drawReceiptCopy(
   doc.text(copyLabel, 14, y + 5.4);
 
   y += 10;
-  addLogo(doc, y);
+  await addLogo(doc, y);
   doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(26, 26, 46);
   doc.text('AL RAWA English School', 34, y + 7);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(130, 124, 114);
@@ -95,11 +95,11 @@ function drawReceiptCopy(
   return (y + 4) - y0;
 }
 
-export function pdfPaymentReceipt(p: ParentPayment, student: ReceiptStudent) {
+export async function pdfPaymentReceipt(p: ParentPayment, student: ReceiptStudent) {
   const doc = new jsPDF({ format: 'a4', unit: 'mm' });
 
   const startY = 8;
-  const copy1 = drawReceiptCopy(doc, p, student, startY, 'OFFICE COPY');
+  const copy1 = await drawReceiptCopy(doc, p, student, startY, 'OFFICE COPY');
   const dividerY = startY + copy1 + 6;
 
   // Perforation line (dashed) + cut label
@@ -110,7 +110,7 @@ export function pdfPaymentReceipt(p: ParentPayment, student: ReceiptStudent) {
   doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5); doc.setTextColor(150, 140, 130);
   doc.text('CUT HERE', 100, dividerY - 1.5, { align: 'center' });
 
-  drawReceiptCopy(doc, p, student, dividerY + 6, 'PARENT AND STUDENT COPY');
+  await drawReceiptCopy(doc, p, student, dividerY + 6, 'PARENT AND STUDENT COPY');
 
   doc.save(`receipt-${p.reference}.pdf`);
 }

@@ -1,21 +1,24 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense, lazy } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useUIStore, useSchoolStore, useAuthStore } from '../store';
 import { api } from '../store';
 import Layout from '../components/Layout';
 import Toast, { toast } from '../components/Toast';
 import Skeleton from '../components/Skeleton';
-import IdCardSection from './IdCardSection';
-import AccessoriesSection from './AccessoriesSection';
-import ResultSection from './ResultSection';
-import FinanceSection from './FinanceSection';
-import AttendanceSection from './AttendanceSection';
-import AdminRoutine from './AdminRoutine';
-import ExamRoutineAdmin from './ExamRoutineAdmin';
-import SessionYearSection from './SessionYearSection';
-import AdminAnnouncements from './AdminAnnouncements';
-import ServiceTypeManager from './admin/ServiceTypeManager';
-import SchedulerSection from './admin/SchedulerSection';
+// One lazy import per mode tab — heavy section code (react-to-print,
+// html2pdf, jspdf-backed pdf builders) stays out of the Dashboard chunk and
+// its preload graph until the tab is actually opened.
+const IdCardSection = lazy(() => import('./IdCardSection'));
+const AccessoriesSection = lazy(() => import('./AccessoriesSection'));
+const ResultSection = lazy(() => import('./ResultSection'));
+const FinanceSection = lazy(() => import('./FinanceSection'));
+const AttendanceSection = lazy(() => import('./AttendanceSection'));
+const AdminRoutine = lazy(() => import('./AdminRoutine'));
+const ExamRoutineAdmin = lazy(() => import('./ExamRoutineAdmin'));
+const SessionYearSection = lazy(() => import('./SessionYearSection'));
+const AdminAnnouncements = lazy(() => import('./AdminAnnouncements'));
+const ServiceTypeManager = lazy(() => import('./admin/ServiceTypeManager'));
+const SchedulerSection = lazy(() => import('./admin/SchedulerSection'));
 import EngagementWidget, { QuizPanel, RiddlePanel, MoodPanel, ChallengePanel, TipsPanel, PlannerPanel } from './engagement/EngagementWidget';
 import { CreditCard, BookOpen, BarChart3, Wallet, Users, GraduationCap, Building2, Sparkles, ArrowRight, Clock, MailCheck, CalendarCheck, UserCheck, ClipboardList, Calendar, CalendarDays, Megaphone, Settings } from 'lucide-react';
 import { SCHOOL_LOGO } from '../lib/logo';
@@ -224,6 +227,7 @@ const Dashboard = () => {
         </div>
       ) : (
         <div className="animate-fade-in">
+          <Suspense fallback={<Skeleton type="card" rows={3} />}>
           {effectiveMode === 'idcard' && <IdCardSection />}
           {effectiveMode === 'accessories' && <AccessoriesSection />}
           {effectiveMode === 'result' && <ResultSection />}
@@ -235,6 +239,7 @@ const Dashboard = () => {
           {effectiveMode === 'announcements' && <AdminAnnouncements />}
           {effectiveMode === 'services' && <ServiceTypeManager />}
           {effectiveMode === 'scheduler' && isAdmin && <SchedulerSection />}
+          </Suspense>
         </div>
       )}
 

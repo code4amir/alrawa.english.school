@@ -10,7 +10,7 @@ from .serializers import ResultSerializer, ResultLockSerializer, SUBJECT_KEY_MAP
 from accounts.permissions import require_permission, is_admin_or_superuser
 from core.audit import log_audit
 from core.models import SchoolSetting
-from parents.services import notify_parents_of_student
+from parents.services import notify_parents_of_students
 
 logger = logging.getLogger(__name__)
 
@@ -205,9 +205,11 @@ class ResultViewSet(viewsets.ModelViewSet):
                 detail = first[0] if isinstance(first, list) else first
             return str(detail)[:200]
 
-        # Prefetch everything the loop needs in 3 queries (was 2+N per
-        # item: one Student lookup, one Result lookup and one Subject
-        # limits lookup per item inside serializer validation).
+        # Prefetch everything the loop needs (4 queries, flat in batch
+        # size): students, existing result rows, subject limits, locks.
+        # Per-item validation then touches zero tables: the serializer's
+        # student-FK lookup is served from the prefetched dict and the
+        # uniqueness check reads the prefetched row map.
         import uuid as _uuid
         sid_strs = []
         for item in items:
@@ -239,11 +241,62 @@ class ResultViewSet(viewsets.ModelViewSet):
                 school_class_id__in=class_ids,
             ).values_list('school_class_id', 'name', 'full_marks'):
                 limits_by_class.setdefault(sc_id, {})[name] = full
+        is_admin = is_admin_or_superuser(request.user)
+        locked_class_ids = set()
+        if class_ids and not is_admin:
+            locked_class_ids = set(ResultLock.objects.filter(
+                school_class_id__in=class_ids,
+                session=session, term=term,
+            ).values_list('school_class_id', flat=True))
 
         def _serializer(instance, student, data, partial):
             ctx = self.get_serializer_context()
             ctx['subject_limits'] = limits_by_class.get(student.school_class_id, {})
-            return self.get_serializer(instance, data=data, partial=partial, context=ctx)
+            ser = self.get_serializer(instance, data=data, partial=partial, context=ctx)
+            # Serve the student-FK lookup from the prefetched dict instead
+            # of one SELECT per item (identical outcome: these ids were all
+            # just fetched above; unknown ids fail the same way).
+            fld = ser.fields.get('student')
+            if fld is not None:
+                def _cached_to_internal(value):
+                    try:
+                        key = str(_uuid.UUID(str(value)))
+                    except (ValueError, TypeError, AttributeError):
+                        key = str(value)
+                    inst = students_by_id.get(key)
+                    if inst is None:
+                        from rest_framework import serializers as _serializers
+                        raise _serializers.ValidationError('Student not found.')
+                    return inst
+                fld.to_internal_value = _cached_to_internal
+            # Drop the (student, term, session) uniqueness SELECT: the
+            # prefetched row map above already routes every item to
+            # create-vs-update, the DB constraint still guards the write,
+            # and the race fallback below merges on conflict.
+            from rest_framework.validators import (
+                UniqueTogetherValidator, UniqueValidator)
+            ser.validators = [
+                v for v in ser.validators
+                if not isinstance(v, (UniqueValidator, UniqueTogetherValidator))
+            ]
+            return ser
+
+        # Phase 1 (0 queries): validate every item, merge onto in-memory
+        # rows. Phase 2 (3 queries): ONE transaction with bulk_create +
+        # bulk_update + ONE audit row for the batch.
+        pending = {}  # sid str -> Result (existing row or new in-memory row)
+        to_create = []
+        to_update = []
+        updated_keys = set()
+
+        def _pending_for(student):
+            key = str(student.id)
+            obj = pending.get(key)
+            if obj is None:
+                obj = results_by_sid.get(key)
+                if obj is not None:
+                    pending[key] = obj
+            return obj
 
         for item in items:
             sid = item.get('student') if isinstance(item, dict) else None
@@ -257,13 +310,17 @@ class ResultViewSet(viewsets.ModelViewSet):
                 student = students_by_id.get(sid_key)
                 if not student:
                     raise ValidationError('Student not found.')
+                if student.school_class_id in locked_class_ids:
+                    raise PermissionDenied(
+                        'This term is locked — ask an admin to unlock it '
+                        'before editing marks.'
+                    )
                 data = {'student': str(student.id), 'session': session, 'term': term}
                 for key in ('marks', 'attendance', 'comment'):
                     if isinstance(item, dict) and key in item:
                         data[key] = item[key]
                 marks = data.get('marks') or {}
-                _reject_if_locked(request.user, student.school_class_id, session, term)
-                instance = results_by_sid.get(str(student.id))
+                instance = _pending_for(student)
                 serializer = _serializer(
                     instance, student, data=data, partial=bool(instance))
                 serializer.is_valid(raise_exception=True)
@@ -278,31 +335,100 @@ class ResultViewSet(viewsets.ModelViewSet):
                 if not has_data:
                     skipped.append(str(student.id))
                     continue
+                validated = serializer.validated_data
                 if instance is None:
-                    try:
-                        with db_transaction.atomic():
-                            self.perform_create(serializer)
-                    except IntegrityError:
-                        # Lost a create race with another teacher — fall back
-                        # to merging onto the row that just appeared.
-                        instance = Result.objects.filter(
-                            student=student, term=term, session=session).first()
-                        if instance is None:
-                            raise
-                        ctx = self.get_serializer_context()
-                        ctx['subject_limits'] = limits_by_class.get(student.school_class_id, {})
-                        serializer = self.get_serializer(
-                            instance, data=data, partial=True, context=ctx)
-                        serializer.is_valid(raise_exception=True)
-                        self._apply_validated_save(serializer, instance, request)
+                    obj = Result(
+                        student=student, session=session, term=term,
+                        marks=dict(validated.get('marks') or {}),
+                        attendance=validated.get('attendance'),
+                        comment=validated.get('comment') or '',
+                    )
+                    pending[str(student.id)] = obj
+                    to_create.append(obj)
                 else:
-                    self._apply_validated_save(serializer, instance, request)
+                    if 'marks' in validated:
+                        merged = dict(instance.marks or {})
+                        for key, val in (validated['marks'] or {}).items():
+                            if val is None:
+                                merged.pop(key, None)
+                            else:
+                                merged[key] = val
+                        instance.marks = merged
+                    if 'attendance' in validated:
+                        instance.attendance = validated['attendance']
+                    if 'comment' in validated:
+                        instance.comment = validated['comment']
+                    if str(student.id) not in updated_keys:
+                        updated_keys.add(str(student.id))
+                        to_update.append(instance)
                 saved.append(str(student.id))
             except (ValidationError, PermissionDenied) as e:
                 failed.append({'student': str(sid), 'error': _err(e)})
             except Exception:
                 logger.exception('Bulk result save failed for student %s', sid)
                 failed.append({'student': str(sid), 'error': 'Unexpected error — retry.'})
+
+        # Phase 2: one transaction, bulk writes, ONE audit row.
+        # (New in-memory rows already carry a client-side UUID pk from the
+        # field default — that never marks them as "existing"; only
+        # to_update holds prefetched rows.)
+        try:
+            with db_transaction.atomic():
+                if to_create:
+                    Result.objects.bulk_create(to_create)
+                if to_update:
+                    Result.objects.bulk_update(
+                        to_update, ['marks', 'attendance', 'comment'])
+                log_audit('bulk_save', 'result', request=request,
+                          details={'session': session, 'term': term,
+                                   'saved': saved, 'skipped': skipped,
+                                   'failed': failed})
+        except IntegrityError:
+            # Lost a create race with another teacher mid-batch: merge the
+            # conflicting rows onto what just appeared, one by one. Only
+            # this path costs extra queries, and only on a real race.
+            # (The atomic block rolled back, but the in-memory objects
+            # still hold their merged values — replay them.)
+            logger.warning('Bulk result save hit a create race; merging.')
+            for obj in to_create:
+                instance = Result.objects.filter(
+                    student=obj.student, term=term, session=session).first()
+                if instance is None:
+                    try:
+                        obj.save()
+                    except IntegrityError:
+                        instance = Result.objects.filter(
+                            student=obj.student, term=term,
+                            session=session).first()
+                        if instance is None:
+                            raise
+                    else:
+                        continue
+                merged = dict(instance.marks or {})
+                for key, val in (obj.marks or {}).items():
+                    if val is None:
+                        merged.pop(key, None)
+                    else:
+                        merged[key] = val
+                instance.marks = merged
+                if obj.attendance is not None:
+                    instance.attendance = obj.attendance
+                if obj.comment:
+                    instance.comment = obj.comment
+                instance.save()
+            for instance in to_update:
+                fresh = Result.objects.filter(pk=instance.pk).first()
+                if fresh is None:
+                    instance.save()
+                    continue
+                fresh.marks = instance.marks
+                fresh.attendance = instance.attendance
+                fresh.comment = instance.comment
+                fresh.save()
+            log_audit('bulk_save', 'result', request=request,
+                      details={'session': session, 'term': term,
+                               'saved': saved, 'skipped': skipped,
+                               'failed': failed})
         return Response({'saved': saved, 'skipped': skipped, 'failed': failed})
 
     def get_permissions(self):
@@ -416,20 +542,23 @@ class ResultViewSet(viewsets.ModelViewSet):
 
         if added and request.data.get('notify', True):
             for term in added:
-                student_ids = Result.objects.filter(
+                student_ids = list(Result.objects.filter(
                     session=session, term=str(term),
-                ).values_list('student_id', flat=True).distinct()
+                ).values_list('student_id', flat=True).distinct())
+                if not student_ids:
+                    continue
                 label = TERM_LABELS.get(str(term), f'Term {term}')
-                for sid in student_ids:
-                    try:
-                        notify_parents_of_student(
-                            sid, 'result_published',
-                            f'{label} results published — {session}',
-                            'Tap to view your child\'s results.',
-                            url='/#/parent/results',
-                        )
-                    except Exception:
-                        logger.exception('Failed to notify parent for student %s', sid)
+                try:
+                    notify_parents_of_students(
+                        student_ids, 'result_published',
+                        f'{label} results published — {session}',
+                        'Tap to view your child\'s results.',
+                        url='/#/parent/results',
+                    )
+                except Exception:
+                    logger.exception(
+                        'Failed to notify parents for %s term %s',
+                        session, term)
 
         return Response(val)
 

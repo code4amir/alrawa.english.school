@@ -1794,3 +1794,59 @@ class BulkPaymentVisibilityTests(TestCase):
         self.assertEqual(res.status_code, 200)
         item = [i for i in res.data if i['category'] == 'Tuition fee'][0]
         self.assertEqual(item['dueTotal'], 7000)
+
+
+class DefaulterTotalsReuseTests(TestCase):
+    """Grand totals reuse the page compute's fetched maps (no 2x fetch)."""
+
+    def setUp(self):
+        self.client = APIClient()
+        _auth(self.client)
+        self.klass = SchoolClass.objects.create(name='Class 5', order=1)
+        self.year = AcademicYear.objects.create(
+            name='2026', start_date='2026-01-01',
+            end_date='2026-12-31', is_active=True)
+        self.students = [
+            Student.objects.create(
+                name=f'D{i}', student_id=f'D{i:06d}',
+                school_class=self.klass, session='2026')
+            for i in range(5)
+        ]
+        FeeSchedule.objects.create(
+            academic_year=self.year, school_class=self.klass,
+            category='Tuition', amount=1000,
+            frequency='MONTHLY', applicability='AUTO',
+        )
+
+    def test_paginated_totals_match_full_compute_single_fetch(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        from finance.services.defaulter_service import DefaulterService
+        svc = DefaulterService(month_from='2026-01', month_to='2026-06')
+        svc.resolve_year()
+        students = list(
+            Student.objects.filter(deleted_at__isnull=True)
+            .select_related('school_class')
+            .only('id', 'name', 'school_class__name')
+            .order_by('name')
+        )
+        ids = [s.id for s in students]
+        full = svc.compute(students, ids)
+        # Totals from the page compute's maps: same sums, one fetch.
+        maps = svc.fetch_maps(ids)
+        page_due, page_paid = svc.compute_totals(students[:2], ids[:2], _maps=maps)
+        due, paid = svc.compute_totals(students, ids, _maps=maps)
+        self.assertAlmostEqual(due, sum(r['totalDue'] for r in full))
+        self.assertAlmostEqual(paid, sum(r['totalPaid'] for r in full))
+        self.assertAlmostEqual(
+            page_due + sum(r['totalDue'] for r in full[2:]), due)
+        with CaptureQueriesContext(connection) as ctx:
+            res = self.client.get(
+                '/api/finance/defaulter/?year=2026&limit=2&page=1'
+                '&monthFrom=2026-01&monthTo=2026-06')
+        n = len(ctx)
+        print(f'\nDEFAULTER-PAGE queries: {n}')
+        self.assertEqual(res.status_code, 200)
+        self.assertAlmostEqual(res.data['grandTotalDue'], due)
+        self.assertAlmostEqual(res.data['grandTotalPaid'], paid)
+        self.assertLess(n, 25, f'paginated defaulter took {n} queries')

@@ -249,7 +249,7 @@ const FinanceReports = () => {
         }));
         const grandTotal = hw.reduce((s: number, x: [string, number]) => s + x[1], 0);
         const { pdfIncomeReport } = await import('../lib/financeReportPdf');
-        pdfIncomeReport(categories, grandTotal, incomeTx, dateFrom, dateTo);
+        await pdfIncomeReport(categories, grandTotal, incomeTx, dateFrom, dateTo);
       }
       else if (tab === 'expense-report') {
         const hw = headwise(expenseTx);
@@ -260,14 +260,14 @@ const FinanceReports = () => {
         }));
         const grandTotal = hw.reduce((s: number, x: [string, number]) => s + x[1], 0);
         const { pdfExpenseReport } = await import('../lib/financeReportPdf');
-        pdfExpenseReport(categories, grandTotal, expenseTx, dateFrom, dateTo);
+        await pdfExpenseReport(categories, grandTotal, expenseTx, dateFrom, dateTo);
       }
       else if (tab === 'audit') {
         const { ti, te } = getAuditTotals();
         const incHw = headwise(yearIncome);
         const expHw = headwise(yearExpense);
         const { pdfAudit } = await import('../lib/financeReportPdf');
-        pdfAudit({ totalIncome: ti, totalExpense: te, netSurplus: ti - te, incomeByCategory: incHw, expenseByCategory: expHw }, yearFilter);
+        await pdfAudit({ totalIncome: ti, totalExpense: te, netSurplus: ti - te, incomeByCategory: incHw, expenseByCategory: expHw }, yearFilter);
       }
       else if (tab === 'yearly-agm' && agmData) {
         const { income, expense, totalIncome, totalExpense, netSurplus, opening, closing, totalAssets, totalTransfers, transactionCount, transferCount } = agmData;

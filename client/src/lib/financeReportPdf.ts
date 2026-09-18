@@ -1,20 +1,20 @@
 import jsPDF from 'jspdf';
 import { FISCAL_START_LABEL, FISCAL_END_LABEL } from './config';
-import { SCHOOL_LOGO } from './logo';
+import { getLogoDataUri, logoImageFormat } from './logo';
 import { getMonthName, getMonthNameShort, fmt, headwise } from './reportFormat';
 
 // Re-exported for backward compat (tests + any lingering static imports).
 export { getMonthName, getMonthNameShort, fmt, headwise };
 
-export function addLogo(doc: jsPDF, y: number) {
+export async function addLogo(doc: jsPDF, y: number) {
   try {
-    const raw = SCHOOL_LOGO.includes(',') ? SCHOOL_LOGO.split(',')[1] : SCHOOL_LOGO;
-    doc.addImage(raw, SCHOOL_LOGO.match(/data:image\/([a-zA-Z0-9]+);/)?.[1]?.toUpperCase() || 'PNG', 12, y, 18, 18);
+    const uri = await getLogoDataUri();
+    doc.addImage(uri, logoImageFormat(uri), 12, y, 18, 18);
   } catch { console.debug('Photo load skipped'); }
 }
 
-export function addHeader(doc: jsPDF, title: string, subtitle: string, y: number) {
-  addLogo(doc, y);
+export async function addHeader(doc: jsPDF, title: string, subtitle: string, y: number) {
+  await addLogo(doc, y);
   doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(26, 26, 46);
   doc.text('AL RAWA English School', 34, y + 8);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(130, 124, 114);
@@ -30,12 +30,12 @@ function subtitleForRange(dateFrom: string, dateTo: string) {
   return `${getMonthName(Number(dateFrom.split('-')[1]) - 1)} ${dateFrom.split('-')[0]} — ${getMonthName(Number(dateTo.split('-')[1]) - 1)} ${dateTo.split('-')[0]}`;
 }
 
-export function pdfIncomeReport(
+export async function pdfIncomeReport(
   hwData: { category: string; total: number; count: number; uniqueStudents: number }[],
   grandTotal: number, data: any[], dateFrom: string, dateTo: string,
 ) {
   const doc = new jsPDF({ format: 'a4', unit: 'mm' });
-  let y = addHeader(doc, 'INCOME REPORT', subtitleForRange(dateFrom, dateTo), 10);
+  let y = await addHeader(doc, 'INCOME REPORT', subtitleForRange(dateFrom, dateTo), 10);
 
   // ── SECTION 1: Headwise Summary ──
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(26, 26, 46);
@@ -125,12 +125,12 @@ export function pdfIncomeReport(
   doc.save(`Income_Report_${dateFrom}_to_${dateTo}.pdf`);
 }
 
-export function pdfExpenseReport(
+export async function pdfExpenseReport(
   hwData: { category: string; total: number; count: number }[],
   grandTotal: number, data: any[], dateFrom: string, dateTo: string,
 ) {
   const doc = new jsPDF({ format: 'a4', unit: 'mm' });
-  let y = addHeader(doc, 'EXPENSE REPORT', subtitleForRange(dateFrom, dateTo), 10);
+  let y = await addHeader(doc, 'EXPENSE REPORT', subtitleForRange(dateFrom, dateTo), 10);
 
   // ── SECTION 1: Headwise Summary ──
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(26, 26, 46);
@@ -218,9 +218,9 @@ export function pdfExpenseReport(
   doc.save(`Expense_Report_${dateFrom}_to_${dateTo}.pdf`);
 }
 
-export function pdfAudit(data: { totalIncome: number; totalExpense: number; netSurplus: number; incomeByCategory: [string, number][]; expenseByCategory: [string, number][] }, yearFilter: string) {
+export async function pdfAudit(data: { totalIncome: number; totalExpense: number; netSurplus: number; incomeByCategory: [string, number][]; expenseByCategory: [string, number][] }, yearFilter: string) {
   const doc = new jsPDF({ format: 'a4', unit: 'mm' });
-  let y = addHeader(doc, 'ANNUAL AUDIT REPORT', `Financial Year ${Number(yearFilter)-1}-${yearFilter} (${FISCAL_START_LABEL} ${Number(yearFilter)-1} – ${FISCAL_END_LABEL} ${yearFilter})`, 10);
+  let y = await addHeader(doc, 'ANNUAL AUDIT REPORT', `Financial Year ${Number(yearFilter)-1}-${yearFilter} (${FISCAL_START_LABEL} ${Number(yearFilter)-1} – ${FISCAL_END_LABEL} ${yearFilter})`, 10);
 
   const { totalIncome, totalExpense, netSurplus, incomeByCategory: inc, expenseByCategory: exp } = data;
 
@@ -324,7 +324,7 @@ export async function pdfYearlyAGM(d: AgmPdfData) {
     yearFilter,
   } = d;
   const doc = new jsPDF({ format: 'a4', unit: 'mm' });
-  let y = addHeader(doc, 'ANNUAL GENERAL MEETING REPORT', `Session: ${Number(yearFilter)-1}-${yearFilter} (${FISCAL_START_LABEL} ${Number(yearFilter)-1} – ${FISCAL_END_LABEL} ${yearFilter})`, 10);
+  let y = await addHeader(doc, 'ANNUAL GENERAL MEETING REPORT', `Session: ${Number(yearFilter)-1}-${yearFilter} (${FISCAL_START_LABEL} ${Number(yearFilter)-1} – ${FISCAL_END_LABEL} ${yearFilter})`, 10);
 
   const fyLabel = `${Number(yearFilter)-1}-${yearFilter}`;
 
@@ -573,11 +573,11 @@ export async function pdfYearlyAGM(d: AgmPdfData) {
 
 const LEDGER_LABELS: Record<string, string> = { AL_RAWA_BANK: 'AL RAWA Bank', GLOBAL_FORUM_BANK: 'Global Forum Bank', CASH_IN_HAND: 'Cash in Hand' };
 
-export function pdfLedger(entries: any[], account: string, dateFrom: string, dateTo: string, openingBalance: number, closingBalance: number, totalDebit?: number, totalCredit?: number) {
+export async function pdfLedger(entries: any[], account: string, dateFrom: string, dateTo: string, openingBalance: number, closingBalance: number, totalDebit?: number, totalCredit?: number) {
   const doc = new jsPDF({ orientation: 'landscape', format: 'a4', unit: 'mm' });
   const accLabel = LEDGER_LABELS[account] || account;
   const rangeStr = dateFrom || dateTo ? `${dateFrom || 'earliest'} — ${dateTo || 'latest'}` : 'All dates';
-  let y = addHeader(doc, `${accLabel} Ledger`, rangeStr, 10);
+  let y = await addHeader(doc, `${accLabel} Ledger`, rangeStr, 10);
 
   const M = 10, PW = 277;
   const colW = { voucher: 28, txnDate: 20, entryDate: 20, type: 14, cat: 26, desc: 70, student: 32, class: 22, debit: 24, credit: 24, balance: 28, status: 12 };

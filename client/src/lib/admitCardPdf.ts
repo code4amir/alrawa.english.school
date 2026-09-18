@@ -1,4 +1,4 @@
-import { SCHOOL_LOGO } from './logo';
+import { getLogoDataUri, logoImageFormat } from './logo';
 
 // Color palette — modern navy / gold
 const NAVY = [26, 26, 46] as const;
@@ -77,6 +77,7 @@ function drawCard(
   y: number,
   w: number,
   photoDataUri: string | null,
+  logoDataUri: string | null,
 ): number {
   const h = 62; // card height (mm) — one card per page row, 4 rows
   const M = 5; // internal card margin
@@ -90,9 +91,11 @@ function drawCard(
 
   // --- Header: Logo + School Name ---
   const logoW = 10;
-  try {
-    doc.addImage(SCHOOL_LOGO, SCHOOL_LOGO.match(/data:image\/([a-zA-Z0-9]+);/)?.[1]?.toUpperCase() || 'PNG', x + M, cy, logoW, logoW);
-  } catch { /* logo fail — skip */ }
+  if (logoDataUri) {
+    try {
+      doc.addImage(logoDataUri, logoImageFormat(logoDataUri), x + M, cy, logoW, logoW);
+    } catch { /* logo fail — skip */ }
+  }
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
   doc.setTextColor(...NAVY);
@@ -261,8 +264,9 @@ export async function downloadAdmitCardsPDF(payload: AdmitCardPayload) {
   const cardW = W - PAGE_M * 2; // full width
   const cardH = (297 - PAGE_M * 2 - GAP * (ROWS - 1)) / ROWS; // full height divided by rows
 
-  // Pre-fetch all photos
+  // Pre-fetch all photos + the school logo (best-effort data URIs)
   const photoCache: Record<string, string> = {};
+  const logoDataUri: string | null = await getLogoDataUri().catch(() => null);
   await Promise.all(
     payload.students
       .filter((s) => s.photoUrl || s.hasPhoto)
@@ -293,7 +297,7 @@ export async function downloadAdmitCardsPDF(payload: AdmitCardPayload) {
     drawCard(
       doc, s, payload.session, payload.termLabel,
       payload.examType, payload.settings, payload.coordinatorSignatureNote,
-      PAGE_M, y, cardW, photoCache[s.id] || null,
+      PAGE_M, y, cardW, photoCache[s.id] || null, logoDataUri,
     );
 
     row++;

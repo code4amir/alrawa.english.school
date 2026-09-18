@@ -358,7 +358,11 @@ class AnnouncementListView(APIView):
             )
             from django.db.models import Q
             qs = qs.filter(Q(school_class__isnull=True) | Q(school_class_id__in=class_ids))
-        announcements = qs[:20]
+        try:
+            limit = max(1, min(int(request.query_params.get('limit', 20)), 50))
+        except (ValueError, TypeError):
+            limit = 20
+        announcements = qs[:limit]
         data = [{
             'id': a.id,
             'title': a.title,

@@ -129,16 +129,31 @@ function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, r
 
   // Backend caps ledger pages at 200 rows — page through ALL of them so
   // exports cover the full filtered set (totals shown are global).
+  // Page 1 is fetched first to learn totalPages, then the rest are crawled
+  // 3-at-a-time (was: strictly serial) with toast progress. Limit kept at 200.
   const fetchAllLedgerEntries = async (base: Record<string, string>) => {
-    let page = 1;
-    let allEntries: any[] = [];
-    let first: any = null;
-    for (;;) {
-      const res = await api.get('/finance/ledger/', { params: { ...base, page: String(page), limit: '200' } });
-      if (!first) first = res.data;
-      allEntries = allEntries.concat(res.data?.data || []);
-      if (page >= (res.data?.totalPages || 1)) break;
-      page += 1;
+    const firstRes = await api.get('/finance/ledger/', { params: { ...base, page: '1', limit: '200' } });
+    const first = firstRes.data;
+    const total = first?.totalPages || 1;
+    let allEntries: any[] = [...(first?.data || [])];
+    if (total > 1) {
+      const pages = Array.from({ length: total - 1 }, (_, i) => i + 2);
+      const CONCURRENCY = 3;
+      let done = 1;
+      const byPage = new Map<number, any[]>();
+      for (let i = 0; i < pages.length; i += CONCURRENCY) {
+        const batch = pages.slice(i, i + CONCURRENCY);
+        const results = await Promise.all(
+          batch.map(async (p) => {
+            const res = await api.get('/finance/ledger/', { params: { ...base, page: String(p), limit: '200' } });
+            return [p, res.data?.data || []] as const;
+          })
+        );
+        for (const [p, rows] of results) byPage.set(p, rows);
+        done += results.length;
+        toast(`Exporting ledger… ${done}/${total} pages`, 'info');
+      }
+      for (const p of pages) allEntries = allEntries.concat(byPage.get(p) || []);
     }
     return { allEntries, first };
   };
@@ -151,7 +166,7 @@ function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, r
       if (search) params.search = search;
       const { allEntries, first } = await fetchAllLedgerEntries(params);
       const { pdfLedger } = await import('../lib/financeReportPdf');
-      pdfLedger(allEntries, ledgerAccount, dateFrom, dateTo, first.openingBalance, first.closingBalance, first.totalDebit, first.totalCredit);
+      await pdfLedger(allEntries, ledgerAccount, dateFrom, dateTo, first.openingBalance, first.closingBalance, first.totalDebit, first.totalCredit);
       toast('PDF downloaded', 'success');
     } catch { toast('PDF generation failed', 'error'); }
   };
@@ -280,7 +295,7 @@ function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, r
                     <button
                       onClick={async () => {
                         const { pdfPaymentReceipt } = await import('../lib/parentReceiptPdf');
-                        pdfPaymentReceipt(
+                        await pdfPaymentReceipt(
                         {
                           reference: entry.voucher || entry.referenceId || '—',
                           amount: String(entry.amount ?? entry.debit ?? entry.credit ?? 0),
@@ -441,7 +456,10 @@ const FinanceSection = () => {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { useUIStore.getState().registerSwipeBack(() => setMainTab('transactions')); }, []);
   // Re-fetch students when class changes (ensures student data is current)
-  useEffect(() => { if (selectedClass) fetchStudents({ className: selectedClass }, true); }, [selectedClass]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Per-class results are cached in the store keyed by params + TTL, so
+  // switching back to a recently-visited class reuses the merged list with
+  // zero requests. No force flag: TTL expiry refetches automatically.
+  useEffect(() => { if (selectedClass) fetchStudents({ className: selectedClass }); }, [selectedClass]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-fill amount from fee schedule minus waiver when category + student selected
   useEffect(() => {
@@ -1110,7 +1128,7 @@ const FinanceSection = () => {
               <button
                 onClick={async () => {
                   const { pdfPaymentReceipt } = await import('../lib/parentReceiptPdf');
-                  pdfPaymentReceipt(
+                  await pdfPaymentReceipt(
                     { reference: confirmData.reference, amount: String(confirmData.amount), category: confirmData.category, method: confirmData.method, date: confirmData.date, isCancelled: false },
                     { name: confirmData.studentName, className: confirmData.className },
                   );

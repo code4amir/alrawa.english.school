@@ -503,3 +503,113 @@ class ResultSoftDeleteTests(TestCase):
         res = self.client.get(
             f'/api/students/{self.student.id}/results/?session=2026')
         self.assertEqual(res.status_code, 200)
+
+
+class ResultBulkQueryTests(TestCase):
+    """50-item bulk: one transaction + bulk writes + one audit row (<25q).
+
+    Rows and per-item validation errors must be identical to the old
+    per-row path (per-item 4xx preserved, never aborts the batch).
+    """
+
+    def setUp(self):
+        from core.models import Subject
+        self.client = APIClient()
+        _auth(self.client)
+        self.klass = SchoolClass.objects.create(name='Class 5', order=1)
+        Subject.objects.create(name='Math', full_marks=100, school_class=self.klass)
+        self.students = [
+            Student.objects.create(
+                name=f'S{i}', student_id=f'S{i:06d}',
+                school_class=self.klass, session='2026')
+            for i in range(50)
+        ]
+        Result.objects.create(
+            student=self.students[0], term='1', session='2026',
+            marks={'Bangla': 80})
+
+    def test_bulk_50_under_25_queries_same_rows_and_errors(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        from core.models import AuditLog
+        items = [
+            {'student': str(s.id), 'marks': {'Math': 70}}
+            for s in self.students
+        ]
+        # Per-item 4xx, preserved: over-limit marks fail, empty is skipped.
+        items[1] = {'student': str(self.students[1].id), 'marks': {'Math': 999}}
+        items[2] = {'student': str(self.students[2].id), 'marks': {}}
+        before = AuditLog.objects.count()
+        with CaptureQueriesContext(connection) as ctx:
+            res = self.client.post('/api/results/bulk/', {
+                'term': '1', 'session': '2026', 'items': items}, format='json')
+        n = len(ctx)
+        print(f'\nBULK-50 queries: {n}')
+        self.assertLess(n, 25, f'50-item bulk took {n} queries')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(len(res.data['saved']), 48)
+        self.assertEqual(res.data['skipped'], [str(self.students[2].id)])
+        self.assertEqual(len(res.data['failed']), 1)
+        self.assertEqual(res.data['failed'][0]['student'], str(self.students[1].id))
+        # Merge + create semantics identical to the per-row path.
+        r0 = Result.objects.get(student=self.students[0], term='1', session='2026')
+        self.assertEqual(r0.marks, {'Bangla': 80, 'Math': 70})
+        self.assertEqual(Result.objects.filter(term='1', session='2026').count(), 48)
+        # ONE audit row for the whole batch.
+        self.assertEqual(AuditLog.objects.count(), before + 1)
+
+
+class ResultPublishNotifyQueryTests(TestCase):
+    """publish_terms fan-out: batched parents/subs/log queries (<15q).
+
+    Same recipients, same content — parentless students cost no lookups.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        _auth(self.client)
+        self.klass = SchoolClass.objects.create(name='Class 5', order=1)
+        self.students = [
+            Student.objects.create(
+                name=f'P{i}', student_id=f'P{i:06d}',
+                school_class=self.klass, session='2026')
+            for i in range(50)
+        ]
+        for s in self.students:
+            Result.objects.create(
+                student=s, term='1', session='2026', marks={'Math': 70})
+        # Only 10 of the 50 students have linked parents (40 parentless).
+        self.parents = []
+        for i in range(10):
+            p = User.objects.create_user(
+                email=f'pp{i}@test.com', name=f'PP{i}',
+                password='testpass123', role='parent')
+            self.parents.append(p)
+            from parents.models import ParentStudentLink
+            ParentStudentLink.objects.create(
+                parent=p, student=self.students[i])
+
+    def test_publish_notify_batched_same_recipients_under_15_queries(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        from parents.models import NotificationLog
+        with CaptureQueriesContext(connection) as ctx:
+            res = self.client.post('/api/results/publish_terms/', {
+                'session': '2026', 'terms': ['1'], 'notify': True},
+                format='json')
+        n = len(ctx)
+        print(f'\nPUBLISH-NOTIFY queries: {n}')
+        self.assertEqual(res.status_code, 200)
+        self.assertLess(n, 15, f'publish+notify took {n} queries')
+        logs = NotificationLog.objects.filter(event_type='result_published')
+        self.assertEqual(logs.count(), 10)
+        self.assertEqual(
+            {str(l.user_id) for l in logs},
+            {str(p.id) for p in self.parents},
+        )
+        first = logs[0]
+        self.assertIn('1st Term', first.title)
+        self.assertIn('2026', first.title)
+        self.assertEqual(first.body, "Tap to view your child's results.")
+        self.assertEqual(first.payload.get('url'), '/#/parent/results')
+        self.assertEqual(first.error, 'no_subscription')

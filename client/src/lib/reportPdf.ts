@@ -1,6 +1,6 @@
 import { gradeFromMarks, gpaToGrade, calcYearSummary, calcTermRanks, calcYearRanks, calcAttendPct } from './grading';
 import { TERM_NAMES } from './config';
-import { SCHOOL_LOGO } from './logo';
+import { getLogoDataUri } from './logo';
 
 const SUBJECT_KEY_MAP: Record<string, string> = {
   'General knowledge': 'General Knowledge',
@@ -59,7 +59,8 @@ export async function downloadReportCardPDF(student: any, clsName: string, subje
 
   // HEADER — centered like the online card: logo, serif name, red badge text, hairline
   try {
-    doc.addImage(SCHOOL_LOGO, 'JPEG', W / 2 - 7, y, 14, 14);
+    const logoUri = await getLogoDataUri();
+    doc.addImage(logoUri, 'JPEG', W / 2 - 7, y, 14, 14);
   } catch { console.warn('Logo addImage failed'); }
   doc.setFont('times', 'bold'); doc.setFontSize(15); doc.setTextColor(...NAVY);
   doc.text('AL RAWA English School', W / 2, y + 20, { align: 'center' });

@@ -16,6 +16,7 @@ class DefaulterService:
         self.month_from = month_from
         self.month_to = month_to
         self.year_str = year_str
+        self._maps_cache = {}
 
     def resolve_year(self):
         if self.year_str:
@@ -50,7 +51,21 @@ class DefaulterService:
         )
         return page_students, total_rows
 
-    def compute(self, students, student_ids):
+    def fetch_maps(self, student_ids):
+        """All batched finance reads for a student set, in one place.
+
+        ONE fee-schedule query + the 5 finance fetches (monthly/yearly
+        assignments, allocation paid map, transaction paid map, waivers).
+        Results are memoized per service instance (which lives for one
+        request), so compute() + compute_totals() over the same ids — or
+        a caller-supplied _maps — never re-run the fetches.
+        """
+        key = (tuple(sorted({str(i) for i in student_ids})),
+               self.year_str, self.fee_category,
+               self.month_from, self.month_to)
+        cached = self._maps_cache.get(key)
+        if cached is not None:
+            return cached
         fee_schedules = FeeSchedule.objects.filter(
             academic_year__name=self.year_str,
         ).select_related('academic_year', 'school_class')
@@ -60,41 +75,39 @@ class DefaulterService:
         yearly_schedules = [fs for fs in fee_schedules if fs.frequency in ('YEARLY', 'ONE_TIME')]
         monthly_schedules = [fs for fs in fee_schedules if fs.frequency == 'MONTHLY']
 
-        assigned = self._fetch_monthly_assignments(student_ids, monthly_schedules)
-        yearly_assigned = self._fetch_yearly_assignments(student_ids, yearly_schedules)
-        paid_map = self._fetch_paid_map(student_ids)
-        tx_paid_map = self._fetch_tx_paid_map(student_ids)
-        waiver_map = self._fetch_waiver_map(student_ids)
+        maps = {
+            'yearly_schedules': yearly_schedules,
+            'monthly_schedules': monthly_schedules,
+            'assigned': self._fetch_monthly_assignments(student_ids, monthly_schedules),
+            'yearly_assigned': self._fetch_yearly_assignments(student_ids, yearly_schedules),
+            'paid_map': self._fetch_paid_map(student_ids),
+            'tx_paid_map': self._fetch_tx_paid_map(student_ids),
+            'waiver_map': self._fetch_waiver_map(student_ids),
+        }
+        self._maps_cache[key] = maps
+        return maps
 
-        return self._build_result(students, yearly_schedules, monthly_schedules,
-                                  assigned, yearly_assigned, paid_map, waiver_map,
-                                  tx_paid_map=tx_paid_map)
+    def _build_from_maps(self, students, maps, totals_only=False):
+        return self._build_result(
+            students, maps['yearly_schedules'], maps['monthly_schedules'],
+            maps['assigned'], maps['yearly_assigned'], maps['paid_map'],
+            maps['waiver_map'], totals_only=totals_only,
+            tx_paid_map=maps['tx_paid_map'])
 
-    def compute_totals(self, students, student_ids):
+    def compute(self, students, student_ids, _maps=None):
+        maps = _maps if _maps is not None else self.fetch_maps(student_ids)
+        return self._build_from_maps(students, maps)
+
+    def compute_totals(self, students, student_ids, _maps=None):
         """Totals-only path: same batched fetches as compute(), but skips
         building the per-fee/per-month dicts — only (total_due, total_paid).
 
         Used for grand totals over the full filtered set so pagination
-        footers don't pay for a second full per-month structure.
+        footers don't pay for a second full per-month structure. Pass the
+        page compute's maps via _maps to skip the fetches entirely.
         """
-        fee_schedules = FeeSchedule.objects.filter(
-            academic_year__name=self.year_str,
-        ).select_related('academic_year', 'school_class')
-        if self.fee_category:
-            fee_schedules = fee_schedules.filter(category=self.fee_category)
-
-        yearly_schedules = [fs for fs in fee_schedules if fs.frequency in ('YEARLY', 'ONE_TIME')]
-        monthly_schedules = [fs for fs in fee_schedules if fs.frequency == 'MONTHLY']
-
-        assigned = self._fetch_monthly_assignments(student_ids, monthly_schedules)
-        yearly_assigned = self._fetch_yearly_assignments(student_ids, yearly_schedules)
-        paid_map = self._fetch_paid_map(student_ids)
-        tx_paid_map = self._fetch_tx_paid_map(student_ids)
-        waiver_map = self._fetch_waiver_map(student_ids)
-
-        rows = self._build_result(students, yearly_schedules, monthly_schedules,
-                                  assigned, yearly_assigned, paid_map, waiver_map,
-                                  totals_only=True, tx_paid_map=tx_paid_map)
+        maps = _maps if _maps is not None else self.fetch_maps(student_ids)
+        rows = self._build_from_maps(students, maps, totals_only=True)
         grand_due = sum(r['totalDue'] for r in rows)
         grand_paid = sum(r['totalPaid'] for r in rows)
         return grand_due, grand_paid

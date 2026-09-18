@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, memo } from 'react';
+import type { MutableRefObject } from 'react';
 import { useSchoolStore, useAuthStore } from '../../store';
 import { toast } from '../../components/Toast';
 import ClassSelect from '../../components/ClassSelect';
@@ -18,6 +19,54 @@ const ENTER_PREFS_KEY = 'alrawa-enter-subject-v1';
 const loadEnterPrefs = (): Record<string, string> => {
   try { return JSON.parse(localStorage.getItem(ENTER_PREFS_KEY) || '{}'); } catch { return {}; }
 };
+
+/* Memoized grid rows — typing in one input must not re-render every other
+   row. All handlers are stable useCallbacks with functional setState, so
+   props stay referentially equal for untouched rows. */
+
+const MarksGridRow = memo(function MarksGridRow({ s, i, value, fullMarks, onChange, onEnter, inputRefs }: {
+  s: any; i: number; value: string; fullMarks: number;
+  onChange: (id: string, value: string) => void;
+  onEnter: (sid: string) => void;
+  inputRefs: MutableRefObject<Record<string, HTMLInputElement | null>>;
+}) {
+  const g = value !== '' && !isNaN(+value) ? gradeFromMarks(+value, fullMarks) : null;
+  const isBlank = value === '';
+  const zebra = i % 2 ? 'bg-school-paper/30' : 'bg-white';
+  const sid = String(s.id);
+  return <tr className={`border-t border-school-border/50 ${zebra}`}>
+    <td className="px-3 py-2">{i + 1}</td><td className={`px-3 py-2 font-medium sticky left-0 ${zebra}`}>{s.name}</td><td className="px-3 py-2">{s.roll || '—'}</td>
+    <td className="px-3 py-2 text-center">{fullMarks}</td>
+    <td className="px-3 py-2 text-center"><input ref={(el) => { inputRefs.current[sid] = el; }} type="number" inputMode="numeric" min="0" max={fullMarks} value={value} onChange={(e) => onChange(sid, e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onEnter(sid); } }} className={`w-16 px-2 py-1 border rounded text-right text-xs focus:outline-none ${value !== '' && !isNaN(parseFloat(value)) && parseFloat(value) > fullMarks ? 'border-red-500' : isBlank ? 'border-amber-400 bg-amber-50' : 'border-school-border'}`} /></td>
+    <td className="px-3 py-2 text-center">{g ? gradeChip(g.grade) : '—'}</td>
+  </tr>;
+});
+
+const AttendanceGridRow = memo(function AttendanceGridRow({ s, i, att, onChange }: {
+  s: any; i: number; att: { days: string; present: string };
+  onChange: (id: string, field: 'days' | 'present', value: string) => void;
+}) {
+  const sid = String(s.id);
+  const pct = att.days && parseInt(att.days) > 0 ? ((parseInt(att.present) || 0) / parseInt(att.days) * 100).toFixed(1) + '%' : '—';
+  return <tr className={`border-t border-school-border/50 ${i % 2 ? 'bg-school-paper/30' : ''}`}>
+    <td className="px-3 py-2">{i + 1}</td><td className="px-3 py-2 font-medium">{s.name}</td><td className="px-3 py-2">{s.roll || '—'}</td>
+    <td className="px-3 py-2 text-center"><input type="number" inputMode="numeric" min="0" value={att.days} onChange={(e) => onChange(sid, 'days', e.target.value)} className="w-16 px-2 py-1 border border-school-border rounded text-right text-xs focus:outline-none" /></td>
+    <td className="px-3 py-2 text-center"><input type="number" inputMode="numeric" min="0" value={att.present} onChange={(e) => onChange(sid, 'present', e.target.value)} className="w-16 px-2 py-1 border border-school-border rounded text-right text-xs focus:outline-none" /></td>
+    <td className="px-3 py-2 text-center text-xs font-bold">{pct}</td>
+  </tr>;
+});
+
+const EMPTY_ATT = { days: '', present: '' };
+
+const CommentGridRow = memo(function CommentGridRow({ s, i, value, onChange }: {
+  s: any; i: number; value: string; onChange: (id: string, value: string) => void;
+}) {
+  const sid = String(s.id);
+  return <tr className={`border-t border-school-border/50 ${i % 2 ? 'bg-school-paper/30' : ''}`}>
+    <td className="px-3 py-2">{i + 1}</td><td className="px-3 py-2 font-medium">{s.name}</td><td className="px-3 py-2">{s.roll || '—'}</td>
+    <td className="px-3 py-2"><textarea value={value} onChange={(e) => onChange(sid, e.target.value)} rows={2} className="w-full px-2 py-1 border border-school-border rounded text-xs focus:outline-none focus:border-school-accent resize-none" placeholder="Write about performance…" /></td>
+  </tr>;
+});
 
 export default function EnterBySubject() {
   const { classes, fetchClasses, students, fetchStudents, subjects, fetchSubjects, saveBulkResults, academicYears, fetchAcademicYears, classResults, fetchClassResults, resultLocks, fetchResultLocks, lockResults, unlockResults } = useSchoolStore();
@@ -126,6 +175,30 @@ export default function EnterBySubject() {
   }, [hasUnsavedChanges]);
 
   const clsStudents = useMemo(() => cls ? students.filter((s: any) => s.class === cls.name).sort((a: any, b: any) => (+a.roll || 999) - (+b.roll || 999) || a.name.localeCompare(b.name)) : [], [students, cls]);
+  // Index results by student+term once per dataset (was: Array.find per
+  // grid row on every render + every save loop = O(students × results)).
+  const resultsByStudentTerm = useMemo(() => {
+    const m = new Map<string, any>();
+    for (const r of allResults) m.set(`${(r as any).studentId}|${(r as any).term}`, r);
+    return m;
+  }, [allResults]);
+  // Stable input handlers (functional setState) so memoized rows keep
+  // referential prop equality while typing in any other row.
+  const handleMarkChange = useCallback((id: string, value: string) => {
+    setHasUnsavedChanges(true);
+    setBulkMarks((prev) => ({ ...prev, [id]: value }));
+  }, []);
+  const handleAttChange = useCallback((id: string, field: 'days' | 'present', value: string) => {
+    setHasUnsavedChanges(true);
+    setBulkAtt((prev) => {
+      const cur = prev[id] ?? EMPTY_ATT;
+      return { ...prev, [id]: field === 'days' ? { ...cur, days: value } : { ...cur, present: value } };
+    });
+  }, []);
+  const handleCommentChange = useCallback((id: string, value: string) => {
+    setHasUnsavedChanges(true);
+    setBulkComment((prev) => ({ ...prev, [id]: value }));
+  }, []);
   const selectedSubj = subjects.find((s: any) => s.name === bulkSubject);
   const isAttendance = bulkSubject === '__attendance__';
   const isComment = bulkSubject === '__comment__';
@@ -142,13 +215,13 @@ export default function EnterBySubject() {
     if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.focus({ preventScroll: true }); }
   };
   // U6 phone-first: Enter jumps to the next student's input (thumb typing).
-  const focusNextStudent = (sid: string) => {
+  const focusNextStudent = useCallback((sid: string) => {
     const idx = clsStudents.findIndex((x: any) => String(x.id) === String(sid));
     const next = idx >= 0 ? clsStudents[idx + 1] : null;
     if (!next) return;
     const el = inputRefs.current[String(next.id)];
     if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.focus({ preventScroll: true }); }
-  };
+  }, [clsStudents]);
   // C3 finalize switch: locked class × term blocks non-admin saves.
   const lock = cls && sessionFilter ? (resultLocks || []).find((l: any) =>
     String(l.school_class) === String(cls.id) &&
@@ -170,7 +243,7 @@ export default function EnterBySubject() {
     if (reset) setCoworkerNote('');
     const canonicalSubject = SUBJECT_KEY_MAP[bulkSubject] || bulkSubject;
     const ids = clsStudents.map((s: any) => String(s.id));
-    const rowOf = (sid: string) => allResults.find((x: any) => String(x.studentId) === String(sid) && String(x.term) === String(bulkTerm));
+    const rowOf = (sid: string) => resultsByStudentTerm.get(`${sid}|${bulkTerm}`);
 
     if (isAttendance) {
       setBulkAtt((prev) => rebuildBulkValues(prev, reset, ids, (sid) => {
@@ -215,7 +288,7 @@ export default function EnterBySubject() {
     const items: { student: string; marks: Record<string, number | null> }[] = [];
     for (const s of clsStudents) {
       const v = bulkMarks[s.id];
-      const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
+      const existing = resultsByStudentTerm.get(`${String(s.id)}|${bulkTerm}`);
       const hasValue = v !== '' && v !== undefined && !isNaN(+v);
       if (!hasValue && existing?.marks?.[canonicalSubject] === undefined) continue;
       const marksData: Record<string, number | null> = {};
@@ -292,7 +365,7 @@ export default function EnterBySubject() {
     const items: { student: string; attendance: { days: number; present: number } | null }[] = [];
     for (const s of clsStudents) {
       const att = bulkAtt[s.id] || { days: '', present: '' };
-      const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
+      const existing = resultsByStudentTerm.get(`${String(s.id)}|${bulkTerm}`);
       const days = parseInt(att.days) || 0;
       const present = parseInt(att.present) || 0;
       if (days < 0 || present < 0) { setSaveStatus('error'); setSaveError('Attendance values cannot be negative'); toast('Attendance values cannot be negative', 'error'); setSaveProgress(null); return; }
@@ -342,7 +415,7 @@ export default function EnterBySubject() {
     const failed: string[] = [];
     const items: { student: string; comment: string }[] = [];
     for (const s of clsStudents) {
-      const existing = allResults.find((x: any) => String(x.studentId) === String(s.id) && String(x.term) === String(bulkTerm));
+      const existing = resultsByStudentTerm.get(`${String(s.id)}|${bulkTerm}`);
       // No-op skip: blank comment + none stored = nothing to write.
       if (!(bulkComment[s.id] || '') && !(existing?.comment || '')) continue;
       items.push({ student: String(s.id), comment: bulkComment[s.id] || '' });
@@ -461,31 +534,12 @@ export default function EnterBySubject() {
               <tbody>
                 {clsStudents.map((s: any, i: number) => {
                   if (isComment) {
-                    return <tr key={s.id} className={`border-t border-school-border/50 ${i % 2 ? 'bg-school-paper/30' : ''}`}>
-                      <td className="px-3 py-2">{i + 1}</td><td className="px-3 py-2 font-medium">{s.name}</td><td className="px-3 py-2">{s.roll || '—'}</td>
-                      <td className="px-3 py-2"><textarea value={bulkComment[s.id] || ''} onChange={(e) => { setHasUnsavedChanges(true); setBulkComment({ ...bulkComment, [s.id]: e.target.value }); }} rows={2} className="w-full px-2 py-1 border border-school-border rounded text-xs focus:outline-none focus:border-school-accent resize-none" placeholder="Write about performance…" /></td>
-                    </tr>;
+                    return <CommentGridRow key={s.id} s={s} i={i} value={bulkComment[s.id] || ''} onChange={handleCommentChange} />;
                   }
                   if (isAttendance) {
-                    const att = bulkAtt[s.id] || { days: '', present: '' };
-                    const pct = att.days && parseInt(att.days) > 0 ? ((parseInt(att.present) || 0) / parseInt(att.days) * 100).toFixed(1) + '%' : '—';
-                    return <tr key={s.id} className={`border-t border-school-border/50 ${i % 2 ? 'bg-school-paper/30' : ''}`}>
-                      <td className="px-3 py-2">{i + 1}</td><td className="px-3 py-2 font-medium">{s.name}</td><td className="px-3 py-2">{s.roll || '—'}</td>
-                      <td className="px-3 py-2 text-center"><input type="number" inputMode="numeric" min="0" value={att.days} onChange={(e) => { setHasUnsavedChanges(true); setBulkAtt({ ...bulkAtt, [s.id]: { ...att, days: e.target.value } }); }} className="w-16 px-2 py-1 border border-school-border rounded text-right text-xs focus:outline-none" /></td>
-                      <td className="px-3 py-2 text-center"><input type="number" inputMode="numeric" min="0" value={att.present} onChange={(e) => { setHasUnsavedChanges(true); setBulkAtt({ ...bulkAtt, [s.id]: { ...att, present: e.target.value } }); }} className="w-16 px-2 py-1 border border-school-border rounded text-right text-xs focus:outline-none" /></td>
-                      <td className="px-3 py-2 text-center text-xs font-bold">{pct}</td>
-                    </tr>;
+                    return <AttendanceGridRow key={s.id} s={s} i={i} att={bulkAtt[s.id] ?? EMPTY_ATT} onChange={handleAttChange} />;
                   }
-                  const v = bulkMarks[s.id] ?? '';
-                  const g = v !== '' && !isNaN(+v) ? gradeFromMarks(+v, selectedSubj!.fullMarks) : null;
-                  const isBlank = v === '';
-                  const zebra = i % 2 ? 'bg-school-paper/30' : 'bg-white';
-                  return <tr key={s.id} className={`border-t border-school-border/50 ${zebra}`}>
-                    <td className="px-3 py-2">{i + 1}</td><td className={`px-3 py-2 font-medium sticky left-0 ${zebra}`}>{s.name}</td><td className="px-3 py-2">{s.roll || '—'}</td>
-                    <td className="px-3 py-2 text-center">{selectedSubj!.fullMarks}</td>
-                    <td className="px-3 py-2 text-center"><input ref={(el) => { inputRefs.current[String(s.id)] = el; }} type="number" inputMode="numeric" min="0" max={selectedSubj!.fullMarks} value={v} onChange={(e) => { setHasUnsavedChanges(true); setBulkMarks({ ...bulkMarks, [s.id]: e.target.value }); }} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); focusNextStudent(String(s.id)); } }} className={`w-16 px-2 py-1 border rounded text-right text-xs focus:outline-none ${v !== '' && !isNaN(parseFloat(v)) && parseFloat(v) > selectedSubj!.fullMarks ? 'border-red-500' : isBlank ? 'border-amber-400 bg-amber-50' : 'border-school-border'}`} /></td>
-                    <td className="px-3 py-2 text-center">{g ? gradeChip(g.grade) : '—'}</td>
-                  </tr>;
+                  return <MarksGridRow key={s.id} s={s} i={i} value={bulkMarks[s.id] ?? ''} fullMarks={selectedSubj!.fullMarks} onChange={handleMarkChange} onEnter={focusNextStudent} inputRefs={inputRefs} />;
                 })}
               </tbody>
             </table>

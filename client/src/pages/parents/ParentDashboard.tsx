@@ -74,11 +74,14 @@ export default function ParentDashboard() {
     const labels = ['students', 'announcements', 'homework', 'diary', 'exams', 'routine', 'notices', 'family'];
     Promise.allSettled([
       api.get('/parents/my-students/'),
-      api.get('/parents/announcements/'),
-      api.get('/parents/homework/'),
-      api.get('/parents/diary/'),
-      api.get('/parents/exam-routine/'),
-      api.get('/parents/routine/'),
+      api.get('/parents/announcements/', { params: { limit: '3' } }),
+      api.get('/parents/homework/', { params: { limit: '3' } }),
+      api.get('/parents/diary/', { params: { limit: '3' } }),
+      api.get('/parents/exam-routine/', { params: { limit: '5' } }),
+      // ?day= is passed unconditionally: backends that support it return
+      // only today's periods; older backends ignore unknown params and
+      // return the full week, which the client-side filter below handles.
+      api.get('/parents/routine/', { params: { day: dayName } }),
       api.get('/parents/notifications/'),
       api.get('/parents/family-siblings/'),
     ])
@@ -97,9 +100,13 @@ export default function ParentDashboard() {
         const ex = value(4); if (ex) setExams(ex.slice(0, 5));
         const rt = value(5);
         if (rt) {
+          // Backend may already filter by ?day= (items lack a day field) or
+          // ignore it (full week). Handle both: filter when day is present.
+          const list = Array.isArray(rt) && rt.length > 0 && rt.every((p: any) => p.day === undefined)
+            ? rt
+            : rt.filter((p: any) => p.day === dayName);
           setTodayRoutine(
-            rt
-              .filter((p: any) => p.day === dayName)
+            list
               .sort((a: any, b: any) => a.period_number - b.period_number)
               .map((p: any) => p.subject_name)
           );

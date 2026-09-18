@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
 import { useAuthStore, useUIStore, useDarkMode, useSchoolStore } from '../store';
 import { ChevronLeft, Lock, Users, Sun, Moon, ClipboardList, Sparkles, KeyRound, Link2, CalendarDays } from 'lucide-react';
 import { useAIQueryStore } from '../store';
@@ -205,20 +204,15 @@ const Layout = ({ children }: LayoutProps) => {
         </div>
       </header>
 
-      {/* Main Content */}
+      {/* Main Content — CSS fade/slide transition on mode or route change
+          (no framer-motion: keeps vendor-framer out of the entry chunk) */}
       <main className="flex-1 overflow-x-hidden relative">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={activeMode || location.pathname}
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.2 }}
-            className="p-4 md:p-6 max-w-7xl mx-auto w-full"
-          >
-            {children}
-          </motion.div>
-        </AnimatePresence>
+        <div
+          key={activeMode || location.pathname}
+          className="p-4 md:p-6 max-w-7xl mx-auto w-full animate-fade-in"
+        >
+          {children}
+        </div>
       </main>
 
       {/* Footer / health status bar — sticky so it always stays at the bottom

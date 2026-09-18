@@ -165,19 +165,22 @@ class LedgerActionsMixin:
             })
 
         student_ids = [s.id for s in students]
-        result = svc.compute(students, student_ids)
-
         # Grand totals across the FULL filtered set (not just this page) so the
         # UI footer can show authoritative totals regardless of pagination.
-        # Totals-only path: same batched fetches, no per-month dicts.
+        # One batched fetch for everybody: the page rows and the totals-only
+        # sums both build from the same maps (no 2x finance fetches).
         if total_rows > len(students):
             all_students = list(
                 students_qs.select_related('school_class').only('id', 'name', 'school_class__name')
             )
+            all_ids = [s.id for s in all_students]
+            maps = svc.fetch_maps(all_ids)
+            result = svc.compute(students, student_ids, _maps=maps)
             grand_total_due, grand_total_paid = svc.compute_totals(
-                all_students, [s.id for s in all_students]
+                all_students, all_ids, _maps=maps
             )
         else:
+            result = svc.compute(students, student_ids)
             grand_total_due = sum(r['totalDue'] for r in result)
             grand_total_paid = sum(r['totalPaid'] for r in result)
 

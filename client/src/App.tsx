@@ -1,9 +1,12 @@
 import { useEffect, Suspense, lazy, useState } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { useAuthStore } from './store';
+import { useAuthStore, useAIQueryStore } from './store';
 import ErrorBoundary from './components/ErrorBoundary';
 import NotFound from './pages/NotFound';
-import AICommandPalette from './ai/AICommandPalette';
+// Lazy: AICommandPalette pulls framer-motion — keep vendor-framer out of the
+// entry chunk. Rendered only while open (see below); the Ctrl+K / Escape
+// shortcut lives in App so it works before the palette chunk loads.
+const AICommandPalette = lazy(() => import('./ai/AICommandPalette'));
 import { usePullToRefresh } from './lib/usePullToRefresh';
 import { setInstallPrompt as saveInstallEvent } from './lib/pwa';
 import IOSInstallPrompt from './components/IOSInstallPrompt';
@@ -60,8 +63,26 @@ function MustChangePasswordRedirect() {
 
 const App: React.FC = () => {
   const { user, loading, fetchSession } = useAuthStore();
+  const aiOpen = useAIQueryStore((s) => s.open);
   const [installPrompt, setInstallPrompt] = useState<any>(null);
   usePullToRefresh();
+
+  // Global AI palette shortcut — owned here so Ctrl+K works even though the
+  // palette chunk (framer-motion) only loads when the palette opens.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        const s = useAIQueryStore.getState();
+        s.setOpen(!s.open);
+      }
+      if (e.key === 'Escape' && useAIQueryStore.getState().open) {
+        useAIQueryStore.getState().close();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   useEffect(() => {
     const handler = (e: Event) => { e.preventDefault(); saveInstallEvent(e); setInstallPrompt(e); };
@@ -145,7 +166,7 @@ const App: React.FC = () => {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
-      <AICommandPalette />
+      {aiOpen && <AICommandPalette />}
       </ErrorBoundary>
       </div>
 

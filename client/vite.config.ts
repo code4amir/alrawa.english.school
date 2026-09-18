@@ -50,7 +50,7 @@ export default defineConfig({
       output: {
         codeSplitting: {
           groups: [
-            { test: /node_modules\/(react|react-dom|react-router)/, name: 'vendor-react' },
+            { test: /node_modules\/(react|react-dom|react-router)(\/|$)/, name: 'vendor-react' },
             { test: /node_modules\/jspdf/, name: 'vendor-jspdf' },
             { test: /node_modules\/xlsx/, name: 'vendor-xlsx' },
             { test: /node_modules\/framer-motion/, name: 'vendor-framer' },

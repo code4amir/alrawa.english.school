@@ -4,7 +4,9 @@ import { api } from '../../store';
 import Toast, { toast } from '../../components/Toast';
 import ParentLayout from './ParentLayout';
 import { ChevronLeft, Wallet, Receipt, Download } from 'lucide-react';
-import { pdfPaymentReceipt } from '../../lib/parentReceiptPdf';
+// Click-time import (FinanceSection pattern): parentReceiptPdf statically
+// pulls jspdf + financeReportPdf, so it must not sit in this route's
+// preload graph. Type-only import keeps typechecking without the bundle cost.
 import type { ParentPayment } from '../../lib/parentReceiptPdf';
 
 interface FeeSchedule {
@@ -142,7 +144,11 @@ export default function ParentFees() {
                       <div className="flex items-center gap-3 shrink-0">
                         <span className="font-bold text-emerald-600">${Number(p.amount).toFixed(2)}</span>
                         <button
-                          onClick={() => studentInfo && pdfPaymentReceipt(p, { name: studentInfo.name, className: studentInfo.className })}
+                          onClick={async () => {
+                            if (!studentInfo) return;
+                            const { pdfPaymentReceipt } = await import('../../lib/parentReceiptPdf');
+                            await pdfPaymentReceipt(p, { name: studentInfo.name, className: studentInfo.className });
+                          }}
                           className="flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 hover:bg-amber-100 transition-colors"
                         >
                           <Download size={12} /> Receipt

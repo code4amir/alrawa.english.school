@@ -403,6 +403,18 @@ def get_parent_student_class_ids(user):
     ).values_list('student__school_class_id', flat=True).distinct()
 
 
+def _apply_limit(request, qs, default=None, cap=50):
+    """Opt-in ?limit= for preview lists. Absent/invalid -> default behavior."""
+    raw = request.query_params.get('limit')
+    if raw is None:
+        return qs if default is None else qs[:default]
+    try:
+        n = max(1, min(int(raw), cap))
+    except (ValueError, TypeError):
+        return qs if default is None else qs[:default]
+    return qs[:n]
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def parent_routine(request):
@@ -413,6 +425,10 @@ def parent_routine(request):
     routines = RoutineTemplate.objects.filter(
         school_class_id__in=class_ids,
     ).select_related('school_class', 'subject', 'teacher').order_by('day', 'period_number')
+
+    day = (request.query_params.get('day') or '').strip().lower()
+    if day and day in dict(RoutineTemplate.DAY_CHOICES):
+        routines = routines.filter(day=day)
 
     today = date.today()
     week_start = today - timedelta(days=today.weekday())
@@ -443,6 +459,7 @@ def parent_homework(request):
         published=True,
     ).select_related('school_class', 'subject', 'teacher').order_by('-date', '-created_at')
 
+    homeworks = _apply_limit(request, homeworks)
     return Response(HomeworkSerializer(homeworks, many=True).data)
 
 
@@ -457,6 +474,7 @@ def parent_diary(request):
         school_class_id__in=class_ids,
     ).select_related('school_class', 'subject', 'teacher').order_by('-date', '-created_at')
 
+    diaries = _apply_limit(request, diaries)
     return Response(DiarySerializer(diaries, many=True).data)
 
 
@@ -471,6 +489,7 @@ def parent_exam_routine(request):
         school_class_id__in=class_ids,
     ).select_related('school_class', 'subject').order_by('date', 'start_time')
 
+    exams = _apply_limit(request, exams)
     return Response(ExamRoutineSerializer(exams, many=True).data)
 
 

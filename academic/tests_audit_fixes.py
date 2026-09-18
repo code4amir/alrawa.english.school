@@ -204,3 +204,47 @@ class AcademicAuditFixTests(TestCase):
         res = self.client.get('/api/teacher/leave-reasons/by_class/')
         self.assertEqual(res.status_code, 200, res.content[:300])
         self.assertIn('Unassigned', res.data)
+
+
+class ParentPreviewParamsTests(TestCase):
+    def setUp(self):
+        from rest_framework.test import APIClient
+        from parents.models import ParentStudentLink
+        from academic.models import RoutineTemplate
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email='par@t.com', name='P', password='x', role='parent')
+        self.client.force_authenticate(self.user)
+        self.klass = SchoolClass.objects.create(name='Play', order=1)
+        self.student = Student.objects.create(
+            name='Kid', student_id='S1', school_class=self.klass)
+        ParentStudentLink.objects.create(parent=self.user, student=self.student)
+        self.subject = Subject.objects.create(
+            name='Math', full_marks=100, order=1, school_class=self.klass)
+        self.teacher = Teacher.objects.create(name='T', designation='D')
+
+    def test_homework_limit(self):
+        for i in range(5):
+            Homework.objects.create(
+                school_class=self.klass, subject=self.subject,
+                teacher=self.teacher, topic=f'H{i}', description='d',
+                date='2026-09-01', due_date='2026-09-05', published=True)
+        res = self.client.get('/api/parents/homework/', {'limit': '3'})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(len(res.data), 3)
+        res = self.client.get('/api/parents/homework/')
+        self.assertEqual(len(res.data), 5)
+
+    def test_routine_day_filter(self):
+        from academic.models import RoutineTemplate
+        RoutineTemplate.objects.create(
+            school_class=self.klass, day='monday', period_number=1,
+            subject=self.subject, teacher=self.teacher)
+        RoutineTemplate.objects.create(
+            school_class=self.klass, day='tuesday', period_number=1,
+            subject=self.subject, teacher=self.teacher)
+        res = self.client.get('/api/parents/routine/', {'day': 'monday'})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(len(res.data), 1)
+        res = self.client.get('/api/parents/routine/', {'day': 'funday'})
+        self.assertEqual(len(res.data), 2)

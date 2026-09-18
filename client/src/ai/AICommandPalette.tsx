@@ -25,7 +25,9 @@ const SUGGESTIONS = [
 ];
 
 const AICommandPalette = () => {
-  const { open, query, loading, result, error, setOpen, setQuery, submit, close } = useAIQueryStore();
+  // Ctrl+K / Escape shortcut is owned by App (so it works before this lazy
+  // chunk loads) — no key listener here to avoid double-toggling.
+  const { open, query, loading, result, error, setQuery, submit, close } = useAIQueryStore();
   const inputRef = useRef<HTMLInputElement>(null);
   const [tipSeen, setTipSeen] = useState(() => localStorage.getItem('ai-palette-tip') === '1');
   const [history, setHistory] = useState<string[]>(() => {
@@ -39,20 +41,6 @@ const AICommandPalette = () => {
       localStorage.setItem('ai-query-history', JSON.stringify(updated));
     }
   }, [result, loading]);
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-        e.preventDefault();
-        setOpen(!open);
-      }
-      if (e.key === 'Escape' && open) {
-        close();
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [open, setOpen, close]);
 
   useEffect(() => {
     if (open) {
