@@ -13,7 +13,7 @@ import DeleteConfirmModal from '../../components/DeleteConfirmModal';
 import PromoteModal from '../../components/PromoteModal';
 import ShareLinkModal from '../../components/ShareLinkModal';
 import { API_URL } from '../../lib/config';
-import { canManageClassStudents } from '../../lib/permissions';
+import { canManageClassStudents, canAddStudents } from '../../lib/permissions';
 import { useNativeCamera } from '../../hooks/useNativeCamera';
 import { blobToSquareDataUrl } from '../../lib/imageCrop';
 
@@ -48,10 +48,18 @@ export default function StudentSection() {
   const role = useAuthStore((s) => s.user?.role);
   const teacherClasses = useAuthStore((s) => s.user?.teacherClasses);
   const isAdmin = role === 'admin';
-  const canEditStudents = role === 'admin' || role === 'teacher' || role === 'monitor';
+  // Add a student: admin/monitor/accountant may add across every class
+  // (POST /api/students/ is gated on the create-only 'students:add'), teacher
+  // stays scoped to its own classes.
+  const canAdd = canAddStudents(role);
+  // Edit/delete/archive an EXISTING student: academic authority only
+  // (backend can_manage_students = is_academic_admin OR class teacher), so an
+  // accountant can add a student but never mutate or remove one.
+  const canEdit = role === 'admin' || role === 'monitor';
+  const canEditStudents = canEdit || role === 'teacher';
   // Teachers act only on their assigned classes (backend enforces the same
   // via can_manage_students); admin/monitor cover every class.
-  const canManageStudent = (s: any) => canManageClassStudents(role, teacherClasses, s.class);
+  const canManageStudent = (s: any) => canEdit && canManageClassStudents(role, teacherClasses, s.class);
   const canShareLink = role === 'admin' || role === 'monitor' || role === 'teacher';
 
   const [activeClass, setActiveClass] = useState<string | null>(null);
@@ -221,10 +229,14 @@ export default function StudentSection() {
 
   const renderEditCard = (isNew: boolean) => {
     const inputCls = 'w-full px-3 py-2 border border-school-border rounded-xl text-sm focus:outline-none focus:border-school-accent';
+    // An accountant may open a student (e.g. from a link) but has no
+    // students:write, so the form renders disabled and Save is not offered.
+    const readOnly = !isNew && !canEdit;
+    const roCls = readOnly ? `${inputCls} opacity-70 cursor-not-allowed` : inputCls;
     return (
-      <div className={`p-4 rounded-2xl border-2 transition-all ${isNew ? 'border-violet-400 bg-violet-50/50' : 'border-blue-400 bg-blue-50/50'}`} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); } }}>
+      <div className={`p-4 rounded-2xl border-2 transition-all ${isNew ? 'border-violet-400 bg-violet-50/50' : 'border-blue-400 bg-blue-50/50'}`} onKeyDown={(e) => { if (!readOnly && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(); } }}>
         <div className="flex justify-center mb-3">
-          <button onClick={() => { if (!openNativeCamera()) setShowCamera(true); }} className="relative group" aria-label="Take photo">
+          <button disabled={readOnly} onClick={() => { if (!openNativeCamera()) setShowCamera(true); }} className="relative group" aria-label="Take photo">
             {photo ? (
               <img src={photo} alt="" className="w-20 h-20 rounded-full object-cover border-2 border-white shadow-md" />
             ) : (
@@ -238,39 +250,41 @@ export default function StudentSection() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="text-xs font-bold text-school-muted mb-1 block">Class</label>
-            <select value={form.className} onChange={(e) => setForm({ ...form, className: e.target.value })} className={inputCls}>
+            <select disabled={readOnly} value={form.className} onChange={(e) => setForm({ ...form, className: e.target.value })} className={roCls}>
               <option value="">Select class</option>
               {(role === 'teacher' ? (teacherClasses || []) : sorted).map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
             </select>
           </div>
           <div>
             <label className="text-xs font-bold text-school-muted mb-1 block">Roll No <span className="font-normal opacity-60">(optional)</span></label>
-            <input type="text" value={form.roll} onChange={(e) => setForm({ ...form, roll: e.target.value })} placeholder="e.g. 01" className={inputCls} />
+            <input type="text" disabled={readOnly} value={form.roll} onChange={(e) => setForm({ ...form, roll: e.target.value })} placeholder="e.g. 01" className={roCls} />
           </div>
         </div>
         <div className="mt-3">
           <label className="text-xs font-bold text-school-muted mb-1 block">Full Name</label>
-          <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Student's full name" className={inputCls} />
+          <input type="text" disabled={readOnly} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Student's full name" className={roCls} />
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
           <div>
             <label className="text-xs font-bold text-school-muted mb-1 block">Father's Name</label>
-            <input type="text" value={form.fatherName} onChange={(e) => setForm({ ...form, fatherName: e.target.value })} placeholder="Father's full name" className={inputCls} />
+            <input type="text" disabled={readOnly} value={form.fatherName} onChange={(e) => setForm({ ...form, fatherName: e.target.value })} placeholder="Father's full name" className={roCls} />
           </div>
           <div>
             <label className="text-xs font-bold text-school-muted mb-1 block">Mother's Name</label>
-            <input type="text" value={form.motherName} onChange={(e) => setForm({ ...form, motherName: e.target.value })} placeholder="Mother's full name" className={inputCls} />
+            <input type="text" disabled={readOnly} value={form.motherName} onChange={(e) => setForm({ ...form, motherName: e.target.value })} placeholder="Mother's full name" className={roCls} />
           </div>
         </div>
         <div className="mt-3">
           <label className="text-xs font-bold text-school-muted mb-1 block">Contact Number</label>
-          <input type="tel" value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} placeholder="01XXXXXXXXX" className={inputCls} />
+          <input type="tel" disabled={readOnly} value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} placeholder="01XXXXXXXXX" className={roCls} />
         </div>
         <div className="flex gap-2 mt-3">
+          {!readOnly && (
           <button onClick={handleSubmit} disabled={submitting} className={`flex-1 py-2 text-white rounded-xl text-sm font-bold hover:opacity-90 flex items-center justify-center gap-1.5 disabled:opacity-50 ${isNew ? 'bg-violet-600' : 'bg-blue-600'}`}>
             {isNew ? '+ Add Student' : <>{submitting ? 'Saving...' : <><Check size={14} /> Save</>}</>}
           </button>
-          <button onClick={resetForm} className="px-4 py-2 border border-school-border rounded-xl text-sm hover:bg-white">Cancel</button>
+          )}
+          <button onClick={resetForm} className={`${readOnly ? 'flex-1' : 'px-4'} py-2 border border-school-border rounded-xl text-sm hover:bg-white`}>{readOnly ? 'Close' : 'Cancel'}</button>
         </div>
       </div>
     );
@@ -514,7 +528,7 @@ export default function StudentSection() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {/* Add New Card */}
-            {canEditStudents && canManageClassStudents(role, teacherClasses, activeClass || '') && (showAddNew ? (
+            {(canAdd || (role === 'teacher' && canManageClassStudents(role, teacherClasses, activeClass || ''))) && (showAddNew ? (
               renderEditCard(true)
             ) : (
               <button onClick={() => { setShowAddNew(true); setForm({ ...form, className: activeClass }); }}

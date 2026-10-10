@@ -1,8 +1,26 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
+# Permission namespaces
+# -------------------
+# 'students:add'   create-only student writes (ID-card / reception desk).
+#                   Separate from 'students:write' so a role can admit students
+#                   without gaining edit/delete/graduate over existing rows.
+# 'announcements:write' publish parent announcements. Owned by the role, not by
+#                   borrowing 'students:write', so accountant/administration can
+#                   publish without holding student-edit rights.
+# Granting the legacy string satisfies the dedicated one too. Needed because
+# these permissions were previously enforced under the 'students:write'
+# umbrella: teacher/monitor/admin could already create students and publish
+# announcements, and must keep doing so after the split.
+WRITE_PERM_ALIASES = {
+    'students:add': ['students:write'],
+    'announcements:write': ['students:write'],
+}
+
 ROLE_PERMISSIONS = {
     'admin': [
-        'students:read', 'students:write',
+        'students:read', 'students:write', 'students:add',
+        'announcements:write',
         'teachers:read', 'teachers:write',
         'staff:read', 'staff:write',
         'books:read', 'books:write',
@@ -16,7 +34,7 @@ ROLE_PERMISSIONS = {
         'academic:read', 'academic:write', 'academic:admin',
     ],
     'teacher': [
-        'students:read', 'students:write',
+        'students:read', 'students:write', 'students:add',
         'teachers:read',
         'staff:read',
         'books:read', 'books:write',
@@ -25,12 +43,13 @@ ROLE_PERMISSIONS = {
         'results:read', 'results:write',
         'academic-years:read',
         'academic:read', 'academic:write',
+        'announcements:write',
     ],
     # Monitor = academic supervisor: full read/write on all academic data
     # (attendance, results, homework, diary, routine...) but NO finance,
     # user management, or audit access.
     'monitor': [
-        'students:read', 'students:write',
+        'students:read', 'students:write', 'students:add',
         'teachers:read', 'teachers:write',
         'staff:read', 'staff:write',
         'books:read', 'books:write',
@@ -39,15 +58,20 @@ ROLE_PERMISSIONS = {
         'results:read', 'results:write', 'results:admin',
         'academic-years:read',
         'academic:read', 'academic:write', 'academic:admin',
+        'announcements:write',
     ],
+    # Accountant = fees/books + services + announcements + finance, and can
+    # admit students for ID cards ('students:add') but must never edit, delete,
+    # restore, or graduate existing student records.
     'accountant': [
-        'students:read',
+        'students:read', 'students:add',
         'teachers:read',
         'staff:read',
         'books:read',
         'classes:read',
         'finance:read', 'finance:write',
         'academic-years:read',
+        'announcements:write',
     ],
     'super_viewer': [
         'students:read',
@@ -75,7 +99,12 @@ def has_permission(user, permission):
     if user.is_superuser:
         return True
     perms = ROLE_PERMISSIONS.get(user.role, [])
-    return permission in perms
+    if permission in perms:
+        return True
+    # Dedicated write strings accept the legacy umbrella string, so splitting
+    # 'students:write' into 'students:add' / 'announcements:write' cannot
+    # silently lock out roles that were previously allowed to write.
+    return any(p in perms for p in WRITE_PERM_ALIASES.get(permission, ()))
 
 
 def require_permission(permission):

@@ -22,8 +22,12 @@ const SchedulerSection = lazy(() => import('./admin/SchedulerSection'));
 import EngagementWidget, { QuizPanel, RiddlePanel, MoodPanel, ChallengePanel, TipsPanel, PlannerPanel } from './engagement/EngagementWidget';
 import { CreditCard, BookOpen, BarChart3, Wallet, Users, GraduationCap, Building2, Sparkles, ArrowRight, Clock, MailCheck, CalendarCheck, UserCheck, ClipboardList, Calendar, CalendarDays, Megaphone, Settings } from 'lucide-react';
 import { SCHOOL_LOGO } from '../lib/logo';
+import { canUseModule, MODULE_ROLES } from '../lib/permissions';
+import type { ModuleKey } from '../lib/permissions';
 
 type ModeParam = 'idcard' | 'accessories' | 'result' | 'finance' | 'attendance' | 'routine' | 'exam-routine' | 'session-year' | 'announcements' | 'services' | 'scheduler';
+
+const isModuleKey = (m: ModeParam): m is ModuleKey => m in MODULE_ROLES;
 
 function TodaysGreeting() {
   const h = new Date().getHours();
@@ -43,8 +47,15 @@ const Dashboard = () => {
   const isAdmin = user?.role === 'admin';
   const isPendingViewer = user?.role === 'viewer';
   const urlMode = searchParams.get('mode') as ModeParam | null;
-  const effectiveMode: ModeParam | null =
+  // Legacy guards kept verbatim: pending viewers get nothing, and a
+  // teacher/monitor hitting ?mode=finance falls back to the tile grid.
+  const legacyMode =
     isPendingViewer || ((urlMode === 'finance') && (isTeacher || isMonitor)) ? null : (activeMode ?? urlMode);
+  // Plus the MODULE_ROLES map, so a hand-typed ?mode= can't reach a module the
+  // role has no backend permission for (this is what closes the accountant's
+  // attendance/result/routine/exam/session/scheduler deep links).
+  const effectiveMode: ModeParam | null =
+    legacyMode && isModuleKey(legacyMode) && !canUseModule(user?.role, legacyMode) ? null : legacyMode;
   const handleSetMode = (mode: ModeParam | null) => {
     setMode(mode);
     if (mode) window.location.hash = '#/?mode=' + mode;
@@ -75,19 +86,22 @@ const Dashboard = () => {
     fetchBootstrap().then(() => setCountsReady(true));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Role gating lives in lib/permissions.ts (MODULE_ROLES) — mirrors the
+  // backend ROLE_PERMISSIONS map. Replaces the old isTeacher/isMonitor filters
+  // that let accountant reach tiles it had no permission for.
   const MODULES = [
     { key: 'idcard' as ModeParam, label: 'ID Card', desc: 'Students, Teachers & Staff', color: 'blue', icon: CreditCard },
     { key: 'accessories' as ModeParam, label: 'Fees & Books', desc: 'Fee structure & book list', color: 'amber', icon: BookOpen },
     { key: 'attendance' as ModeParam, label: 'Attendance', desc: 'Daily marking & monthly view', color: 'purple', icon: CalendarCheck },
     { key: 'result' as ModeParam, label: 'Result', desc: 'Marks & report cards', color: 'green', icon: BarChart3 },
-    ...(!isTeacher && !isMonitor && !isPendingViewer ? [{ key: 'finance' as ModeParam, label: 'Finance', desc: 'Accounting & fees', color: 'rose', icon: Wallet }] : []),
-    ...(!isTeacher && !isPendingViewer ? [{ key: 'routine' as ModeParam, label: 'Routine', desc: 'Weekly class schedule', color: 'indigo', icon: ClipboardList }] : []),
-    ...(!isTeacher && !isPendingViewer ? [{ key: 'exam-routine' as ModeParam, label: 'Exam Schedule', desc: 'Exam timetable management', color: 'cyan', icon: Calendar }] : []),
-    ...(!isTeacher && !isPendingViewer ? [{ key: 'session-year' as ModeParam, label: 'Session Year', desc: 'Manage academic years & promote students', color: 'amber', icon: CalendarDays }] : []),
-    ...(!isTeacher && !isPendingViewer ? [{ key: 'announcements' as ModeParam, label: 'Announcements', desc: 'Create & manage notices', color: 'purple', icon: Megaphone }] : []),
-    ...(!isTeacher && !isPendingViewer ? [{ key: 'services' as ModeParam, label: 'Services', desc: 'Manage service types & auto-fee setup', color: 'sky', icon: Settings }] : []),
-        ...(isAdmin ? [{ key: 'scheduler' as ModeParam, label: 'Scheduling', desc: 'Dues reminders & cron jobs', color: 'cyan', icon: Clock }] : []),
-      ];
+    { key: 'finance' as ModeParam, label: 'Finance', desc: 'Accounting & fees', color: 'rose', icon: Wallet },
+    { key: 'routine' as ModeParam, label: 'Routine', desc: 'Weekly class schedule', color: 'indigo', icon: ClipboardList },
+    { key: 'exam-routine' as ModeParam, label: 'Exam Schedule', desc: 'Exam timetable management', color: 'cyan', icon: Calendar },
+    { key: 'session-year' as ModeParam, label: 'Session Year', desc: 'Manage academic years & promote students', color: 'amber', icon: CalendarDays },
+    { key: 'announcements' as ModeParam, label: 'Announcements', desc: 'Create & manage notices', color: 'purple', icon: Megaphone },
+    { key: 'services' as ModeParam, label: 'Services', desc: 'Manage service types & auto-fee setup', color: 'sky', icon: Settings },
+    { key: 'scheduler' as ModeParam, label: 'Scheduling', desc: 'Dues reminders & cron jobs', color: 'cyan', icon: Clock },
+  ].filter((m) => canUseModule(user?.role, m.key as ModuleKey));
 
   return (
     <Layout>

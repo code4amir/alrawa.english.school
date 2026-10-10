@@ -403,7 +403,10 @@ class AnnouncementListView(APIView):
         return Response(data)
 
     def post(self, request):
-        perm = require_permission('students:write')()
+        # Publishing is gated on 'announcements:write', not 'students:write':
+        # the accountant runs the parent-facing notices without being handed
+        # edit/delete authority over student records.
+        perm = require_permission('announcements:write')()
         if not perm.has_permission(request, self):
             return Response({'error': 'Permission denied'}, status=403)
         title = request.data.get('title')

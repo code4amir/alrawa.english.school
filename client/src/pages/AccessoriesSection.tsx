@@ -32,10 +32,16 @@ const AccessoriesSection = () => {
   useEffect(() => { document.title = 'Fees & Books - AL RAWA English School'; }, []);
   const { classes, books, feeSchedules, settings, loading, fetchClasses, fetchBooks, fetchSettings, fetchFeeSchedules } = useSchoolStore();
   const role = useAuthStore((s) => s.user?.role);
+  // Fee amounts are the accountant's remit (finance:write on fee-schedules).
   const isAdmin = role === 'admin' || role === 'accountant';
   // Teachers & monitors can manage the book list (teachers take ID-card photos too);
   // fee editing stays admin/accountant-only.
-  const canEditBooks = isAdmin || role === 'teacher' || role === 'monitor';
+  // The accountant is scoped READ-ONLY on this module: it holds books:read but
+  // not books:write, so it must not render the book edit/delete controls that
+  // would 403 on PUT/DELETE /api/books/<id>/.
+  const canEditBooks = role === 'admin' || role === 'teacher' || role === 'monitor';
+  // School Info writes go to PUT /api/settings/ (users:write) — admin only.
+  const canEditSchoolInfo = role === 'admin';
 
   const [selectedClassId, setSelectedClassId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -203,7 +209,7 @@ const AccessoriesSection = () => {
           <p className="text-xs text-school-muted">Fee structure & book list</p>
         </div>
         <div className="flex gap-2">
-          {isAdmin && (
+          {canEditSchoolInfo && (
             <button onClick={() => setShowSettings(true)} className="flex items-center gap-1 px-3 py-1.5 border border-school-border rounded-lg text-xs hover:bg-school-paper">
               <Settings size={12} /> School Info
             </button>
@@ -376,7 +382,7 @@ const AccessoriesSection = () => {
                       <th className="px-4 py-2.5 text-left w-10">#</th>
                       <th className="px-4 py-2.5 text-left">Book Name</th>
                       <th className="px-4 py-2.5 text-right w-28">Price</th>
-                      {isAdmin && <th className="px-4 py-2.5 text-center w-20">Actions</th>}
+                      {canEditBooks && <th className="px-4 py-2.5 text-center w-20">Actions</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -439,7 +445,7 @@ const AccessoriesSection = () => {
                     <tr className="border-t-2 border-school-primary bg-school-paper font-bold">
                       <td colSpan={2} className="px-4 py-2.5 text-xs uppercase tracking-wider">Total</td>
                       <td className="px-4 py-2.5 text-right font-mono">৳ {fmt(bookTotal)}</td>
-                      {isAdmin && <td></td>}
+                      {canEditBooks && <td></td>}
                     </tr>
                   </tfoot>
                 </table>

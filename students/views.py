@@ -44,6 +44,17 @@ class StudentViewSet(PhotoHandleMixin, viewsets.ModelViewSet):
             return [require_photo_access('students:read')()]
         if self.action in ['list', 'retrieve', 'class_results']:
             return [require_permission('students:read')()]
+        if self.action in ('service_summary', 'toggle_service', 'bulk_toggle_service'):
+            # Service enrollment lives in the finance module (it writes
+            # StudentFeeAssignment), so it rides finance:write — which the
+            # accountant holds — instead of students:write.
+            return [require_permission('finance:write')()]
+        if self.action == 'create':
+            # 'students:add' is create-only: the accountant admits students for ID
+            # cards without gaining edit/delete/restore/graduate authority.
+            return [require_permission('students:add')()]
+        # update / partial_update / destroy / restore / graduate / ungraduate /
+        # import / bulk service actions — full record authority.
         return [require_permission('students:write')()]
 
     def get_queryset(self):
@@ -77,9 +88,22 @@ class StudentViewSet(PhotoHandleMixin, viewsets.ModelViewSet):
                 )
             return qs
 
+    def _is_add_only_actor(self):
+        """True for a caller admitted purely through 'students:add'.
+
+        Such a caller (the accountant at the ID-card desk) holds no class of
+        their own, so the class-teacher scope below would lock them out of
+        every class — the role grant is the authority.
+        """
+        from accounts.permissions import has_permission
+        user = self.request.user
+        return (has_permission(user, 'students:add')
+                and not has_permission(user, 'students:write'))
+
     def perform_create(self, serializer):
         school_class = serializer.validated_data.get('school_class')
-        if school_class and not is_admin_or_superuser(self.request.user):
+        if (school_class and not is_admin_or_superuser(self.request.user)
+                and not self._is_add_only_actor()):
             if not can_manage_students(self.request.user, school_class.id):
                 raise PermissionDenied('You are not the class teacher of this class.')
         obj = serializer.save()
