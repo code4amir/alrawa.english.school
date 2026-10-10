@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from django.db.models import Sum, Q, F, Case, When, Value, Window, DecimalField, Count
 from rest_framework.exceptions import ValidationError
-from finance.models import Transaction, OpeningBalance
+from finance.models import Transaction, OpeningBalance, PaymentAllocation
 from finance.views.base import _fiscal_year_from_date
 from accounts.models import User
 
@@ -103,6 +103,20 @@ class LedgerService:
             str(u.id): u.name
             for u in User.objects.filter(id__in=cancelled_ids)
         }
+
+    def get_allocations(self, page_txs):
+        """One query for every allocation on this page, grouped by transaction id.
+
+        Receipts need the category-wise split; fetching them per row would be an
+        N+1 on a 25-row page.
+        """
+        tx_ids = [tx.id for tx in page_txs]
+        if not tx_ids:
+            return {}
+        out = {}
+        for a in PaymentAllocation.objects.filter(transaction_id__in=tx_ids):
+            out.setdefault(str(a.transaction_id), []).append(a)
+        return out
 
     def get_totals(self, qs):
         """Count + debit/credit totals in ONE aggregate query (was .count()

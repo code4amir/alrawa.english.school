@@ -123,6 +123,24 @@ def create_transaction(serializer, request, row_data=None):
                     student=tx.student,
                     period=alloc.get('period', ''),
                     amount=alloc_amount,
+                    category=fs.category,
+                ))
+            # Ad-hoc "other fee" rows ride the same allocations array with a
+            # literal '__other__' id and their own category label. Persist them
+            # (fee_schedule=None) so receipts can show a category-wise split.
+            for alloc in allocations:
+                if (alloc.get('feeScheduleId') or alloc.get('fee_schedule_id')) != '__other__':
+                    continue
+                label = (alloc.get('category') or '').strip()
+                if not label:
+                    continue
+                alloc_objects.append(PaymentAllocation(
+                    transaction=tx,
+                    fee_schedule=None,
+                    student=tx.student,
+                    period=alloc.get('period', ''),
+                    amount=Decimal(str(alloc.get('amount', 0))),
+                    category=label,
                 ))
             PaymentAllocation.objects.bulk_create(alloc_objects)
             if not tx.category and alloc_objects:
@@ -154,6 +172,7 @@ def create_transaction(serializer, request, row_data=None):
                     student=tx.student,
                     period=fee_month or '',
                     amount=tx.amount,
+                    category=fs.category,
                 )
 
         if not alloc_objects and tx_type == 'INCOME' and tx.student_id:
@@ -235,10 +254,12 @@ def _auto_allocate_bulk_payment(tx, serializer, data):
         candidates = base.filter(school_class__isnull=True)
     if candidates.count() != 1:
         return
+    matched = candidates.first()
     PaymentAllocation.objects.create(
         transaction=tx,
-        fee_schedule=candidates.first(),
+        fee_schedule=matched,
         student=tx.student,
         period=fee_month,
         amount=tx.amount,
+        category=matched.category,
     )

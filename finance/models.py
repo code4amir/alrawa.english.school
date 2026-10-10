@@ -234,6 +234,10 @@ class PaymentAllocation(models.Model):
     )
     period = models.CharField(max_length=20, blank=True, null=True)
     amount = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
+    # Category label snapshot. Set from the fee schedule when one exists;
+    # ad-hoc fees (the "other" row in the income form) store their own label
+    # here with fee_schedule=None, so a receipt can always show the split.
+    category = models.CharField(max_length=200, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

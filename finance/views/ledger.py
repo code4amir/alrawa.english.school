@@ -9,7 +9,7 @@ from .base import PRIMARY_BANK, SECONDARY_BANK, _internal_accounts, _param
 from ..throttles import DuesReminderRateThrottle, BulkDuesReminderRateThrottle
 
 
-def _serialize_tx(tx, account_name, opening_balance, cancelled_by_names):
+def _serialize_tx(tx, account_name, opening_balance, cancelled_by_names, allocations=None):
     is_incoming = tx.destination_account and tx.destination_account.name == account_name
     is_outgoing = tx.source_account and tx.source_account.name == account_name
     debit = tx.amount if is_incoming else Decimal('0')
@@ -27,7 +27,25 @@ def _serialize_tx(tx, account_name, opening_balance, cancelled_by_names):
 
     tx_status = 'Cancelled' if tx.is_cancelled else ('Reversal' if tx.reversal_of_id else 'Active')
 
+    # Category-wise split + the months each monthly fee covers, so a receipt
+    # can print the breakdown instead of one lump-sum category string.
+    breakdown = []
+    seen = set()
+    for a in (allocations or []):
+        label = (a.category or '').strip()
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        rows = [x for x in allocations if (x.category or '').strip() == label]
+        breakdown.append({
+            'category': label,
+            'amount': float(sum((x.amount for x in rows), Decimal('0'))),
+            'periods': sorted({x.period for x in rows if x.period}),
+        })
+    breakdown.sort(key=lambda b: -b['amount'])
+
     return {
+        'breakdown': breakdown,
         'id': str(tx.id),
         'voucher': tx.reference_id or '',
         'transactionDate': tx.transaction_date.isoformat(),
@@ -103,12 +121,14 @@ class LedgerActionsMixin:
 
         page_txs = svc.get_page(base_qs, page_num, page_size)
         cancelled_by_names = svc.get_cancelled_by_names(page_txs)
+        alloc_map = svc.get_allocations(page_txs)
 
         closing_balance = svc.opening_balance + total_debit - total_credit
         total_pages = max(1, (total_rows + page_size - 1) // page_size)
 
         return Response({
-            'data': [_serialize_tx(tx, account_name, svc.opening_balance, cancelled_by_names) for tx in page_txs],
+            'data': [_serialize_tx(tx, account_name, svc.opening_balance, cancelled_by_names,
+                              alloc_map.get(str(tx.id), [])) for tx in page_txs],
             'page': page_num,
             'pageSize': page_size,
             'totalPages': total_pages,

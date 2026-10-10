@@ -303,6 +303,7 @@ function Ledger({ fmt, fetchFinance, fetchFeeSchedules, fetchDashboardSummary, r
                           method: entry.sourceAccount === 'CASH_IN_HAND' ? 'Cash' : (entry.sourceAccount || entry.destinationAccount || '—'),
                           date: entry.transactionDate ? new Date(entry.transactionDate + 'T00:00:00').toLocaleDateString() : '—',
                           isCancelled: false,
+                          breakdown: entry.breakdown,
                         },
                         { name: entry.studentName, className: entry.className || '' },
                         );
@@ -415,7 +416,7 @@ const FinanceSection = () => {
   const [assignedStudentIds, setAssignedStudentIds] = useState<string[] | null>(null);
 
   // Confirmation dialog state (shown after recording income)
-  const [confirmData, setConfirmData] = useState<{ studentName: string; className: string; amount: number; category: string; method: string; date: string; reference: string; feeMonth: string } | null>(null);
+  const [confirmData, setConfirmData] = useState<{ studentName: string; className: string; amount: number; category: string; method: string; date: string; reference: string; feeMonth: string; breakdown?: { category: string; amount: number; periods?: string[] }[] } | null>(null);
   const confirmRef = useFocusTrap(!!confirmData);
 
   // Form state
@@ -655,6 +656,18 @@ const FinanceSection = () => {
           date,
           reference: res.data?.referenceId || res.data?.reference || `TOKEN-${date.replace(/-/g, '')}-${res.data?.tokenNumber || '—'}`,
           feeMonth: feeMonth || '',
+          // Straight from the allocations just submitted: exact category
+          // amounts + covered months, so the receipt matches what was paid.
+          breakdown: hasMultiFee
+            ? (body.allocations as { feeScheduleId?: string; amount: number; period: string }[]).map(a => ({
+                category: a.feeScheduleId === '__other__'
+                  ? // The ad-hoc row carries its own label in otherFees, matched by amount.
+                    otherFees.find((o: any) => o.checked && Number(o.amount) === Number(a.amount))?.category || 'Other Fee'
+                  : feeStatusList.find((f: any) => f.feeScheduleId === a.feeScheduleId)?.category || '',
+                amount: Number(a.amount),
+                periods: a.period ? [a.period] : [],
+              }))
+            : undefined,
         });
       }
 
@@ -1129,7 +1142,7 @@ const FinanceSection = () => {
                 onClick={async () => {
                   const { pdfPaymentReceipt } = await import('../lib/parentReceiptPdf');
                   await pdfPaymentReceipt(
-                    { reference: confirmData.reference, amount: String(confirmData.amount), category: confirmData.category, method: confirmData.method, date: confirmData.date, isCancelled: false },
+                    { reference: confirmData.reference, amount: String(confirmData.amount), category: confirmData.category, method: confirmData.method, date: confirmData.date, isCancelled: false, breakdown: confirmData.breakdown },
                     { name: confirmData.studentName, className: confirmData.className },
                   );
                 }}

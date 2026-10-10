@@ -2,6 +2,13 @@ import jsPDF from 'jspdf';
 import { addLogo } from './financeReportPdf';
 import { fmt } from './reportFormat';
 
+export interface ReceiptLine {
+  category: string;
+  amount: number;
+  /** Covered months, e.g. ['2026-01', '2026-02'] for a monthly fee. */
+  periods?: string[];
+}
+
 export interface ParentPayment {
   reference: string;
   amount: string;
@@ -9,6 +16,8 @@ export interface ParentPayment {
   method: string;
   date: string;
   isCancelled: boolean;
+  /** Category-wise split; falls back to a single line from `category`. */
+  breakdown?: ReceiptLine[];
 }
 
 interface ReceiptStudent {
@@ -45,7 +54,8 @@ async function drawReceiptCopy(
   doc.text(`PAYMENT RECEIPT — ${copyLabel}`, 12, y + 3);
   y += 7;
 
-  // Bordered card
+  // Bordered card (fixed height: 6 detail rows). The breakdown table is
+  // drawn below the amount bar, so it never collides with this card.
   const cardH = 42;
   doc.setDrawColor(140, 132, 122); doc.setLineWidth(0.3);
   doc.rect(12, y, 186, cardH);
@@ -74,12 +84,43 @@ async function drawReceiptCopy(
   doc.text('AMOUNT TENDERED', 14, y + 7.5);
   doc.text(`${fmt(Number(p.amount))} /-`, 186, y + 7.5, { align: 'right' });
 
-  // Category
+  // Category-wise breakdown. Monthly fees list the months they cover so the
+  // parent can see exactly what a lump-sum payment bought.
   y += 14;
+  const lines: ReceiptLine[] = (p.breakdown && p.breakdown.length)
+    ? p.breakdown
+    : [{ category: String(p.category || '—'), amount: Number(p.amount) || 0 }];
+  const monthLabel = (m: string) => {
+    const [yy, mm] = m.split('-');
+    if (!yy || !mm) return m;
+    const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${names[Number(mm) - 1] || mm} ${yy.slice(2)}`;
+  };
+
   doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(26, 26, 46);
-  doc.text('CATEGORY', 12, y); y += 5.5;
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
-  doc.text(String(p.category || '—'), 12, y);
+  doc.text('FEE BREAKDOWN', 12, y); y += 5.5;
+
+  const rowH = 5.4;
+  lines.forEach((line, i) => {
+    const bg = i % 2 === 0 ? [250, 248, 243] : [255, 255, 255];
+    doc.setFillColor(bg[0], bg[1], bg[2]);
+    doc.rect(12, y - 3.6, 186, rowH, 'F');
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(26, 26, 46);
+    doc.text(line.category || '—', 14, y);
+
+    // Months covered, right-aligned before the amount column.
+    if (line.periods && line.periods.length) {
+      doc.setFontSize(6.5); doc.setTextColor(130, 124, 114);
+      doc.text(line.periods.map(monthLabel).join(', '), 150, y, { align: 'right' });
+    }
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(26, 26, 46);
+    doc.text(`${fmt(line.amount)} /-`, 196, y, { align: 'right' });
+    y += rowH;
+  });
+
+  // Rule under the breakdown, then signature.
+  doc.setDrawColor(180, 172, 162); doc.setLineWidth(0.2);
+  doc.line(12, y - 3.2, 198, y - 3.2);
 
   // Signature line
   y += 9;

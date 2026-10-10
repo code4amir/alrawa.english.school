@@ -1850,3 +1850,84 @@ class DefaulterTotalsReuseTests(TestCase):
         self.assertAlmostEqual(res.data['grandTotalDue'], due)
         self.assertAlmostEqual(res.data['grandTotalPaid'], paid)
         self.assertLess(n, 25, f'paginated defaulter took {n} queries')
+
+
+class ReceiptBreakdownTests(TestCase):
+    """Receipts need a category-wise split; allocations now carry a label."""
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        from rest_framework_simplejwt.tokens import RefreshToken
+        from rest_framework.test import APIClient
+        u = get_user_model().objects.create_superuser(
+            email='rcpt@t.com', name='R', password='x')
+        self.client = APIClient()
+        t = RefreshToken.for_user(u)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {t.access_token}')
+        self.klass = SchoolClass.objects.create(name='Play', order=1)
+        self.year = AcademicYear.objects.create(
+            name='2026', start_date='2026-01-01', end_date='2026-12-31', is_active=True)
+        self.student = Student.objects.create(
+            name='Kid', student_id='S000042', school_class=self.klass, session='2026')
+        self.tuition = FeeSchedule.objects.create(
+            academic_year=self.year, school_class=self.klass, category='Tuition fee',
+            amount=3500, frequency='MONTHLY', applicability='AUTO')
+        self.admit = FeeSchedule.objects.create(
+            academic_year=self.year, school_class=self.klass, category='Admission fee',
+            amount=5000, frequency='ONE_TIME', applicability='AUTO')
+        for b in ('AL_RAWA_BANK', 'GLOBAL_FORUM_BANK', 'CASH_IN_HAND'):
+            BankAccount.objects.get_or_create(name=b, defaults={'display_name': b})
+
+    def _pay(self):
+        return self.client.post('/api/finance/transactions/', {
+            'transactionDate': '2026-01-05',
+            'transactionType': 'INCOME',
+            'amount': 12000,
+            'student': str(self.student.id),
+            'className': 'Play',
+            'destinationAccount': 'AL_RAWA_BANK',
+            'feeMonth': '2026-01',
+            'allocations': [
+                {'feeScheduleId': str(self.tuition.id), 'amount': 3500, 'period': '2026-01'},
+                {'feeScheduleId': str(self.tuition.id), 'amount': 3500, 'period': '2026-02'},
+                {'feeScheduleId': str(self.admit.id), 'amount': 5000, 'period': '2026-01'},
+            ],
+        }, format='json')
+
+    def test_allocations_store_category_label(self):
+        self._pay()
+        labels = set(PaymentAllocation.objects.filter(
+            student=self.student).values_list('category', flat=True))
+        self.assertEqual(labels, {'Tuition fee', 'Admission fee'})
+
+    def test_ledger_returns_breakdown_with_periods(self):
+        self._pay()
+        res = self.client.get('/api/finance/ledger/', {'account': 'AL_RAWA_BANK'})
+        self.assertEqual(res.status_code, 200)
+        row = res.data['data'][0]
+        bd = {b['category']: b for b in row['breakdown']}
+        self.assertIn('Tuition fee', bd)
+        self.assertIn('Admission fee', bd)
+        self.assertEqual(bd['Tuition fee']['amount'], 7000)
+        self.assertEqual(sorted(bd['Tuition fee']['periods']), ['2026-01', '2026-02'])
+        self.assertEqual(bd['Admission fee']['amount'], 5000)
+
+    def test_other_fee_label_preserved(self):
+        res = self.client.post('/api/finance/transactions/', {
+            'transactionDate': '2026-02-05',
+            'transactionType': 'INCOME',
+            'amount': 400,
+            'student': str(self.student.id),
+            'className': 'Play',
+            'destinationAccount': 'CASH_IN_HAND',
+            'feeMonth': '2026-02',
+            'category': 'Late fee',
+            'allocations': [
+                {'feeScheduleId': '__other__', 'category': 'Late fee',
+                 'amount': 400, 'period': '2026-02'},
+            ],
+        }, format='json')
+        self.assertEqual(res.status_code, 201, msg=res.content[:300])
+        a = PaymentAllocation.objects.get(student=self.student, period='2026-02')
+        self.assertEqual(a.category, 'Late fee')
+        self.assertIsNone(a.fee_schedule_id)
