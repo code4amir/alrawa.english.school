@@ -32,11 +32,21 @@ def _serialize_tx(tx, account_name, opening_balance, cancelled_by_names, allocat
     breakdown = []
     seen = set()
     for a in (allocations or []):
+        # Legacy rows predate the category snapshot (blank field) — fall back
+        # to the schedule's name, then the transaction's own category label.
         label = (a.category or '').strip()
+        if not label and a.fee_schedule_id:
+            label = (getattr(a.fee_schedule, 'category', '') or '').strip()
+        if not label:
+            label = (tx.category or '').split(',')[0].strip()
         if not label or label in seen:
             continue
         seen.add(label)
-        rows = [x for x in allocations if (x.category or '').strip() == label]
+        rows = [x for x in allocations if (
+            (x.category or '').strip()
+            or (getattr(x.fee_schedule, 'category', '') or '').strip()
+            or (tx.category or '').split(',')[0].strip()
+        ) == label]
         breakdown.append({
             'category': label,
             'amount': float(sum((x.amount for x in rows), Decimal('0'))),

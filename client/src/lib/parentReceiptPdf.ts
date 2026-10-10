@@ -89,7 +89,7 @@ async function drawReceiptCopy(
   y += 14;
   const lines: ReceiptLine[] = (p.breakdown && p.breakdown.length)
     ? p.breakdown
-    : [{ category: String(p.category || '—'), amount: Number(p.amount) || 0 }];
+    : [{ category: String(p.category || '—'), amount: Number(p.amount) || 0, periods: [] }];
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const monthLabel = (m: string) => {
     const [yy, mm] = m.split('-');

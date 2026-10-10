@@ -114,7 +114,7 @@ class LedgerService:
         if not tx_ids:
             return {}
         out = {}
-        for a in PaymentAllocation.objects.filter(transaction_id__in=tx_ids):
+        for a in PaymentAllocation.objects.filter(transaction_id__in=tx_ids).select_related('fee_schedule'):
             out.setdefault(str(a.transaction_id), []).append(a)
         return out
 

@@ -1931,3 +1931,48 @@ class ReceiptBreakdownTests(TestCase):
         a = PaymentAllocation.objects.get(student=self.student, period='2026-02')
         self.assertEqual(a.category, 'Late fee')
         self.assertIsNone(a.fee_schedule_id)
+
+
+class ReceiptBreakdownLegacyTests(TestCase):
+    """Rows written before the category snapshot must still break down."""
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        from rest_framework_simplejwt.tokens import RefreshToken
+        from rest_framework.test import APIClient
+        u = get_user_model().objects.create_superuser(
+            email='legacy@t.com', name='L', password='x')
+        self.client = APIClient()
+        t = RefreshToken.for_user(u)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {t.access_token}')
+        self.klass = SchoolClass.objects.create(name='Play', order=1)
+        self.year = AcademicYear.objects.create(
+            name='2026', start_date='2026-01-01', end_date='2026-12-31', is_active=True)
+        self.student = Student.objects.create(
+            name='Old', student_id='S000099', school_class=self.klass, session='2026')
+        self.sched = FeeSchedule.objects.create(
+            academic_year=self.year, school_class=self.klass, category='Tuition fee',
+            amount=3500, frequency='MONTHLY', applicability='AUTO')
+        for b in ('AL_RAWA_BANK', 'GLOBAL_FORUM_BANK', 'CASH_IN_HAND'):
+            BankAccount.objects.get_or_create(name=b, defaults={'display_name': b})
+
+    def test_blank_category_row_still_breaks_down(self):
+        from finance.models import Transaction, PaymentAllocation
+        tx = Transaction.objects.create(
+            transaction_date='2026-01-05', transaction_type='INCOME',
+            amount=7000, category='Tuition fee', student=self.student,
+            destination_account=BankAccount.objects.get(name='AL_RAWA_BANK'),
+            fiscal_year=2026)
+        # Simulate a pre-0022 row: no category snapshot.
+        for period in ('2026-01', '2026-02'):
+            PaymentAllocation.objects.create(
+                transaction=tx, fee_schedule=self.sched, student=self.student,
+                period=period, amount=3500)
+
+        res = self.client.get('/api/finance/ledger/', {'account': 'AL_RAWA_BANK'})
+        self.assertEqual(res.status_code, 200)
+        bd = res.data['data'][0]['breakdown']
+        self.assertEqual(len(bd), 1)
+        self.assertEqual(bd[0]['category'], 'Tuition fee')
+        self.assertEqual(bd[0]['amount'], 7000)
+        self.assertEqual(bd[0]['periods'], ['2026-01', '2026-02'])
