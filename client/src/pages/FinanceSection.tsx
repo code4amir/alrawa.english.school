@@ -658,15 +658,23 @@ const FinanceSection = () => {
           feeMonth: feeMonth || '',
           // Straight from the allocations just submitted: exact category
           // amounts + covered months, so the receipt matches what was paid.
+          // One line per FEE, not per allocation: a monthly fee paid across
+          // several months arrives as one allocation per month, which would
+          // otherwise print nine identical "Tuition fee" rows.
           breakdown: hasMultiFee
-            ? (body.allocations as { feeScheduleId?: string; amount: number; period: string }[]).map(a => ({
-                category: a.feeScheduleId === '__other__'
-                  ? // The ad-hoc row carries its own label in otherFees, matched by amount.
-                    otherFees.find((o: any) => o.checked && Number(o.amount) === Number(a.amount))?.category || 'Other Fee'
-                  : feeStatusList.find((f: any) => f.feeScheduleId === a.feeScheduleId)?.category || '',
-                amount: Number(a.amount),
-                periods: a.period ? [a.period] : [],
-              }))
+            ? Object.values(
+                (body.allocations as { feeScheduleId?: string; amount: number; period: string }[])
+                  .reduce((acc: Record<string, { category: string; amount: number; periods: string[] }>, a) => {
+                    const category = a.feeScheduleId === '__other__'
+                      ? otherFees.find((o: any) => o.checked && Number(o.amount) === Number(a.amount))?.category || 'Other Fee'
+                      : feeStatusList.find((f: any) => f.feeScheduleId === a.feeScheduleId)?.category || '';
+                    const key = category || 'Fee';
+                    if (!acc[key]) acc[key] = { category: key, amount: 0, periods: [] };
+                    acc[key].amount += Number(a.amount);
+                    if (a.period && !acc[key].periods.includes(a.period)) acc[key].periods.push(a.period);
+                    return acc;
+                  }, {}),
+              )
             : undefined,
         });
       }

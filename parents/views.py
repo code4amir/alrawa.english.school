@@ -244,11 +244,39 @@ class StudentPaymentsView(APIView):
             'GLOBAL_FORUM_BANK': 'Bank Transfer (Global Forum)',
             'CASH_IN_HAND': 'Cash',
         }
+        # One batched fetch for every payment's fee split — a receipt prints
+        # category-wise amounts plus the months covered.
+        from finance.models import PaymentAllocation
+        alloc_by_tx = {}
+        if txns:
+            for a in PaymentAllocation.objects.filter(
+                transaction__in=txns
+            ).select_related('fee_schedule'):
+                alloc_by_tx.setdefault(str(a.transaction_id), []).append(a)
+
         payments = []
         for t in txns:
             method = 'Cash'
             if t.source_account:
                 method = method_map.get(t.source_account.name, t.source_account.display_name or t.source_account.name)
+            # Group by fee: one line per fee, months merged into periods.
+            breakdown = []
+            for label in {(
+                (a.category or '').strip()
+                or (getattr(a.fee_schedule, 'category', '') or '').strip()
+                or (t.category or '—').split(',')[0].strip()
+            ) for a in alloc_by_tx.get(str(t.id), [])}:
+                rows = [a for a in alloc_by_tx.get(str(t.id), []) if (
+                    (a.category or '').strip()
+                    or (getattr(a.fee_schedule, 'category', '') or '').strip()
+                    or (t.category or '—').split(',')[0].strip()
+                ) == label]
+                breakdown.append({
+                    'category': label,
+                    'amount': float(sum((a.amount for a in rows), Decimal('0'))),
+                    'periods': sorted({a.period for a in rows if a.period}),
+                })
+            breakdown.sort(key=lambda b: -b['amount'])
             payments.append({
                 'reference': t.reference_id or (f"TOKEN-{t.transaction_date:%Y%m%d}-{t.token_number:04d}" if t.token_number else str(t.id)[:8]),
                 'amount': t.amount,
@@ -256,6 +284,7 @@ class StudentPaymentsView(APIView):
                 'method': method,
                 'date': t.transaction_date,
                 'isCancelled': t.is_cancelled,
+                'breakdown': breakdown,
             })
         return Response(ParentPaymentSerializer(payments, many=True).data)
 

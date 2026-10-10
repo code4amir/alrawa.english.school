@@ -377,3 +377,49 @@ class BackendHardeningBatchTests(HardeningAuthMixin, TestCase):
             title='Diary', body='Today we...',
         )
         log2.full_clean()
+
+
+class ParentReceiptBreakdownTests(TestCase):
+    """Parent-portal receipts need the same fee split as the finance side."""
+
+    def setUp(self):
+        from core.models import AcademicYear, SchoolClass
+        from students.models import Student
+        from finance.models import (
+            BankAccount, FeeSchedule, PaymentAllocation, Transaction)
+        self.client = APIClient()
+        parent = User.objects.create_user(
+            email='rcpt-parent@t.com', name='P', password='x', role='parent')
+        self.client.force_authenticate(parent)
+        self.klass = SchoolClass.objects.create(name='Class Five', order=1)
+        self.year = AcademicYear.objects.create(
+            name='2026', start_date='2026-01-01', end_date='2026-12-31', is_active=True)
+        self.student = Student.objects.create(
+            name='Kid', student_id='S000555', school_class=self.klass, session='2026')
+        self.sched = FeeSchedule.objects.create(
+            academic_year=self.year, school_class=self.klass, category='Tuition fee',
+            amount=3000, frequency='MONTHLY', applicability='AUTO')
+        self.bank, _ = BankAccount.objects.get_or_create(
+            name='AL_RAWA_BANK', defaults={'display_name': 'AL RAWA Bank'})
+        self.tx = Transaction.objects.create(
+            transaction_date='2026-01-05', transaction_type='INCOME',
+            amount=9000, category='Tuition fee', student=self.student,
+            destination_account=self.bank, fiscal_year=2026)
+        for period in ('2026-01', '2026-02', '2026-03'):
+            PaymentAllocation.objects.create(
+                transaction=self.tx, fee_schedule=self.sched, student=self.student,
+                period=period, amount=3000, category='Tuition fee')
+        from parents.models import ParentStudentLink
+        ParentStudentLink.objects.create(parent=parent, student=self.student)
+
+    def _payments(self):
+        return self.client.get(f'/api/parents/payments/{self.student.id}/')
+
+    def test_breakdown_groups_months_into_one_fee_line(self):
+        res = self._payments()
+        self.assertEqual(res.status_code, 200)
+        bd = res.data[0]['breakdown']
+        self.assertEqual(len(bd), 1)
+        self.assertEqual(bd[0]['category'], 'Tuition fee')
+        self.assertEqual(bd[0]['amount'], 9000)
+        self.assertEqual(bd[0]['periods'], ['2026-01', '2026-02', '2026-03'])

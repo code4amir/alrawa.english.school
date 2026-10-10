@@ -39,6 +39,12 @@ class ParentFeeStatusSerializer(serializers.Serializer):
     schedules = ParentFeeScheduleItemSerializer(many=True)
 
 
+class ParentPaymentLineSerializer(serializers.Serializer):
+    category = serializers.CharField()
+    amount = serializers.FloatField()
+    periods = serializers.ListField(child=serializers.CharField(), required=False)
+
+
 class ParentPaymentSerializer(serializers.Serializer):
     reference = serializers.CharField()
     amount = serializers.DecimalField(max_digits=12, decimal_places=2)
@@ -46,6 +52,8 @@ class ParentPaymentSerializer(serializers.Serializer):
     method = serializers.CharField()
     date = serializers.DateField()
     isCancelled = serializers.BooleanField()
+    # Category-wise split for the receipt; empty falls back to `category`.
+    breakdown = ParentPaymentLineSerializer(many=True, required=False)
 
 
 class ParentResultSerializer(serializers.Serializer):
