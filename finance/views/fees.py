@@ -93,7 +93,8 @@ class FeeWaiverViewSet(PeriodClosedMixin, AuditLogMixin, viewsets.ModelViewSet):
         # a pending waiver must not look approved.
         if serializer.validated_data.get('approval_status') == 'approved':
             serializer.save(
-                approved_by=str(self.request.user.id),
+                approved_by=serializer.validated_data.get('approved_by')
+                or str(self.request.user.id),
                 approved_at=timezone.now(),
             )
         else:

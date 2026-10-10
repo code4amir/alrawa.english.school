@@ -43,7 +43,6 @@ const StudentWaiversTab = () => {
   const [editType, setEditType] = useState<WaiverType>('CUSTOM_AMOUNT');
   const [editExpected, setEditExpected] = useState('');
   const [editReason, setEditReason] = useState('');
-  const [editApprovedBy, setEditApprovedBy] = useState('');
 
   useEffect(() => { fetchClasses(); fetchFeeSchedules(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (selectedClass) fetchStudents({ class_name: selectedClass }); }, [selectedClass]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -120,7 +119,8 @@ const StudentWaiversTab = () => {
     setSaving(true);
     try {
       await api.post('/finance/fee-waivers/', {
-        student: selectedStudent, feeSchedule: selectedScheduleId, type: waiverType, value: Number(expectedAmount), reason, approvedBy,
+        student: selectedStudent, feeSchedule: selectedScheduleId, type: waiverType,
+        value: Number(expectedAmount), reason, approvalStatus: 'approved',
       });
       toast('Waiver saved', 'success');
       await loadData();
@@ -143,7 +143,6 @@ const StudentWaiversTab = () => {
     setEditType((w.type as WaiverType) || 'CUSTOM_AMOUNT');
     setEditExpected(String(w.value));
     setEditReason(w.reason || '');
-    setEditApprovedBy(w.approvedBy || '');
   };
 
   const cancelEdit = () => {
@@ -151,7 +150,6 @@ const StudentWaiversTab = () => {
     setEditType('CUSTOM_AMOUNT');
     setEditExpected('');
     setEditReason('');
-    setEditApprovedBy('');
   };
 
   const saveInline = async (w: FeeWaiver) => {
@@ -166,7 +164,9 @@ const StudentWaiversTab = () => {
       await api.post(`/finance/fee-waivers/${w.id}/deactivate/`, {});
       try {
         await api.post('/finance/fee-waivers/', {
-          student: w.student, feeSchedule: w.feeSchedule, type: editType, value: Number(editExpected), reason: editReason || w.reason, approvedBy: editApprovedBy || w.approvedBy,
+          student: w.student, feeSchedule: w.feeSchedule, type: editType,
+          value: Number(editExpected), reason: editReason || w.reason,
+          approvalStatus: 'approved',
         });
       } catch (createErr) {
         const restored = await api.patch(`/finance/fee-waivers/${w.id}/`, { active: true }).then(() => true).catch(() => false);
@@ -178,8 +178,7 @@ const StudentWaiversTab = () => {
       setEditType('CUSTOM_AMOUNT');
       setEditExpected('');
       setEditReason('');
-      setEditApprovedBy('');
-      await loadActiveWaivers();
+        await loadActiveWaivers();
       await loadData();
     } catch { toast('Failed to update', 'error'); }
   };
@@ -424,7 +423,10 @@ const StudentWaiversTab = () => {
                   <div>
                     <label className="text-[10px] font-bold uppercase text-school-muted mb-1 block">Approved By</label>
                     <input type="text" value={approvedBy} onChange={e => setApprovedBy(e.target.value)}
-                      placeholder="Approver name" className="w-full border border-school-border rounded-lg px-3 py-2 text-sm" />
+                      placeholder="Recorded automatically on save" className="w-full border border-school-border rounded-lg px-3 py-2 text-sm" />
+                    <p className="text-[10px] text-emerald-600 font-bold mt-1">
+                      Saved as APPROVED — takes effect immediately in the income fee list.
+                    </p>
                   </div>
                   <div className="flex items-end pb-2">
                     {expectedVal > 0 && (

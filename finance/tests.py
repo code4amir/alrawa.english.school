@@ -1976,3 +1976,80 @@ class ReceiptBreakdownLegacyTests(TestCase):
         self.assertEqual(bd[0]['category'], 'Tuition fee')
         self.assertEqual(bd[0]['amount'], 7000)
         self.assertEqual(bd[0]['periods'], ['2026-01', '2026-02'])
+
+
+class WaiverTakesEffectTests(TestCase):
+    """A waiver must actually lower the price in the income fee list."""
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        from rest_framework_simplejwt.tokens import RefreshToken
+        from rest_framework.test import APIClient
+        u = get_user_model().objects.create_superuser(
+            email='wv@t.com', name='W', password='x')
+        self.client = APIClient()
+        t = RefreshToken.for_user(u)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {t.access_token}')
+        self.klass = SchoolClass.objects.create(name='Class Five', order=1)
+        self.year = AcademicYear.objects.create(
+            name='2026', start_date='2026-01-01', end_date='2026-12-31', is_active=True)
+        self.student = Student.objects.create(
+            name='Jannatul Mawa', student_id='S000777', school_class=self.klass, session='2026')
+        self.sched = FeeSchedule.objects.create(
+            academic_year=self.year, school_class=self.klass, category='Tuition fee',
+            amount=3500, frequency='MONTHLY', applicability='AUTO')
+        for b in ('AL_RAWA_BANK', 'GLOBAL_FORUM_BANK', 'CASH_IN_HAND'):
+            BankAccount.objects.get_or_create(name=b, defaults={'display_name': b})
+
+    def _fee_list(self):
+        return self.client.get('/api/finance/fee-status/', {
+            'studentId': str(self.student.id), 'feeMonth': '2026-01'})
+
+    def test_no_waiver_shows_full_fee(self):
+        res = self._fee_list()
+        self.assertEqual(res.status_code, 200)
+        item = [i for i in res.data if i['category'] == 'Tuition fee'][0]
+        self.assertEqual(item['amount'], 3500)
+
+    def test_approved_custom_waiver_lowers_price(self):
+        res = self.client.post('/api/finance/fee-waivers/', {
+            'student': str(self.student.id), 'feeSchedule': str(self.sched.id),
+            'type': 'CUSTOM_AMOUNT', 'value': 3000, 'reason': 'sibling discount',
+            'approvalStatus': 'approved',
+        }, format='json')
+        self.assertEqual(res.status_code, 201, msg=res.content[:300])
+        w = FeeWaiver.objects.get(student=self.student)
+        self.assertEqual(w.approval_status, 'approved')
+        self.assertIsNotNone(w.approved_at)
+
+        item = [i for i in self._fee_list().data if i['category'] == 'Tuition fee'][0]
+        self.assertEqual(item['amount'], 3000)
+        self.assertEqual(item['expectedTotal'], 3000)
+
+    def test_pending_waiver_is_ignored(self):
+        FeeWaiver.objects.create(
+            student=self.student, fee_schedule=self.sched, type='CUSTOM_AMOUNT',
+            value=3000, approval_status='pending')
+        item = [i for i in self._fee_list().data if i['category'] == 'Tuition fee'][0]
+        self.assertEqual(item['amount'], 3500)
+
+    def test_percentage_waiver_lowers_price(self):
+        self.client.post('/api/finance/fee-waivers/', {
+            'student': str(self.student.id), 'feeSchedule': str(self.sched.id),
+            'type': 'PERCENTAGE', 'value': 20, 'approvalStatus': 'approved',
+        }, format='json')
+        item = [i for i in self._fee_list().data if i['category'] == 'Tuition fee'][0]
+        self.assertEqual(item['amount'], 2800)
+
+    def test_waived_fee_payment_accepted_at_discounted_amount(self):
+        self.client.post('/api/finance/fee-waivers/', {
+            'student': str(self.student.id), 'feeSchedule': str(self.sched.id),
+            'type': 'CUSTOM_AMOUNT', 'value': 3000, 'approvalStatus': 'approved',
+        }, format='json')
+        res = self.client.post('/api/finance/transactions/', {
+            'transactionDate': '2026-01-05', 'transactionType': 'INCOME',
+            'amount': 3000, 'student': str(self.student.id), 'className': 'Class Five',
+            'destinationAccount': 'AL_RAWA_BANK', 'feeMonth': '2026-01',
+            'allocations': [{'feeScheduleId': str(self.sched.id), 'amount': 3000, 'period': '2026-01'}],
+        }, format='json')
+        self.assertEqual(res.status_code, 201, msg=res.content[:300])
