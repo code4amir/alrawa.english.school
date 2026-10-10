@@ -90,11 +90,34 @@ async function drawReceiptCopy(
   const lines: ReceiptLine[] = (p.breakdown && p.breakdown.length)
     ? p.breakdown
     : [{ category: String(p.category || '—'), amount: Number(p.amount) || 0 }];
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const monthLabel = (m: string) => {
     const [yy, mm] = m.split('-');
     if (!yy || !mm) return m;
-    const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return `${names[Number(mm) - 1] || mm} ${yy.slice(2)}`;
+    return `${MONTHS[Number(mm) - 1] || mm} ${yy.slice(2)}`;
+  };
+
+  // Collapse consecutive months into ranges so a Jan-Sep payment prints as
+  // "Jan 26 - Sep 26" instead of nine labels. Keeps the row one line wide
+  // (and both receipt copies on one page) no matter how many months are paid.
+  const compressMonths = (periods: string[]): string => {
+    const valid = periods.filter(p => /^\d{4}-\d{2}$/.test(p)).sort();
+    if (!valid.length) return '';
+    const runs: string[][] = [];
+    for (const p of valid) {
+      const last = runs[runs.length - 1];
+      if (last) {
+        const [py, pm] = last[last.length - 1].split('-').map(Number);
+        const [cy, cm] = p.split('-').map(Number);
+        if (cy * 12 + cm === py * 12 + pm + 1) { last.push(p); continue; }
+      }
+      runs.push([p]);
+    }
+    return runs.map(run => {
+      if (run.length === 1) return monthLabel(run[0]);
+      if (run.length === 2) return `${monthLabel(run[0])}, ${monthLabel(run[1])}`;
+      return `${monthLabel(run[0])} - ${monthLabel(run[run.length - 1])}`;
+    }).join(';  ');
   };
 
   doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(26, 26, 46);
@@ -111,7 +134,7 @@ async function drawReceiptCopy(
     // Months covered, right-aligned before the amount column.
     if (line.periods && line.periods.length) {
       doc.setFontSize(6.5); doc.setTextColor(130, 124, 114);
-      doc.text(line.periods.map(monthLabel).join(', '), 150, y, { align: 'right' });
+      doc.text(compressMonths(line.periods), 150, y, { align: 'right' });
     }
     doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(26, 26, 46);
     doc.text(`${fmt(line.amount)} /-`, 196, y, { align: 'right' });
